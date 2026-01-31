@@ -1,0 +1,14 @@
+[package]
+name = "builddiag-repo"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+toml.workspace = true
+cargo_metadata.workspace = true
+camino.workspace = true
+builddiag-domain = { path = "../builddiag-domain" }
+builddiag-types = { path = "../builddiag-types" }
