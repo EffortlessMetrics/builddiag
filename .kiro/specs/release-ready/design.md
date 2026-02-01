@@ -4,7 +4,7 @@
 
 This design specifies the infrastructure, documentation, and testing needed to make builddiag release-ready for crates.io. The implementation focuses on GitHub Actions workflows for CI/CD, complete crate metadata, changelog management, expanded test coverage, and API documentation.
 
-The design follows the existing project conventions: Rust 2021 edition, layered crate architecture, insta for snapshot testing, and assert_cmd for CLI integration tests.
+The design follows the existing project conventions: Rust 2024 edition, layered crate architecture, insta for snapshot testing, and assert_cmd for CLI integration tests.
 
 ## Architecture
 
