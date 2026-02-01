@@ -20,3 +20,6 @@ builddiag-repo = { path = "../builddiag-repo" }
 builddiag-checks = { path = "../builddiag-checks" }
 builddiag-render = { path = "../builddiag-render" }
 toml.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

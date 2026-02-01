@@ -1,9 +1,20 @@
 //! Property-based tests for check implementations.
 //!
 //! These tests verify universal properties that should hold across all valid inputs.
+//!
+//! # Property Categories
+//!
+//! ## Check Behavior Properties (Properties 2-3)
+//! - Property 2: Pass status means no Error severity findings
+//! - Property 3: Fail status means findings have non-empty messages
+//!
+//! ## Error Handling Properties (Properties 3-4 from comprehensive-test-coverage)
+//! - Property 3: Graceful Error Handling - invalid inputs return errors without panicking
+//! - Property 4: Error Messages Contain Context - error messages are non-empty and informative
 
 use builddiag_checks::run_selected_checks;
-use builddiag_repo::{Member, RepoState, Toolchain, WorkspaceInfo};
+use builddiag_domain::parse_rust_version;
+use builddiag_repo::{Member, RepoState, Toolchain, WorkspaceInfo, maybe_parse_numeric_version};
 use builddiag_types::{CheckStatus, Config, RelationToMsrv, Severity};
 use camino::Utf8PathBuf;
 use proptest::prelude::*;
@@ -49,6 +60,85 @@ fn arb_resolver() -> impl Strategy<Value = Option<String>> {
         Just(Some("2".to_string())),
         Just(Some("1".to_string())),
         Just(None),
+    ]
+}
+
+// =============================================================================
+// Generators for invalid/error-inducing inputs
+// =============================================================================
+
+/// Generate invalid version strings that should cause parsing errors.
+///
+/// These are used to test Property 3: Graceful Error Handling
+/// **Validates: Requirements 8.2, 8.3**
+#[allow(dead_code)] // Used by tasks 6.2 and 6.3
+fn arb_invalid_version() -> impl Strategy<Value = String> {
+    prop_oneof![
+        // Empty or whitespace-only strings
+        Just("".to_string()),
+        Just("   ".to_string()),
+        Just("\t\n".to_string()),
+        // Invalid characters
+        "[a-z]+".prop_map(|s| s),
+        Just("abc".to_string()),
+        Just("1.x.0".to_string()),
+        Just("v1.70.0".to_string()),
+        // Malformed version patterns
+        Just("1.".to_string()),
+        Just(".70.0".to_string()),
+        Just("1..0".to_string()),
+        Just("1.70.".to_string()),
+        // Negative numbers (invalid for semver)
+        Just("-1.70.0".to_string()),
+        Just("1.-70.0".to_string()),
+        // Too many components
+        Just("1.70.0.0".to_string()),
+        Just("1.70.0.0.0".to_string()),
+        // Special characters
+        Just("1.70.0-beta".to_string()), // Pre-release (may or may not be valid depending on context)
+        Just("1.70.0+build".to_string()), // Build metadata
+        Just("1.70.0@latest".to_string()),
+        Just("1.70.0#hash".to_string()),
+        // Unicode and special chars
+        Just("1.70.0\u{200B}".to_string()), // Zero-width space
+        Just("①.②.③".to_string()),
+    ]
+}
+
+/// Generate arbitrary strings that may or may not be valid versions.
+///
+/// This is a broader generator for fuzzing version parsing.
+#[allow(dead_code)] // Used by tasks 6.2 and 6.3
+fn arb_arbitrary_version_string() -> impl Strategy<Value = String> {
+    prop_oneof![
+        // Valid versions (should not panic)
+        arb_rust_version(),
+        // Invalid versions (should return error, not panic)
+        arb_invalid_version(),
+        // Random strings
+        "[a-zA-Z0-9._-]{0,20}".prop_map(|s| s),
+    ]
+}
+
+/// Generate invalid toolchain channel strings.
+///
+/// These are used to test error handling in toolchain parsing.
+#[allow(dead_code)] // Used by tasks 6.2 and 6.3
+fn arb_invalid_toolchain_channel() -> impl Strategy<Value = String> {
+    prop_oneof![
+        // Empty
+        Just("".to_string()),
+        // Invalid channel names
+        Just("invalid-channel".to_string()),
+        Just("release".to_string()),
+        Just("dev".to_string()),
+        // Malformed nightly dates
+        Just("nightly-".to_string()),
+        Just("nightly-2024".to_string()),
+        Just("nightly-invalid".to_string()),
+        // Invalid version formats
+        Just("1.".to_string()),
+        Just(".70".to_string()),
     ]
 }
 
@@ -115,6 +205,83 @@ fn mock_repo_with_resolver(resolver: Option<&str>) -> RepoState {
     let mut repo = mock_repo_state();
     repo.workspace.workspace_resolver = resolver.map(|s| s.to_string());
     repo
+}
+
+// =============================================================================
+// Helper functions for error handling tests
+// =============================================================================
+
+/// Test that version parsing handles invalid input gracefully (returns error, doesn't panic).
+///
+/// This helper is used by Property 3: Graceful Error Handling tests.
+/// **Validates: Requirements 8.2, 8.3**
+#[allow(dead_code)] // Used by tasks 6.2 and 6.3
+fn assert_version_parsing_graceful(input: &str) -> bool {
+    // The function should either succeed or return an error, but never panic
+    let result = std::panic::catch_unwind(|| parse_rust_version(input));
+
+    match result {
+        Ok(_parse_result) => {
+            // Parsing completed without panic - this is the expected behavior
+            // The result can be Ok (valid version) or Err (invalid version)
+            true
+        }
+        Err(_) => {
+            // Function panicked - this is a bug
+            false
+        }
+    }
+}
+
+/// Test that maybe_parse_numeric_version handles invalid input gracefully.
+///
+/// This helper is used by Property 3: Graceful Error Handling tests.
+/// **Validates: Requirements 8.2, 8.3**
+#[allow(dead_code)] // Used by tasks 6.2 and 6.3
+fn assert_numeric_version_parsing_graceful(input: &str) -> bool {
+    let result = std::panic::catch_unwind(|| maybe_parse_numeric_version(input));
+    result.is_ok() // Completed without panic
+}
+
+/// Test that an error message contains meaningful context.
+///
+/// This helper is used by Property 4: Error Messages Contain Context tests.
+/// **Validates: Requirements 8.7**
+#[allow(dead_code)] // Used by tasks 6.2 and 6.3
+fn assert_error_has_context(error: &anyhow::Error) -> bool {
+    let msg = error.to_string();
+
+    // Error message should be non-empty
+    if msg.is_empty() {
+        return false;
+    }
+
+    // Error message should have some minimum length to be informative
+    // (more than just "error" or similar)
+    if msg.len() < 5 {
+        return false;
+    }
+
+    true
+}
+
+/// Test that a finding message contains meaningful context.
+///
+/// This helper is used by Property 4: Error Messages Contain Context tests.
+/// **Validates: Requirements 8.7**
+#[allow(dead_code)] // Used by tasks 6.2 and 6.3
+fn assert_finding_has_context(message: &str) -> bool {
+    // Message should be non-empty
+    if message.is_empty() {
+        return false;
+    }
+
+    // Message should have some minimum length to be informative
+    if message.len() < 10 {
+        return false;
+    }
+
+    true
 }
 
 // =============================================================================
@@ -455,5 +622,149 @@ proptest! {
                 );
             }
         }
+    }
+
+    // =========================================================================
+    // Property 3: Graceful Error Handling (from comprehensive-test-coverage)
+    // Feature: comprehensive-test-coverage, Property 3: Graceful Error Handling
+    // For any invalid input, the tool should return an error without panicking.
+    // **Validates: Requirements 8.2, 8.3**
+    // =========================================================================
+
+    /// Property 3: Graceful Error Handling - parse_rust_version handles invalid input without panicking.
+    ///
+    /// For any invalid version string, parse_rust_version should either return Ok (if valid)
+    /// or Err (if invalid), but should never panic.
+    ///
+    /// Feature: comprehensive-test-coverage, Property 3: Graceful Error Handling
+    /// **Validates: Requirements 8.2, 8.3**
+    #[test]
+    fn prop_graceful_error_handling_parse_rust_version(input in arb_invalid_version()) {
+        // The function should either succeed or return an error, but never panic
+        let result = std::panic::catch_unwind(|| parse_rust_version(&input));
+
+        prop_assert!(
+            result.is_ok(),
+            "parse_rust_version panicked on input: {:?}",
+            input
+        );
+
+        // If it didn't panic, verify it returned a proper Result (Ok or Err)
+        // For invalid inputs, we expect Err in most cases
+        if let Ok(parse_result) = result {
+            // The result should be a valid Result type - either Ok or Err is fine
+            // We just care that it didn't panic
+            match parse_result {
+                Ok(_version) => {
+                    // Some "invalid" inputs might actually be valid - that's okay
+                }
+                Err(_err) => {
+                    // Expected for truly invalid inputs
+                }
+            }
+        }
+    }
+
+    /// Property 3: Graceful Error Handling - maybe_parse_numeric_version handles invalid input without panicking.
+    ///
+    /// For any invalid toolchain channel string, maybe_parse_numeric_version should either
+    /// return Ok (if valid) or Err (if invalid), but should never panic.
+    ///
+    /// Feature: comprehensive-test-coverage, Property 3: Graceful Error Handling
+    /// **Validates: Requirements 8.2, 8.3**
+    #[test]
+    fn prop_graceful_error_handling_maybe_parse_numeric_version(input in arb_invalid_toolchain_channel()) {
+        // The function should either succeed or return an error, but never panic
+        let result = std::panic::catch_unwind(|| maybe_parse_numeric_version(&input));
+
+        prop_assert!(
+            result.is_ok(),
+            "maybe_parse_numeric_version panicked on input: {:?}",
+            input
+        );
+
+        // If it didn't panic, verify it returned a proper Result
+        if let Ok(parse_result) = result {
+            match parse_result {
+                Ok(_) => {
+                    // Valid result - either Some(version) or None for non-numeric channels
+                }
+                Err(_) => {
+                    // Error result - also acceptable for invalid inputs
+                }
+            }
+        }
+    }
+
+    /// Property 3: Graceful Error Handling - arbitrary strings don't cause panics.
+    ///
+    /// For any arbitrary string (valid or invalid), version parsing functions should
+    /// handle the input gracefully without panicking.
+    ///
+    /// Feature: comprehensive-test-coverage, Property 3: Graceful Error Handling
+    /// **Validates: Requirements 8.2, 8.3**
+    #[test]
+    fn prop_graceful_error_handling_arbitrary_strings(input in arb_arbitrary_version_string()) {
+        // Test parse_rust_version with arbitrary input
+        let rust_version_result = std::panic::catch_unwind(|| parse_rust_version(&input));
+        prop_assert!(
+            rust_version_result.is_ok(),
+            "parse_rust_version panicked on arbitrary input: {:?}",
+            input
+        );
+
+        // Test maybe_parse_numeric_version with arbitrary input
+        let numeric_version_result = std::panic::catch_unwind(|| maybe_parse_numeric_version(&input));
+        prop_assert!(
+            numeric_version_result.is_ok(),
+            "maybe_parse_numeric_version panicked on arbitrary input: {:?}",
+            input
+        );
+    }
+
+    // =========================================================================
+    // Property 4: Error Messages Contain Context (from comprehensive-test-coverage)
+    // Feature: comprehensive-test-coverage, Property 4: Error Messages Contain Context
+    // For any error condition, the error message should be non-empty and contain
+    // information about what went wrong.
+    // **Validates: Requirements 8.7**
+    // =========================================================================
+
+    /// Property 4: Error Messages Contain Context - parse_rust_version error messages are informative.
+    ///
+    /// For any invalid version string that causes parse_rust_version to return an error,
+    /// the error message should be non-empty and contain meaningful context (at least 10 characters).
+    ///
+    /// Feature: comprehensive-test-coverage, Property 4: Error Messages Contain Context
+    /// **Validates: Requirements 8.7**
+    #[test]
+    fn prop_error_messages_contain_context(input in arb_invalid_version()) {
+        let result = parse_rust_version(&input);
+
+        // If parsing fails (which is expected for invalid inputs), verify the error message
+        if let Err(err) = result {
+            let error_message = err.to_string();
+
+            // Property: Error message should be non-empty
+            prop_assert!(
+                !error_message.is_empty(),
+                "Error message should not be empty for invalid input: {:?}",
+                input
+            );
+
+            // Property: Error message should contain meaningful context (more than 10 characters)
+            // This ensures the message is informative, not just "error" or similar
+            prop_assert!(
+                error_message.len() > 10,
+                "Error message should contain meaningful context (>10 chars), got '{}' ({} chars) for input: {:?}",
+                error_message,
+                error_message.len(),
+                input
+            );
+        }
+        // Note: Some inputs in arb_invalid_version() might actually be valid
+        // (e.g., "1.70.0-beta" could be valid depending on semver parsing).
+        // If parsing succeeds, that's acceptable - we only verify error message quality
+        // when parsing fails.
     }
 }

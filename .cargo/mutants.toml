@@ -1,0 +1,74 @@
+# cargo-mutants configuration for builddiag
+# https://mutants.rs/
+#
+# ============================================================================
+# MUTATION TESTING GUIDE
+# ============================================================================
+#
+# Mutation testing verifies that your tests actually detect code changes.
+# cargo-mutants modifies your code (creates "mutants") and checks if tests fail.
+# If tests pass with a mutant, it means the test suite has a gap.
+#
+# INSTALLATION:
+#   cargo install cargo-mutants
+#
+# BASIC USAGE:
+#   cargo mutants                    # Run mutation testing on all crates
+#   cargo mutants --list             # List all mutants without running tests
+#   cargo mutants --list | wc -l     # Count total mutants
+#
+# TARGETED RUNS:
+#   cargo mutants -p builddiag-domain    # Test specific package
+#   cargo mutants -p builddiag-checks    # Test checks crate
+#   cargo mutants -f src/lib.rs          # Test specific file
+#
+# PERFORMANCE OPTIONS:
+#   cargo mutants -j 4               # Run 4 parallel jobs
+#   cargo mutants --timeout 120      # Set 120 second timeout per mutant
+#   cargo mutants --in-place         # Faster but modifies source (use with caution)
+#
+# OUTPUT AND REPORTING:
+#   cargo mutants --output mutants-out   # Save results to directory
+#   cargo mutants --json                 # Output JSON for CI integration
+#
+# INTERPRETING RESULTS:
+#   - "killed": Test suite detected the mutant (good!)
+#   - "survived": Test suite did NOT detect the mutant (needs more tests)
+#   - "timeout": Mutant caused infinite loop or very slow test
+#   - "unviable": Mutant caused compilation error (expected for some mutations)
+#
+# MUTATION SCORE:
+#   Score = killed / (killed + survived) * 100%
+#   Target: 90% mutation score (per Requirements 4.2)
+#
+# CI INTEGRATION:
+#   Run mutation testing on schedule or manually to avoid slowing down PRs:
+#   - GitHub Actions: workflow_dispatch or schedule trigger
+#   - Results should be reviewed periodically to identify test gaps
+#
+# ============================================================================
+
+# Timeout for each mutant test run (in seconds)
+# Prevents slow mutants from blocking CI
+timeout = 60
+
+# Number of parallel jobs (default: number of CPUs)
+# Uncomment to limit parallelism
+# jobs = 4
+
+# Exclude test files from mutation
+# Test code should not be mutated - we want to test production code
+exclude_globs = [
+    "**/tests/**",
+    "**/*_test.rs",
+    "**/test_*.rs",
+    "fuzz/**",
+    "xtask/**",
+    "schemas/**",
+]
+
+# Exclude trivial functions that don't need mutation testing
+# These are typically logging, display implementations, or simple getters
+# - fmt: Display implementations (trivial formatting)
+# - default: Simple Default implementations (struct initialization)
+exclude_re = ["impl .* for .*::fmt$", "::default$"]

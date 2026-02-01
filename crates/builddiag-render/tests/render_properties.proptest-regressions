@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc f8383958958d0f0a09a911428e7e3f55ad82c10d83163b595cc35c402020f0d2 # shrinks to report = Report { schema: SchemaId("a"), tool: ToolInfo { name: "a", version: "0.0.0" }, run: RunInfo { id: "a", started_at: 2020-01-01T00:00:00Z, ended_at: None }, repo: RepoInfo { root: "a.toml", detected: RepoDetected { is_workspace: false, members: 1 } }, inputs: Inputs { cargo_root: None, rust_toolchain: None, tools_checksums: None, tools_manifest: None }, checks: [], summary: Summary { counts: SummaryCounts { info: 0, warn: 0, error: 0 }, verdict: Pass, reasons: [] } }
