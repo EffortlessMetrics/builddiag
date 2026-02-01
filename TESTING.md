@@ -71,7 +71,7 @@ mod tests {
     #[test]
     fn test_config_defaults() {
         let config = Config::default();
-        assert!(config.policy.msrv.require);
+        assert!(config.policy.msrv.require_defined);
     }
 }
 ```

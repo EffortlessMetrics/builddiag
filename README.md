@@ -1,7 +1,7 @@
 # builddiag
 
-[![CI](https://github.com/AmazonQ/builddiag/actions/workflows/ci.yml/badge.svg)](https://github.com/AmazonQ/builddiag/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/AmazonQ/builddiag/branch/main/graph/badge.svg)](https://codecov.io/gh/AmazonQ/builddiag)
+[![CI](https://github.com/EffortlessMetrics/builddiag/actions/workflows/ci.yml/badge.svg)](https://github.com/EffortlessMetrics/builddiag/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/EffortlessMetrics/builddiag/branch/main/graph/badge.svg)](https://codecov.io/gh/EffortlessMetrics/builddiag)
 
 `builddiag` checks the build contract of a Rust repository and emits:
 

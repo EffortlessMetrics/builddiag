@@ -10,7 +10,7 @@ coverage:
         target: 80%
         # Allow 1% drop from base coverage
         threshold: 1%
-        # Only check coverage on files that were changed
+        # Check coverage on all project files, not just changed ones
         only_changed_files: false
     patch:
       default:
