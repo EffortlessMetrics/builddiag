@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use builddiag_domain::parse_rust_version;
 use builddiag_types::Config;
 use camino::{Utf8Path, Utf8PathBuf};
@@ -71,12 +71,16 @@ pub struct RepoState {
     pub changed_files: Option<BTreeSet<String>>,
 }
 
-pub fn load_repo_state(root: &Utf8Path, config: &Config, changed_files: Option<BTreeSet<String>>) -> Result<RepoState> {
+pub fn load_repo_state(
+    root: &Utf8Path,
+    config: &Config,
+    changed_files: Option<BTreeSet<String>>,
+) -> Result<RepoState> {
     let root = {
-    let pb = fs::canonicalize(root.as_std_path())
-        .with_context(|| format!("canonicalize root: {root}"))?;
-    Utf8PathBuf::from_path_buf(pb).map_err(|_| anyhow!("non-utf8 repo root path"))?
-};
+        let pb = fs::canonicalize(root.as_std_path())
+            .with_context(|| format!("canonicalize root: {root}"))?;
+        Utf8PathBuf::from_path_buf(pb).map_err(|_| anyhow!("non-utf8 repo root path"))?
+    };
 
     let cargo_root_candidate = root.join(&config.paths.cargo_root);
     let cargo_root = if cargo_root_candidate.exists() {
@@ -111,10 +115,10 @@ pub fn load_repo_state(root: &Utf8Path, config: &Config, changed_files: Option<B
     let tools_manifest = {
         let p = root.join(&config.paths.tools_manifest);
         if p.exists() {
-            let txt = fs::read_to_string(&p)
-                .with_context(|| format!("read tools manifest: {p}"))?;
-            let manifest: ToolsManifest = toml::from_str(&txt)
-                .with_context(|| format!("parse tools manifest: {p}"))?;
+            let txt =
+                fs::read_to_string(&p).with_context(|| format!("read tools manifest: {p}"))?;
+            let manifest: ToolsManifest =
+                toml::from_str(&txt).with_context(|| format!("parse tools manifest: {p}"))?;
             Some((p, manifest))
         } else {
             None
@@ -194,16 +198,19 @@ fn load_workspace(manifest_path: &Utf8Path) -> Result<WorkspaceInfo> {
         if !member_ids.contains(&pkg.id) {
             continue;
         }
-        let manifest_path = Utf8PathBuf::from_path_buf(pkg.manifest_path.clone().into_std_path_buf())
-            .map_err(|_| anyhow!("non-utf8 manifest path"))?;
+        let manifest_path =
+            Utf8PathBuf::from_path_buf(pkg.manifest_path.clone().into_std_path_buf())
+                .map_err(|_| anyhow!("non-utf8 manifest path"))?;
 
-        let manifest_txt = fs::read_to_string(&manifest_path)
-            .with_context(|| format!("read {manifest_path}"))?;
-        let manifest_value: toml::Value = toml::from_str(&manifest_txt)
-            .with_context(|| format!("parse {manifest_path}"))?;
+        let manifest_txt =
+            fs::read_to_string(&manifest_path).with_context(|| format!("read {manifest_path}"))?;
+        let manifest_value: toml::Value =
+            toml::from_str(&manifest_txt).with_context(|| format!("parse {manifest_path}"))?;
 
-        let (rust_version, rust_version_workspace) = parse_package_inheritable_string(&manifest_value, "rust-version")?;
-        let (edition, edition_workspace) = parse_package_inheritable_string(&manifest_value, "edition")?;
+        let (rust_version, rust_version_workspace) =
+            parse_package_inheritable_string(&manifest_value, "rust-version")?;
+        let (edition, edition_workspace) =
+            parse_package_inheritable_string(&manifest_value, "edition")?;
 
         members.push(Member {
             name: pkg.name.clone(),
@@ -216,12 +223,13 @@ fn load_workspace(manifest_path: &Utf8Path) -> Result<WorkspaceInfo> {
     }
 
     // Root manifest info
-    let root_txt = fs::read_to_string(manifest_path)
-        .with_context(|| format!("read {manifest_path}"))?;
-    let root_value: toml::Value = toml::from_str(&root_txt)
-        .with_context(|| format!("parse {manifest_path}"))?;
+    let root_txt =
+        fs::read_to_string(manifest_path).with_context(|| format!("read {manifest_path}"))?;
+    let root_value: toml::Value =
+        toml::from_str(&root_txt).with_context(|| format!("parse {manifest_path}"))?;
 
-    let (workspace_msrv, workspace_edition, workspace_resolver, is_workspace) = parse_workspace_root(&root_value)?;
+    let (workspace_msrv, workspace_edition, workspace_resolver, is_workspace) =
+        parse_workspace_root(&root_value)?;
 
     Ok(WorkspaceInfo {
         is_workspace,
@@ -236,10 +244,14 @@ fn metadata(manifest_path: &Utf8Path) -> Result<Metadata> {
     let mut cmd = MetadataCommand::new();
     cmd.manifest_path(manifest_path.as_str());
     cmd.no_deps();
-    cmd.exec().with_context(|| format!("cargo metadata for {manifest_path}"))
+    cmd.exec()
+        .with_context(|| format!("cargo metadata for {manifest_path}"))
 }
 
-fn parse_workspace_root(v: &toml::Value) -> Result<(Option<String>, Option<String>, Option<String>, bool)> {
+fn parse_workspace_root(
+    v: &toml::Value,
+) -> Result<(Option<String>, Option<String>, Option<String>, bool)> {
+    #![allow(clippy::type_complexity)]
     // workspace.package.rust-version
     let workspace_msrv = v
         .get("workspace")
@@ -336,10 +348,376 @@ fn parse_checksums(path: &Utf8Path) -> Result<ToolsChecksums> {
 pub fn maybe_parse_numeric_version(s: &str) -> Result<Option<String>> {
     let t = s.trim();
     let base = t.split_once("-").map(|(a, _)| a).unwrap_or(t);
-    if base.eq_ignore_ascii_case("stable") || base.eq_ignore_ascii_case("beta") || base.eq_ignore_ascii_case("nightly") {
+    if base.eq_ignore_ascii_case("stable")
+        || base.eq_ignore_ascii_case("beta")
+        || base.eq_ignore_ascii_case("nightly")
+    {
         return Ok(None);
     }
     // Accept and normalize; this will error for invalid.
     let v = parse_rust_version(base)?;
     Ok(Some(v.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    // =========================================================================
+    // Tests for parse_checksums (Task 7.1)
+    // Validates: Requirements 5.4
+    // =========================================================================
+
+    #[test]
+    fn parse_checksums_valid_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let checksums_path = temp_dir.path().join("checksums.txt");
+        let checksums_content = "\
+abc123def456  path/to/file1.txt
+789xyz000111  path/to/file2.bin
+";
+        std::fs::write(&checksums_path, checksums_content).unwrap();
+        let path = Utf8PathBuf::from_path_buf(checksums_path).unwrap();
+
+        let result = parse_checksums(&path).unwrap();
+
+        assert_eq!(result.entries.len(), 2);
+        assert_eq!(result.entries[0].line, 1);
+        assert_eq!(result.entries[0].hash, "abc123def456");
+        assert_eq!(result.entries[0].path, "path/to/file1.txt");
+        assert_eq!(result.entries[1].line, 2);
+        assert_eq!(result.entries[1].hash, "789xyz000111");
+        assert_eq!(result.entries[1].path, "path/to/file2.bin");
+    }
+
+    #[test]
+    fn parse_checksums_handles_comments() {
+        let temp_dir = TempDir::new().unwrap();
+        let checksums_path = temp_dir.path().join("checksums.txt");
+        let checksums_content = "\
+# This is a comment
+abc123def456  path/to/file1.txt
+# Another comment
+789xyz000111  path/to/file2.bin
+";
+        std::fs::write(&checksums_path, checksums_content).unwrap();
+        let path = Utf8PathBuf::from_path_buf(checksums_path).unwrap();
+
+        let result = parse_checksums(&path).unwrap();
+
+        assert_eq!(result.entries.len(), 2);
+        // Line numbers should account for comments
+        assert_eq!(result.entries[0].line, 2);
+        assert_eq!(result.entries[0].hash, "abc123def456");
+        assert_eq!(result.entries[1].line, 4);
+        assert_eq!(result.entries[1].hash, "789xyz000111");
+    }
+
+    #[test]
+    fn parse_checksums_handles_empty_lines() {
+        let temp_dir = TempDir::new().unwrap();
+        let checksums_path = temp_dir.path().join("checksums.txt");
+        let checksums_content = "\
+abc123def456  path/to/file1.txt
+
+789xyz000111  path/to/file2.bin
+
+";
+        std::fs::write(&checksums_path, checksums_content).unwrap();
+        let path = Utf8PathBuf::from_path_buf(checksums_path).unwrap();
+
+        let result = parse_checksums(&path).unwrap();
+
+        assert_eq!(result.entries.len(), 2);
+        assert_eq!(result.entries[0].line, 1);
+        assert_eq!(result.entries[1].line, 3);
+    }
+
+    #[test]
+    fn parse_checksums_handles_mixed_whitespace() {
+        let temp_dir = TempDir::new().unwrap();
+        let checksums_path = temp_dir.path().join("checksums.txt");
+        // Multiple spaces and tabs between hash and path
+        let checksums_content =
+            "abc123def456    path/to/file1.txt\n789xyz000111\t\tpath/to/file2.bin\n";
+        std::fs::write(&checksums_path, checksums_content).unwrap();
+        let path = Utf8PathBuf::from_path_buf(checksums_path).unwrap();
+
+        let result = parse_checksums(&path).unwrap();
+
+        assert_eq!(result.entries.len(), 2);
+        assert_eq!(result.entries[0].hash, "abc123def456");
+        assert_eq!(result.entries[0].path, "path/to/file1.txt");
+        assert_eq!(result.entries[1].hash, "789xyz000111");
+        assert_eq!(result.entries[1].path, "path/to/file2.bin");
+    }
+
+    #[test]
+    fn parse_checksums_handles_hash_only_line() {
+        let temp_dir = TempDir::new().unwrap();
+        let checksums_path = temp_dir.path().join("checksums.txt");
+        // Line with only a hash (no path)
+        let checksums_content = "abc123def456\n789xyz000111  path/to/file.txt\n";
+        std::fs::write(&checksums_path, checksums_content).unwrap();
+        let path = Utf8PathBuf::from_path_buf(checksums_path).unwrap();
+
+        let result = parse_checksums(&path).unwrap();
+
+        assert_eq!(result.entries.len(), 2);
+        assert_eq!(result.entries[0].hash, "abc123def456");
+        assert_eq!(result.entries[0].path, ""); // Empty path for hash-only line
+        assert_eq!(result.entries[1].hash, "789xyz000111");
+        assert_eq!(result.entries[1].path, "path/to/file.txt");
+    }
+
+    #[test]
+    fn parse_checksums_empty_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let checksums_path = temp_dir.path().join("checksums.txt");
+        std::fs::write(&checksums_path, "").unwrap();
+        let path = Utf8PathBuf::from_path_buf(checksums_path).unwrap();
+
+        let result = parse_checksums(&path).unwrap();
+
+        assert!(result.entries.is_empty());
+    }
+
+    #[test]
+    fn parse_checksums_only_comments_and_empty_lines() {
+        let temp_dir = TempDir::new().unwrap();
+        let checksums_path = temp_dir.path().join("checksums.txt");
+        let checksums_content = "\
+# Comment 1
+# Comment 2
+
+# Comment 3
+";
+        std::fs::write(&checksums_path, checksums_content).unwrap();
+        let path = Utf8PathBuf::from_path_buf(checksums_path).unwrap();
+
+        let result = parse_checksums(&path).unwrap();
+
+        assert!(result.entries.is_empty());
+    }
+
+    #[test]
+    fn parse_checksums_preserves_path() {
+        let temp_dir = TempDir::new().unwrap();
+        let checksums_path = temp_dir.path().join("checksums.txt");
+        std::fs::write(&checksums_path, "abc123  file.txt\n").unwrap();
+        let path = Utf8PathBuf::from_path_buf(checksums_path.clone()).unwrap();
+
+        let result = parse_checksums(&path).unwrap();
+
+        assert_eq!(result.path, path);
+    }
+
+    // =========================================================================
+    // Tests for toolchain file parsing (Task 7.2)
+    // Validates: Requirements 5.4
+    // =========================================================================
+
+    #[test]
+    fn parse_rust_toolchain_toml_standard_format() {
+        let temp_dir = TempDir::new().unwrap();
+        let toolchain_path = temp_dir.path().join("rust-toolchain.toml");
+        let toolchain_content = r#"
+[toolchain]
+channel = "1.75.0"
+"#;
+        std::fs::write(&toolchain_path, toolchain_content).unwrap();
+        let path = Utf8PathBuf::from_path_buf(toolchain_path).unwrap();
+
+        let result = parse_rust_toolchain_toml(&path).unwrap();
+
+        assert_eq!(result, "1.75.0");
+    }
+
+    #[test]
+    fn parse_rust_toolchain_toml_with_components() {
+        let temp_dir = TempDir::new().unwrap();
+        let toolchain_path = temp_dir.path().join("rust-toolchain.toml");
+        let toolchain_content = r#"
+[toolchain]
+channel = "1.70.0"
+components = ["rustfmt", "clippy"]
+targets = ["x86_64-unknown-linux-gnu"]
+"#;
+        std::fs::write(&toolchain_path, toolchain_content).unwrap();
+        let path = Utf8PathBuf::from_path_buf(toolchain_path).unwrap();
+
+        let result = parse_rust_toolchain_toml(&path).unwrap();
+
+        assert_eq!(result, "1.70.0");
+    }
+
+    #[test]
+    fn parse_rust_toolchain_toml_stable_channel() {
+        let temp_dir = TempDir::new().unwrap();
+        let toolchain_path = temp_dir.path().join("rust-toolchain.toml");
+        let toolchain_content = r#"
+[toolchain]
+channel = "stable"
+"#;
+        std::fs::write(&toolchain_path, toolchain_content).unwrap();
+        let path = Utf8PathBuf::from_path_buf(toolchain_path).unwrap();
+
+        let result = parse_rust_toolchain_toml(&path).unwrap();
+
+        assert_eq!(result, "stable");
+    }
+
+    #[test]
+    fn parse_rust_toolchain_toml_nightly_channel() {
+        let temp_dir = TempDir::new().unwrap();
+        let toolchain_path = temp_dir.path().join("rust-toolchain.toml");
+        let toolchain_content = r#"
+[toolchain]
+channel = "nightly-2024-01-15"
+"#;
+        std::fs::write(&toolchain_path, toolchain_content).unwrap();
+        let path = Utf8PathBuf::from_path_buf(toolchain_path).unwrap();
+
+        let result = parse_rust_toolchain_toml(&path).unwrap();
+
+        assert_eq!(result, "nightly-2024-01-15");
+    }
+
+    #[test]
+    fn parse_rust_toolchain_toml_fallback_top_level_channel() {
+        let temp_dir = TempDir::new().unwrap();
+        let toolchain_path = temp_dir.path().join("rust-toolchain.toml");
+        // Non-standard format with top-level channel (fallback behavior)
+        let toolchain_content = r#"
+channel = "1.72.0"
+"#;
+        std::fs::write(&toolchain_path, toolchain_content).unwrap();
+        let path = Utf8PathBuf::from_path_buf(toolchain_path).unwrap();
+
+        let result = parse_rust_toolchain_toml(&path).unwrap();
+
+        assert_eq!(result, "1.72.0");
+    }
+
+    #[test]
+    fn parse_rust_toolchain_toml_missing_channel_fails() {
+        let temp_dir = TempDir::new().unwrap();
+        let toolchain_path = temp_dir.path().join("rust-toolchain.toml");
+        let toolchain_content = r#"
+[toolchain]
+components = ["rustfmt"]
+"#;
+        std::fs::write(&toolchain_path, toolchain_content).unwrap();
+        let path = Utf8PathBuf::from_path_buf(toolchain_path).unwrap();
+
+        let result = parse_rust_toolchain_toml(&path);
+
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("missing toolchain.channel"));
+    }
+
+    #[test]
+    fn parse_rust_toolchain_toml_empty_file_fails() {
+        let temp_dir = TempDir::new().unwrap();
+        let toolchain_path = temp_dir.path().join("rust-toolchain.toml");
+        std::fs::write(&toolchain_path, "").unwrap();
+        let path = Utf8PathBuf::from_path_buf(toolchain_path).unwrap();
+
+        let result = parse_rust_toolchain_toml(&path);
+
+        assert!(result.is_err());
+    }
+
+    // =========================================================================
+    // Tests for legacy rust-toolchain format (Task 7.2)
+    // Validates: Requirements 5.4
+    // =========================================================================
+
+    #[test]
+    fn find_toolchain_legacy_format() {
+        let temp_dir = TempDir::new().unwrap();
+        let toolchain_path = temp_dir.path().join("rust-toolchain");
+        std::fs::write(&toolchain_path, "1.70.0\n").unwrap();
+        let root = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+
+        let result = find_toolchain(&root, "rust-toolchain.toml").unwrap();
+
+        assert!(result.is_some());
+        let toolchain = result.unwrap();
+        assert_eq!(toolchain.channel, "1.70.0");
+        assert!(toolchain.path.ends_with("rust-toolchain"));
+    }
+
+    #[test]
+    fn find_toolchain_legacy_format_stable() {
+        let temp_dir = TempDir::new().unwrap();
+        let toolchain_path = temp_dir.path().join("rust-toolchain");
+        std::fs::write(&toolchain_path, "stable\n").unwrap();
+        let root = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+
+        let result = find_toolchain(&root, "rust-toolchain.toml").unwrap();
+
+        assert!(result.is_some());
+        let toolchain = result.unwrap();
+        assert_eq!(toolchain.channel, "stable");
+    }
+
+    #[test]
+    fn find_toolchain_legacy_format_with_trailing_whitespace() {
+        let temp_dir = TempDir::new().unwrap();
+        let toolchain_path = temp_dir.path().join("rust-toolchain");
+        std::fs::write(&toolchain_path, "  1.70.0  \n").unwrap();
+        let root = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+
+        let result = find_toolchain(&root, "rust-toolchain.toml").unwrap();
+
+        assert!(result.is_some());
+        let toolchain = result.unwrap();
+        assert_eq!(toolchain.channel, "1.70.0");
+    }
+
+    #[test]
+    fn find_toolchain_legacy_format_empty_fails() {
+        let temp_dir = TempDir::new().unwrap();
+        let toolchain_path = temp_dir.path().join("rust-toolchain");
+        std::fs::write(&toolchain_path, "").unwrap();
+        let root = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+
+        let result = find_toolchain(&root, "rust-toolchain.toml");
+
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("empty"));
+    }
+
+    #[test]
+    fn find_toolchain_prefers_toml_over_legacy() {
+        let temp_dir = TempDir::new().unwrap();
+        // Create both files
+        let toml_path = temp_dir.path().join("rust-toolchain.toml");
+        let legacy_path = temp_dir.path().join("rust-toolchain");
+        std::fs::write(&toml_path, "[toolchain]\nchannel = \"1.75.0\"\n").unwrap();
+        std::fs::write(&legacy_path, "1.70.0\n").unwrap();
+        let root = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+
+        let result = find_toolchain(&root, "rust-toolchain.toml").unwrap();
+
+        assert!(result.is_some());
+        let toolchain = result.unwrap();
+        // Should prefer the TOML format
+        assert_eq!(toolchain.channel, "1.75.0");
+        assert!(toolchain.path.ends_with("rust-toolchain.toml"));
+    }
+
+    #[test]
+    fn find_toolchain_no_toolchain_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+
+        let result = find_toolchain(&root, "rust-toolchain.toml").unwrap();
+
+        assert!(result.is_none());
+    }
 }
