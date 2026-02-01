@@ -28,7 +28,7 @@ pub struct CheckDocumentation {
 }
 
 /// Registry of check documentation.
-static CHECK_DOCS: &[CheckDocumentation] = &[
+pub static CHECK_DOCS: &[CheckDocumentation] = &[
     CheckDocumentation {
         id: "rust.msrv_defined",
         name: "MSRV Defined",
@@ -1454,5 +1454,161 @@ mod tests {
         assert_eq!(report.status, CheckStatus::Skip);
         assert!(report.skipped_reason.is_some());
         assert!(report.skipped_reason.unwrap().contains("not a workspace"));
+    }
+
+    // =========================================================================
+    // Contract Tests: Ensure finding codes and check documentation are in sync
+    // =========================================================================
+
+    #[test]
+    fn contract_every_builtin_check_has_documentation() {
+        // Every check ID in BUILTIN_CHECKS must have a corresponding entry in CHECK_DOCS
+        for def in super::BUILTIN_CHECKS {
+            let doc = super::CHECK_DOCS.iter().find(|d| d.id == def.id);
+            assert!(
+                doc.is_some(),
+                "Check '{}' is in BUILTIN_CHECKS but missing from CHECK_DOCS",
+                def.id
+            );
+        }
+    }
+
+    #[test]
+    fn contract_every_documented_check_is_builtin() {
+        // Every check ID in CHECK_DOCS must have a corresponding entry in BUILTIN_CHECKS
+        for doc in super::CHECK_DOCS {
+            let def = super::BUILTIN_CHECKS.iter().find(|d| d.id == doc.id);
+            assert!(
+                def.is_some(),
+                "Check '{}' is in CHECK_DOCS but missing from BUILTIN_CHECKS",
+                doc.id
+            );
+        }
+    }
+
+    #[test]
+    fn contract_no_duplicate_check_ids() {
+        // No duplicate check IDs in BUILTIN_CHECKS
+        let mut seen = std::collections::HashSet::new();
+        for def in super::BUILTIN_CHECKS {
+            assert!(
+                seen.insert(def.id),
+                "Duplicate check ID in BUILTIN_CHECKS: '{}'",
+                def.id
+            );
+        }
+    }
+
+    #[test]
+    fn contract_no_duplicate_finding_codes() {
+        // No duplicate finding codes across all checks (codes should be globally unique)
+        let mut seen = std::collections::HashSet::new();
+        for doc in super::CHECK_DOCS {
+            for code in doc.codes {
+                assert!(
+                    seen.insert(*code),
+                    "Duplicate finding code '{}' found in check '{}'",
+                    code,
+                    doc.id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn contract_explain_check_resolves_all_check_ids() {
+        // explain_check should resolve every check ID
+        for def in super::BUILTIN_CHECKS {
+            let result = super::explain_check(def.id);
+            assert!(
+                result.is_some(),
+                "explain_check('{}') returned None",
+                def.id
+            );
+        }
+    }
+
+    #[test]
+    fn contract_explain_check_resolves_all_finding_codes() {
+        // explain_check should resolve every finding code to its parent check
+        for doc in super::CHECK_DOCS {
+            for code in doc.codes {
+                let result = super::explain_check(code);
+                assert!(
+                    result.is_some(),
+                    "explain_check('{}') returned None for code from check '{}'",
+                    code,
+                    doc.id
+                );
+                // Verify it resolves to the correct check
+                assert_eq!(
+                    result.unwrap().id,
+                    doc.id,
+                    "explain_check('{}') resolved to '{}', expected '{}'",
+                    code,
+                    result.unwrap().id,
+                    doc.id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn contract_all_checks_have_nonempty_codes() {
+        // Every documented check should have at least one finding code
+        for doc in super::CHECK_DOCS {
+            assert!(
+                !doc.codes.is_empty(),
+                "Check '{}' has no finding codes defined",
+                doc.id
+            );
+        }
+    }
+
+    #[test]
+    fn contract_check_ids_follow_naming_convention() {
+        // Check IDs should follow the pattern "module.check_name"
+        for def in super::BUILTIN_CHECKS {
+            assert!(
+                def.id.contains('.'),
+                "Check ID '{}' doesn't follow 'module.check_name' convention",
+                def.id
+            );
+            let parts: Vec<&str> = def.id.split('.').collect();
+            assert_eq!(
+                parts.len(),
+                2,
+                "Check ID '{}' should have exactly one '.' separator",
+                def.id
+            );
+            assert!(
+                !parts[0].is_empty() && !parts[1].is_empty(),
+                "Check ID '{}' has empty module or check name",
+                def.id
+            );
+        }
+    }
+
+    #[test]
+    fn contract_finding_codes_are_snake_case() {
+        // All finding codes should be snake_case (lowercase with underscores, digits allowed)
+        for doc in super::CHECK_DOCS {
+            for code in doc.codes {
+                assert!(
+                    code.chars()
+                        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'),
+                    "Finding code '{}' in check '{}' is not snake_case",
+                    code,
+                    doc.id
+                );
+                // Should not start with a digit
+                assert!(
+                    !code.chars().next().unwrap_or('0').is_ascii_digit(),
+                    "Finding code '{}' in check '{}' starts with a digit",
+                    code,
+                    doc.id
+                );
+            }
+        }
     }
 }

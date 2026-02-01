@@ -8,6 +8,7 @@ members = [
   "crates/builddiag-render",
   "crates/builddiag-app",
   "crates/builddiag-cli",
+  "crates/depguard",
   "xtask",
 ]
 

@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use builddiag_app::{compute_changed_files, load_config, run_check, write_outputs};
-use builddiag_checks::explain_check;
+use builddiag_checks::{BUILTIN_CHECKS, CHECK_DOCS, explain_check};
 use builddiag_render::{render_github_annotations, render_markdown};
-use builddiag_types::{Config, Profile};
+use builddiag_types::{Config, Profile, ProfileCheckState};
 use camino::{Utf8Path, Utf8PathBuf};
 use clap::{Parser, Subcommand, ValueEnum};
 use std::process;
@@ -103,6 +103,26 @@ enum Command {
         /// Check ID (e.g., "rust.msrv_defined") or finding code (e.g., "missing_msrv").
         check_or_code: String,
     },
+
+    /// List all available checks with their profile severities.
+    ListChecks {
+        /// Profile to show (defaults to showing all profiles).
+        #[arg(long, value_enum)]
+        profile: Option<ProfileArg>,
+
+        /// Output format: table (default) or json.
+        #[arg(long, default_value = "table")]
+        format: ListFormat,
+    },
+}
+
+/// Output format for list-checks command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum ListFormat {
+    /// Human-readable table format.
+    Table,
+    /// JSON format for machine processing.
+    Json,
 }
 
 fn main() {
@@ -206,9 +226,143 @@ fn try_main() -> Result<()> {
                 process::exit(1);
             }
         }
+        Command::ListChecks { profile, format } => {
+            list_checks(profile.map(Profile::from), format);
+        }
     }
 
     Ok(())
+}
+
+fn list_checks(profile_filter: Option<Profile>, format: ListFormat) {
+    match format {
+        ListFormat::Json => list_checks_json(profile_filter),
+        ListFormat::Table => list_checks_table(profile_filter),
+    }
+}
+
+fn list_checks_json(profile_filter: Option<Profile>) {
+    #[derive(serde::Serialize)]
+    struct CheckInfo {
+        id: &'static str,
+        name: &'static str,
+        description: &'static str,
+        codes: &'static [&'static str],
+        profiles: ProfileInfo,
+    }
+
+    #[derive(serde::Serialize)]
+    struct ProfileInfo {
+        oss: ProfileState,
+        team: ProfileState,
+        strict: ProfileState,
+    }
+
+    #[derive(serde::Serialize)]
+    struct ProfileState {
+        enabled: bool,
+        severity: Option<&'static str>,
+    }
+
+    fn profile_state_to_json(state: ProfileCheckState) -> ProfileState {
+        match state {
+            ProfileCheckState::Skip => ProfileState {
+                enabled: false,
+                severity: None,
+            },
+            ProfileCheckState::Enabled(sev) => ProfileState {
+                enabled: true,
+                severity: Some(match sev {
+                    builddiag_types::Severity::Info => "info",
+                    builddiag_types::Severity::Warn => "warn",
+                    builddiag_types::Severity::Error => "error",
+                }),
+            },
+        }
+    }
+
+    let checks: Vec<CheckInfo> = BUILTIN_CHECKS
+        .iter()
+        .filter_map(|def| {
+            // Find documentation for this check
+            let doc = CHECK_DOCS.iter().find(|d| d.id == def.id)?;
+
+            // If filtering by profile, skip checks that are disabled in that profile
+            if let Some(p) = profile_filter
+                && matches!(p.check_state(def.id), ProfileCheckState::Skip)
+            {
+                return None;
+            }
+
+            Some(CheckInfo {
+                id: def.id,
+                name: doc.name,
+                description: doc.description,
+                codes: doc.codes,
+                profiles: ProfileInfo {
+                    oss: profile_state_to_json(Profile::Oss.check_state(def.id)),
+                    team: profile_state_to_json(Profile::Team.check_state(def.id)),
+                    strict: profile_state_to_json(Profile::Strict.check_state(def.id)),
+                },
+            })
+        })
+        .collect();
+
+    println!("{}", serde_json::to_string_pretty(&checks).unwrap());
+}
+
+fn list_checks_table(profile_filter: Option<Profile>) {
+    fn severity_str(state: ProfileCheckState) -> &'static str {
+        match state {
+            ProfileCheckState::Skip => "skip",
+            ProfileCheckState::Enabled(sev) => match sev {
+                builddiag_types::Severity::Info => "info",
+                builddiag_types::Severity::Warn => "warn",
+                builddiag_types::Severity::Error => "error",
+            },
+        }
+    }
+
+    println!("Available checks:");
+    println!();
+
+    // Header
+    if profile_filter.is_some() {
+        println!("{:<35} {:<25} {:>8}", "CHECK ID", "NAME", "SEVERITY");
+        println!("{}", "-".repeat(70));
+    } else {
+        println!(
+            "{:<35} {:<25} {:>6} {:>6} {:>6}",
+            "CHECK ID", "NAME", "OSS", "TEAM", "STRICT"
+        );
+        println!("{}", "-".repeat(82));
+    }
+
+    for def in BUILTIN_CHECKS {
+        let doc = CHECK_DOCS.iter().find(|d| d.id == def.id);
+        let name = doc.map(|d| d.name).unwrap_or("(unknown)");
+
+        // If filtering by profile, skip checks that are disabled
+        if let Some(p) = profile_filter {
+            let state = p.check_state(def.id);
+            if matches!(state, ProfileCheckState::Skip) {
+                continue;
+            }
+            println!("{:<35} {:<25} {:>8}", def.id, name, severity_str(state));
+        } else {
+            println!(
+                "{:<35} {:<25} {:>6} {:>6} {:>6}",
+                def.id,
+                name,
+                severity_str(Profile::Oss.check_state(def.id)),
+                severity_str(Profile::Team.check_state(def.id)),
+                severity_str(Profile::Strict.check_state(def.id)),
+            );
+        }
+    }
+
+    println!();
+    println!("Use 'builddiag explain <check-id>' for detailed documentation.");
 }
 
 fn default_report_path(cfg: &Config, root: &Utf8Path) -> Utf8PathBuf {

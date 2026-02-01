@@ -18,6 +18,7 @@ builddiag-app = { path = "../builddiag-app" }
 builddiag-checks = { path = "../builddiag-checks" }
 builddiag-render = { path = "../builddiag-render" }
 builddiag-types = { path = "../builddiag-types" }
+serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
