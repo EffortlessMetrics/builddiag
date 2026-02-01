@@ -1,0 +1,85 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+
+      - name: Publish builddiag-types
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish --manifest-path crates/builddiag-types/Cargo.toml --allow-dirty
+
+      - name: Publish builddiag-domain
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish --manifest-path crates/builddiag-domain/Cargo.toml --allow-dirty
+
+      - name: Publish builddiag-repo
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish --manifest-path crates/builddiag-repo/Cargo.toml --allow-dirty
+
+      - name: Publish builddiag-checks
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish --manifest-path crates/builddiag-checks/Cargo.toml --allow-dirty
+
+      - name: Publish builddiag-render
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish --manifest-path crates/builddiag-render/Cargo.toml --allow-dirty
+
+      - name: Publish builddiag-app
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish --manifest-path crates/builddiag-app/Cargo.toml --allow-dirty
+
+      - name: Publish builddiag (CLI)
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish --manifest-path crates/builddiag-cli/Cargo.toml --allow-dirty
+name: Release
+on:
+  push:
+    tags: ["v*.*.*"]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Publish crates
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          cargo publish -p builddiag-types
+          sleep 30
+          cargo publish -p builddiag-domain
+          sleep 30
+          cargo publish -p builddiag-repo
+          sleep 30
+          cargo publish -p builddiag-checks
+          sleep 30
+          cargo publish -p builddiag-render
+          sleep 30
+          cargo publish -p builddiag-app
+          sleep 30
+          cargo publish -p builddiag

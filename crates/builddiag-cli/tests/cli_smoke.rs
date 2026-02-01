@@ -2,6 +2,11 @@ use assert_cmd::Command;
 use std::fs;
 use tempfile::TempDir;
 
+#[allow(deprecated)]
+fn get_builddiag_cmd() -> Command {
+    Command::cargo_bin("builddiag").unwrap()
+}
+
 fn write_file(dir: &TempDir, rel: &str, contents: &str) {
     let p = dir.path().join(rel);
     if let Some(parent) = p.parent() {
@@ -35,8 +40,11 @@ edition = "2021"
     );
     write_file(&dir, "crates/a/src/lib.rs", "pub fn f() -> u32 { 1 }\n");
 
-    let mut cmd = Command::cargo_bin("builddiag").unwrap();
-    cmd.arg("check").arg("--root").arg(dir.path()).arg("--always");
+    let mut cmd = get_builddiag_cmd();
+    cmd.arg("check")
+        .arg("--root")
+        .arg(dir.path())
+        .arg("--always");
 
     cmd.assert().code(2);
 }
@@ -78,8 +86,14 @@ channel = "1.75.0"
 "#,
     );
 
-    let mut cmd = Command::cargo_bin("builddiag").unwrap();
-    cmd.arg("check").arg("--root").arg(dir.path()).arg("--always");
+    // Create empty checksums file (required by default config)
+    write_file(&dir, "scripts/tools.sha256", "");
+
+    let mut cmd = get_builddiag_cmd();
+    cmd.arg("check")
+        .arg("--root")
+        .arg(dir.path())
+        .arg("--always");
 
     cmd.assert().success().code(0);
 }
