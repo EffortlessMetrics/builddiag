@@ -213,7 +213,7 @@ fn load_workspace(manifest_path: &Utf8Path) -> Result<WorkspaceInfo> {
             parse_package_inheritable_string(&manifest_value, "edition")?;
 
         members.push(Member {
-            name: pkg.name.clone(),
+            name: pkg.name.to_string(),
             manifest_path,
             rust_version,
             rust_version_workspace,
