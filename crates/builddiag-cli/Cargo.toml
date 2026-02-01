@@ -15,6 +15,7 @@ anyhow.workspace = true
 clap.workspace = true
 camino.workspace = true
 builddiag-app = { path = "../builddiag-app" }
+builddiag-checks = { path = "../builddiag-checks" }
 builddiag-render = { path = "../builddiag-render" }
 builddiag-types = { path = "../builddiag-types" }
 serde_json.workspace = true

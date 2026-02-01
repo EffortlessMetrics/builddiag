@@ -44,6 +44,8 @@ edition = "2021"
     cmd.arg("check")
         .arg("--root")
         .arg(dir.path())
+        .arg("--profile")
+        .arg("strict")
         .arg("--always");
 
     cmd.assert().code(2);

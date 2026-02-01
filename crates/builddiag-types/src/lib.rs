@@ -288,6 +288,101 @@ pub enum FailOn {
     Never,
 }
 
+/// Profile preset that configures check severities and behavior.
+///
+/// Profiles provide sensible defaults for different use cases:
+/// - `Oss` - Warn-heavy defaults suitable for open source projects
+/// - `Team` - Stronger gating for team/organization projects
+/// - `Strict` - Full CI/release discipline with maximum enforcement
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Profile {
+    /// Open source profile with warn-heavy defaults and minimal assumptions.
+    /// Good for wide adoption with low friction.
+    #[default]
+    Oss,
+    /// Team profile with stronger gating for organizational projects.
+    Team,
+    /// Strict profile with maximum enforcement for CI/release discipline.
+    Strict,
+}
+
+impl std::fmt::Display for Profile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Profile::Oss => write!(f, "oss"),
+            Profile::Team => write!(f, "team"),
+            Profile::Strict => write!(f, "strict"),
+        }
+    }
+}
+
+impl std::str::FromStr for Profile {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "oss" => Ok(Profile::Oss),
+            "team" => Ok(Profile::Team),
+            "strict" => Ok(Profile::Strict),
+            _ => Err(format!(
+                "invalid profile '{}': expected 'oss', 'team', or 'strict'",
+                s
+            )),
+        }
+    }
+}
+
+/// Check enablement state for a profile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProfileCheckState {
+    /// Check is enabled with the given severity.
+    Enabled(Severity),
+    /// Check is skipped/disabled.
+    Skip,
+}
+
+impl Profile {
+    /// Returns the check state (severity or skip) for a given check ID under this profile.
+    ///
+    /// Profile severity mappings:
+    /// - `oss`: msrv_defined=warn, msrv_consistent=error, toolchain_pinning=info,
+    ///   resolver_v2=warn, checksums=skip
+    /// - `team`: msrv_defined=warn, msrv_consistent=error, toolchain_pinning=warn,
+    ///   resolver_v2=error, checksums=warn
+    /// - `strict`: all checks at error severity
+    pub fn check_state(&self, check_id: &str) -> ProfileCheckState {
+        match self {
+            Profile::Oss => match check_id {
+                "rust.msrv_defined" => ProfileCheckState::Enabled(Severity::Warn),
+                "rust.msrv_consistent" => ProfileCheckState::Enabled(Severity::Error),
+                "rust.toolchain_pinning" => ProfileCheckState::Enabled(Severity::Info),
+                "rust.toolchain_msrv_relation" => ProfileCheckState::Enabled(Severity::Info),
+                "tools.checksums_file_exists" => ProfileCheckState::Skip,
+                "tools.checksums_format" => ProfileCheckState::Skip,
+                "tools.checksums_coverage" => ProfileCheckState::Skip,
+                "tools.checksums_verify_local" => ProfileCheckState::Skip,
+                "workspace.resolver_v2" => ProfileCheckState::Enabled(Severity::Warn),
+                _ => ProfileCheckState::Enabled(Severity::Warn),
+            },
+            Profile::Team => match check_id {
+                "rust.msrv_defined" => ProfileCheckState::Enabled(Severity::Warn),
+                "rust.msrv_consistent" => ProfileCheckState::Enabled(Severity::Error),
+                "rust.toolchain_pinning" => ProfileCheckState::Enabled(Severity::Warn),
+                "rust.toolchain_msrv_relation" => ProfileCheckState::Enabled(Severity::Warn),
+                "tools.checksums_file_exists" => ProfileCheckState::Enabled(Severity::Warn),
+                "tools.checksums_format" => ProfileCheckState::Enabled(Severity::Warn),
+                "tools.checksums_coverage" => ProfileCheckState::Enabled(Severity::Warn),
+                "tools.checksums_verify_local" => ProfileCheckState::Enabled(Severity::Warn),
+                "workspace.resolver_v2" => ProfileCheckState::Enabled(Severity::Error),
+                _ => ProfileCheckState::Enabled(Severity::Warn),
+            },
+            // All checks at error severity in strict mode
+            Profile::Strict => ProfileCheckState::Enabled(Severity::Error),
+        }
+    }
+}
+
 /// Source for determining the authoritative MSRV.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
@@ -562,6 +657,8 @@ impl CheckConfig {
 /// # Example
 ///
 /// ```toml
+/// profile = "oss"
+///
 /// [defaults]
 /// fail_on = "error"
 /// out_dir = "artifacts/builddiag"
@@ -576,6 +673,10 @@ impl CheckConfig {
 /// ```
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct Config {
+    /// Profile preset that configures check severities.
+    /// Can be overridden via CLI `--profile` flag.
+    #[serde(default)]
+    pub profile: Profile,
     /// Default settings for output and failure behavior.
     #[serde(default)]
     pub defaults: Defaults,

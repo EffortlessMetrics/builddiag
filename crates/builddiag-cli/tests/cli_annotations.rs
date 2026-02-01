@@ -813,6 +813,7 @@ edition = "2021"
     write_file(&dir, "crates/a/src/lib.rs", "");
 
     // Run check with --github-annotations to capture output
+    // Use --profile strict to ensure missing MSRV is an error
     let report_path = dir.path().join("report.json");
     let mut check_cmd = get_builddiag_cmd();
     check_cmd
@@ -821,6 +822,8 @@ edition = "2021"
         .arg(dir.path())
         .arg("--out")
         .arg(&report_path)
+        .arg("--profile")
+        .arg("strict")
         .arg("--github-annotations")
         .arg("--always");
 

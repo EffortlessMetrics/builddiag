@@ -637,7 +637,7 @@ fn default_config_when_no_config_flag() {
     );
 }
 
-/// Test: Default config applies default policy (requires MSRV, toolchain, checksums).
+/// Test: Strict profile applies strict policy (requires MSRV, toolchain, checksums).
 /// _Requirements: 6.5_
 #[test]
 fn default_config_applies_default_policy() {
@@ -648,9 +648,11 @@ fn default_config_applies_default_policy() {
     cmd.arg("check")
         .arg("--root")
         .arg(dir.path())
+        .arg("--profile")
+        .arg("strict")
         .arg("--always");
 
-    // Should fail because default policy requires toolchain and checksums
+    // Should fail because strict profile requires toolchain and checksums
     cmd.assert().code(2);
 }
 
@@ -677,6 +679,8 @@ require_file = false
     cmd.arg("check")
         .arg("--root")
         .arg(dir.path())
+        .arg("--profile")
+        .arg("strict")
         .arg("--always");
 
     // Should fail because .builddiag.toml is NOT auto-loaded
@@ -703,17 +707,19 @@ require_file = false
 "#,
     );
 
-    // Without --config flag, should fail
+    // Without --config flag and with strict profile, should fail
     let mut cmd_without_config = get_builddiag_cmd();
     cmd_without_config
         .arg("check")
         .arg("--root")
         .arg(dir.path())
+        .arg("--profile")
+        .arg("strict")
         .arg("--always");
 
     cmd_without_config.assert().code(2);
 
-    // With --config flag, should pass
+    // With --config flag, should pass (config disables those requirements)
     let mut cmd_with_config = get_builddiag_cmd();
     cmd_with_config
         .arg("check")

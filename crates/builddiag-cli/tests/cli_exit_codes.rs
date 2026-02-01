@@ -187,13 +187,13 @@ fail_on = "never"
 // Exit Code 2 Tests - Errors present (checks failed)
 // =============================================================================
 
-/// Test: Exit code 2 when MSRV is missing (error).
+/// Test: Exit code 2 when MSRV is missing (error with strict profile).
 /// _Requirements: 6.8_
 #[test]
 fn exit_code_2_when_msrv_missing() {
     let dir = TempDir::new().unwrap();
 
-    // Workspace without rust-version - this is an error with default policy
+    // Workspace without rust-version - this is an error with strict profile
     write_file(
         &dir,
         "Cargo.toml",
@@ -218,12 +218,14 @@ edition = "2021"
     cmd.arg("check")
         .arg("--root")
         .arg(dir.path())
+        .arg("--profile")
+        .arg("strict")
         .arg("--always");
 
     cmd.assert().code(2);
 }
 
-/// Test: Exit code 2 when toolchain is missing (error).
+/// Test: Exit code 2 when toolchain is missing (error with strict profile).
 /// _Requirements: 6.8_
 #[test]
 fn exit_code_2_when_toolchain_missing() {
@@ -255,18 +257,20 @@ rust-version.workspace = true
     write_file(&dir, "crates/a/src/lib.rs", "");
     write_file(&dir, "scripts/tools.sha256", "");
 
-    // No rust-toolchain.toml - this is an error with default policy
+    // No rust-toolchain.toml - this is an error with strict profile
 
     let mut cmd = get_builddiag_cmd();
     cmd.arg("check")
         .arg("--root")
         .arg(dir.path())
+        .arg("--profile")
+        .arg("strict")
         .arg("--always");
 
     cmd.assert().code(2);
 }
 
-/// Test: Exit code 2 when checksums file is missing (error).
+/// Test: Exit code 2 when checksums file is missing (error with strict profile).
 /// _Requirements: 6.8_
 #[test]
 fn exit_code_2_when_checksums_missing() {
@@ -305,18 +309,20 @@ channel = "1.75.0"
 "#,
     );
 
-    // No checksums file - this is an error with default policy
+    // No checksums file - this is an error with strict profile
 
     let mut cmd = get_builddiag_cmd();
     cmd.arg("check")
         .arg("--root")
         .arg(dir.path())
+        .arg("--profile")
+        .arg("strict")
         .arg("--always");
 
     cmd.assert().code(2);
 }
 
-/// Test: Exit code 2 when toolchain is unpinned (error).
+/// Test: Exit code 2 when toolchain is unpinned (error with strict profile).
 /// _Requirements: 6.8_
 #[test]
 fn exit_code_2_when_toolchain_unpinned() {
@@ -348,7 +354,7 @@ rust-version.workspace = true
     write_file(&dir, "crates/a/src/lib.rs", "");
     write_file(&dir, "scripts/tools.sha256", "");
 
-    // Unpinned toolchain using "stable" - this is an error with default policy
+    // Unpinned toolchain using "stable" - this is an error with strict profile
     write_file(
         &dir,
         "rust-toolchain.toml",
@@ -361,12 +367,14 @@ channel = "stable"
     cmd.arg("check")
         .arg("--root")
         .arg(dir.path())
+        .arg("--profile")
+        .arg("strict")
         .arg("--always");
 
     cmd.assert().code(2);
 }
 
-/// Test: Exit code 2 when multiple errors exist.
+/// Test: Exit code 2 when multiple errors exist (with strict profile).
 /// _Requirements: 6.8_
 #[test]
 fn exit_code_2_when_multiple_errors() {
@@ -397,6 +405,8 @@ edition = "2021"
     cmd.arg("check")
         .arg("--root")
         .arg(dir.path())
+        .arg("--profile")
+        .arg("strict")
         .arg("--always");
 
     cmd.assert().code(2);
@@ -409,7 +419,7 @@ edition = "2021"
 fn exit_code_2_with_fail_on_never_when_errors_exist() {
     let dir = TempDir::new().unwrap();
 
-    // Workspace with missing MSRV - this is an error
+    // Workspace with missing MSRV - this is an error with strict profile
     write_file(
         &dir,
         "Cargo.toml",
@@ -430,11 +440,13 @@ edition = "2021"
     );
     write_file(&dir, "crates/a/src/lib.rs", "");
 
-    // Config with fail_on = "never" - but errors still cause exit code 2
+    // Config with fail_on = "never" and strict profile - errors still cause exit code 2
     write_file(
         &dir,
         ".builddiag.toml",
-        r#"[defaults]
+        r#"profile = "strict"
+
+[defaults]
 fail_on = "never"
 "#,
     );
@@ -591,16 +603,22 @@ rust-version.workspace = true
     );
     write_file(&dir, "crates/a/src/lib.rs", "");
 
-    // Missing toolchain file (error) and missing checksums (will be warning)
+    // Missing toolchain file (error with strict) and missing checksums (warning)
     // No rust-toolchain.toml
 
-    // Config with fail_on = "warn" and checksums as warning (note: full check ID with prefix)
+    // Config with fail_on = "warn", strict profile for toolchain, and checksums as warning
     write_file(
         &dir,
         ".builddiag.toml",
         r#"[defaults]
 fail_on = "warn"
 
+# Make toolchain_pinning an error
+[[checks]]
+id = "rust.toolchain_pinning"
+severity = "error"
+
+# Keep checksums as warning
 [[checks]]
 id = "tools.checksums_file_exists"
 severity = "warn"

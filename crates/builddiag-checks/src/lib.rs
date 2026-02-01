@@ -2,12 +2,147 @@ use anyhow::{Context, Result, anyhow};
 use builddiag_domain::{check_status_from_findings, parse_rust_version};
 use builddiag_repo::{RepoState, maybe_parse_numeric_version};
 use builddiag_types::{
-    CheckConfig, CheckReport, CheckStatus, Config, Finding, RelationToMsrv, Severity,
+    CheckConfig, CheckReport, CheckStatus, Config, Finding, ProfileCheckState, RelationToMsrv,
+    Severity,
 };
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeSet, HashSet};
 use std::fs;
+
+/// Documentation for a check, used by the `explain` subcommand.
+#[derive(Debug, Clone)]
+pub struct CheckDocumentation {
+    /// Check ID (e.g., "rust.msrv_defined").
+    pub id: &'static str,
+    /// Human-readable name.
+    pub name: &'static str,
+    /// Detailed description of what the check validates.
+    pub description: &'static str,
+    /// Short help text for remediation.
+    pub help: &'static str,
+    /// Optional documentation URL.
+    pub url: Option<&'static str>,
+    /// Finding codes this check can produce.
+    pub codes: &'static [&'static str],
+}
+
+/// Registry of check documentation.
+static CHECK_DOCS: &[CheckDocumentation] = &[
+    CheckDocumentation {
+        id: "rust.msrv_defined",
+        name: "MSRV Defined",
+        description: "Validates that the Minimum Supported Rust Version (MSRV) is explicitly \
+                      defined in Cargo.toml. MSRV helps users and CI systems know which Rust \
+                      version is required to build your crate.",
+        help: "Add `rust-version = \"1.XX.0\"` to your workspace Cargo.toml under \
+               [workspace.package] or [package].",
+        url: Some("https://doc.rust-lang.org/cargo/reference/manifest.html#the-rust-version-field"),
+        codes: &["missing_msrv"],
+    },
+    CheckDocumentation {
+        id: "rust.msrv_consistent",
+        name: "MSRV Consistent",
+        description: "Validates that all workspace members have consistent MSRV values. \
+                      Inconsistent MSRV across crates can cause confusing build failures.",
+        help: "Ensure all crates either inherit from workspace.package.rust-version or \
+               explicitly set the same rust-version.",
+        url: Some("https://doc.rust-lang.org/cargo/reference/workspaces.html"),
+        codes: &[
+            "invalid_msrv",
+            "missing_member_msrv",
+            "invalid_member_msrv",
+            "msrv_mismatch",
+        ],
+    },
+    CheckDocumentation {
+        id: "rust.toolchain_pinning",
+        name: "Toolchain Pinning",
+        description: "Validates that rust-toolchain.toml pins the Rust version to a specific \
+                      release (e.g., \"1.75.0\") rather than a moving target like \"stable\".",
+        help: "Create rust-toolchain.toml with `channel = \"1.XX.0\"` to pin the version.",
+        url: Some("https://rust-lang.github.io/rustup/overrides.html#the-toolchain-file"),
+        codes: &[
+            "missing_toolchain",
+            "nightly_disallowed",
+            "unpinned_channel",
+            "invalid_toolchain_version",
+        ],
+    },
+    CheckDocumentation {
+        id: "rust.toolchain_msrv_relation",
+        name: "Toolchain-MSRV Relation",
+        description: "Validates that the pinned toolchain version matches or exceeds the MSRV. \
+                      This ensures CI tests against the version users will actually use.",
+        help: "Set your toolchain channel to match your MSRV, or configure \
+               policy.toolchain.relation_to_msrv = \"at_least\" to allow newer toolchains.",
+        url: None,
+        codes: &["toolchain_msrv_mismatch"],
+    },
+    CheckDocumentation {
+        id: "tools.checksums_file_exists",
+        name: "Checksums File Exists",
+        description: "Validates that the tools checksums file (scripts/tools.sha256) exists. \
+                      This file contains SHA256 hashes for tool binaries to verify integrity.",
+        help: "Create scripts/tools.sha256 with checksums in the format: \
+               `<sha256hash>  <filepath>`",
+        url: None,
+        codes: &["missing_checksums"],
+    },
+    CheckDocumentation {
+        id: "tools.checksums_format",
+        name: "Checksums Format",
+        description: "Validates that the checksums file has valid format: 64-character hex \
+                      SHA256 hashes followed by file paths, no duplicates.",
+        help: "Ensure each line follows the format: `<64-char-sha256>  <filepath>`. \
+               Generate with: `sha256sum <file>`",
+        url: None,
+        codes: &["invalid_hash", "missing_path", "duplicate_path"],
+    },
+    CheckDocumentation {
+        id: "tools.checksums_coverage",
+        name: "Checksums Coverage",
+        description: "Validates that all tool files listed in the tools manifest have \
+                      corresponding checksum entries.",
+        help: "Add missing checksums for all files listed in scripts/tools.toml.",
+        url: None,
+        codes: &["missing_checksum", "unexpected_checksum"],
+    },
+    CheckDocumentation {
+        id: "tools.checksums_verify_local",
+        name: "Checksums Verify Local",
+        description: "Verifies that local tool files match their recorded checksums. \
+                      Detects tampering or corruption of tool binaries.",
+        help: "Re-download or regenerate tools with mismatched checksums, then update \
+               scripts/tools.sha256.",
+        url: None,
+        codes: &["missing_tool_file", "hash_mismatch"],
+    },
+    CheckDocumentation {
+        id: "workspace.resolver_v2",
+        name: "Workspace Resolver v2",
+        description: "Validates that Cargo workspaces use resolver version 2. Resolver v2 \
+                      has better feature unification and is required for edition 2021+.",
+        help: "Add `resolver = \"2\"` to your [workspace] section in Cargo.toml.",
+        url: Some(
+            "https://doc.rust-lang.org/cargo/reference/resolver.html#feature-resolver-version-2",
+        ),
+        codes: &["resolver_not_v2"],
+    },
+];
+
+/// Look up documentation for a check ID or finding code.
+///
+/// Returns `Some(CheckDocumentation)` if found, `None` otherwise.
+pub fn explain_check(check_or_code: &str) -> Option<&'static CheckDocumentation> {
+    // First try exact match on check ID
+    if let Some(doc) = CHECK_DOCS.iter().find(|d| d.id == check_or_code) {
+        return Some(doc);
+    }
+
+    // Then try finding by code
+    CHECK_DOCS.iter().find(|d| d.codes.contains(&check_or_code))
+}
 
 pub struct CheckDef {
     pub id: &'static str,
@@ -74,18 +209,35 @@ pub fn run_selected_checks(
     allow_all: bool,
 ) -> Result<Vec<CheckReport>> {
     let overrides = config.check_overrides();
+    let profile = config.profile;
     let mut reports = Vec::new();
 
     for def in BUILTIN_CHECKS {
         let ov = overrides.get(def.id);
-        if let Some(ov) = ov
-            && !ov.enabled
-        {
+
+        // Determine effective severity from profile, then user override
+        let profile_state = profile.check_state(def.id);
+
+        // User override takes precedence over profile
+        let (enabled, effective_severity) = if let Some(ov) = ov {
+            (ov.enabled, ov.severity)
+        } else {
+            match profile_state {
+                ProfileCheckState::Enabled(sev) => (true, sev),
+                ProfileCheckState::Skip => (false, def.default_severity),
+            }
+        };
+
+        if !enabled {
             reports.push(CheckReport {
                 id: def.id.to_string(),
                 status: CheckStatus::Skip,
                 findings: Vec::new(),
-                skipped_reason: Some("disabled".to_string()),
+                skipped_reason: Some(if ov.is_some() {
+                    "disabled".to_string()
+                } else {
+                    format!("disabled by {} profile", profile)
+                }),
             });
             continue;
         }
@@ -108,31 +260,27 @@ pub fn run_selected_checks(
         }
 
         let mut report = match def.id {
-            "rust.msrv_defined" => check_msrv_defined(repo, config, def.default_severity)?,
-            "rust.msrv_consistent" => check_msrv_consistent(repo, config, def.default_severity)?,
-            "rust.toolchain_pinning" => {
-                check_toolchain_pinning(repo, config, def.default_severity)?
-            }
+            "rust.msrv_defined" => check_msrv_defined(repo, config, effective_severity)?,
+            "rust.msrv_consistent" => check_msrv_consistent(repo, config, effective_severity)?,
+            "rust.toolchain_pinning" => check_toolchain_pinning(repo, config, effective_severity)?,
             "rust.toolchain_msrv_relation" => {
-                check_toolchain_msrv_relation(repo, config, def.default_severity)?
+                check_toolchain_msrv_relation(repo, config, effective_severity)?
             }
             "tools.checksums_file_exists" => {
-                check_checksums_file_exists(repo, config, def.default_severity)?
+                check_checksums_file_exists(repo, config, effective_severity)?
             }
-            "tools.checksums_format" => check_checksums_format(repo, config, def.default_severity)?,
+            "tools.checksums_format" => check_checksums_format(repo, config, effective_severity)?,
             "tools.checksums_coverage" => {
-                check_checksums_coverage(repo, config, def.default_severity)?
+                check_checksums_coverage(repo, config, effective_severity)?
             }
             "tools.checksums_verify_local" => {
-                check_checksums_verify_local(repo, config, def.default_severity)?
+                check_checksums_verify_local(repo, config, effective_severity)?
             }
-            "workspace.resolver_v2" => {
-                check_workspace_resolver(repo, config, def.default_severity)?
-            }
+            "workspace.resolver_v2" => check_workspace_resolver(repo, config, effective_severity)?,
             _ => return Err(anyhow!("unknown check id: {}", def.id)),
         };
 
-        // Apply severity override if configured.
+        // Apply severity override if explicitly configured (belt-and-suspenders with profile)
         if let Some(ov) = ov {
             report.findings = apply_severity_override(report.findings, ov);
         }

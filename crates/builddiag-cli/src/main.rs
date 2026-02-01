@@ -1,10 +1,32 @@
 use anyhow::{Context, Result};
 use builddiag_app::{compute_changed_files, load_config, run_check, write_outputs};
+use builddiag_checks::explain_check;
 use builddiag_render::{render_github_annotations, render_markdown};
-use builddiag_types::Config;
+use builddiag_types::{Config, Profile};
 use camino::{Utf8Path, Utf8PathBuf};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use std::process;
+
+/// CLI-compatible profile enum for clap value parsing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum ProfileArg {
+    /// Open source profile with warn-heavy defaults.
+    Oss,
+    /// Team profile with stronger gating.
+    Team,
+    /// Strict profile with maximum enforcement.
+    Strict,
+}
+
+impl From<ProfileArg> for Profile {
+    fn from(arg: ProfileArg) -> Self {
+        match arg {
+            ProfileArg::Oss => Profile::Oss,
+            ProfileArg::Team => Profile::Team,
+            ProfileArg::Strict => Profile::Strict,
+        }
+    }
+}
 
 #[derive(Debug, Parser)]
 #[command(
@@ -28,6 +50,10 @@ enum Command {
         /// Optional config file (TOML).
         #[arg(long)]
         config: Option<Utf8PathBuf>,
+
+        /// Profile preset (oss, team, strict). Overrides config file profile.
+        #[arg(long, value_enum)]
+        profile: Option<ProfileArg>,
 
         /// Output JSON report path.
         #[arg(long)]
@@ -71,6 +97,12 @@ enum Command {
         #[arg(long)]
         report: Utf8PathBuf,
     },
+
+    /// Show documentation for a check or finding code.
+    Explain {
+        /// Check ID (e.g., "rust.msrv_defined") or finding code (e.g., "missing_msrv").
+        check_or_code: String,
+    },
 }
 
 fn main() {
@@ -87,6 +119,7 @@ fn try_main() -> Result<()> {
         Command::Check {
             root,
             config,
+            profile,
             out,
             md,
             github_annotations,
@@ -97,6 +130,11 @@ fn try_main() -> Result<()> {
         } => {
             let cfg_path = config.as_deref();
             let mut cfg: Config = load_config(cfg_path)?;
+
+            // CLI --profile overrides config file profile
+            if let Some(profile_arg) = profile {
+                cfg.profile = profile_arg.into();
+            }
 
             if diff_aware {
                 cfg.defaults.diff_aware = true;
@@ -142,6 +180,30 @@ fn try_main() -> Result<()> {
                 serde_json::from_slice(&bytes).with_context(|| format!("parse {report}"))?;
             for line in render_github_annotations(&report) {
                 println!("{line}");
+            }
+        }
+        Command::Explain { check_or_code } => {
+            if let Some(doc) = explain_check(&check_or_code) {
+                println!("{}", doc.name);
+                println!("{}", "=".repeat(doc.name.len()));
+                println!();
+                println!("{}", doc.description);
+                println!();
+                println!("Help: {}", doc.help);
+                if let Some(url) = &doc.url {
+                    println!("Documentation: {}", url);
+                }
+                println!();
+                println!("Finding codes:");
+                for code in doc.codes {
+                    println!("  - {}", code);
+                }
+            } else {
+                eprintln!(
+                    "Unknown check or finding code: '{}'\n\nRun 'builddiag explain --help' for usage.",
+                    check_or_code
+                );
+                process::exit(1);
             }
         }
     }

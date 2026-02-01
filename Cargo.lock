@@ -145,6 +145,7 @@ dependencies = [
  "anyhow",
  "assert_cmd",
  "builddiag-app",
+ "builddiag-checks",
  "builddiag-render",
  "builddiag-types",
  "camino",

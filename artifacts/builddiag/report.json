@@ -1,0 +1,110 @@
+{
+  "schema": "builddiag.report.v1",
+  "tool": {
+    "name": "builddiag",
+    "version": "0.1.0"
+  },
+  "run": {
+    "id": "2026-02-01T08:05:22.413996300+00:00",
+    "started_at": "2026-02-01T08:05:22.413996300Z",
+    "ended_at": "2026-02-01T08:05:22.470976500Z"
+  },
+  "repo": {
+    "root": "\\\\?\\D:\\Code\\Rust\\builddiag",
+    "detected": {
+      "is_workspace": true,
+      "members": 8
+    }
+  },
+  "inputs": {
+    "cargo_root": "Cargo.toml",
+    "rust_toolchain": null,
+    "tools_checksums": null,
+    "tools_manifest": null
+  },
+  "checks": [
+    {
+      "id": "rust.msrv_defined",
+      "status": "warn",
+      "findings": [
+        {
+          "severity": "warn",
+          "code": "missing_msrv",
+          "message": "Missing workspace/package rust-version (MSRV) in Cargo.toml",
+          "path": "Cargo.toml",
+          "line": null,
+          "column": null
+        }
+      ],
+      "skipped_reason": null
+    },
+    {
+      "id": "rust.msrv_consistent",
+      "status": "pass",
+      "findings": [],
+      "skipped_reason": "no workspace/package MSRV to compare"
+    },
+    {
+      "id": "rust.toolchain_pinning",
+      "status": "pass",
+      "findings": [
+        {
+          "severity": "info",
+          "code": "missing_toolchain",
+          "message": "Missing rust-toolchain.toml (or rust-toolchain) at repo root",
+          "path": null,
+          "line": null,
+          "column": null
+        }
+      ],
+      "skipped_reason": null
+    },
+    {
+      "id": "rust.toolchain_msrv_relation",
+      "status": "pass",
+      "findings": [],
+      "skipped_reason": "no toolchain file"
+    },
+    {
+      "id": "tools.checksums_file_exists",
+      "status": "skip",
+      "findings": [],
+      "skipped_reason": "disabled by oss profile"
+    },
+    {
+      "id": "tools.checksums_format",
+      "status": "skip",
+      "findings": [],
+      "skipped_reason": "disabled by oss profile"
+    },
+    {
+      "id": "tools.checksums_coverage",
+      "status": "skip",
+      "findings": [],
+      "skipped_reason": "disabled by oss profile"
+    },
+    {
+      "id": "tools.checksums_verify_local",
+      "status": "skip",
+      "findings": [],
+      "skipped_reason": "disabled by oss profile"
+    },
+    {
+      "id": "workspace.resolver_v2",
+      "status": "pass",
+      "findings": [],
+      "skipped_reason": null
+    }
+  ],
+  "summary": {
+    "counts": {
+      "info": 1,
+      "warn": 1,
+      "error": 0
+    },
+    "verdict": "warn",
+    "reasons": [
+      "rust.msrv_defined: warn"
+    ]
+  }
+}

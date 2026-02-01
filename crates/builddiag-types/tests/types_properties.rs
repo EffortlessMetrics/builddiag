@@ -11,9 +11,9 @@
 
 use builddiag_types::{
     CheckConfig, CheckReport, CheckStatus, ChecksumsPolicy, Config, Defaults, FailOn, Finding,
-    Inputs, MsrvPolicy, MsrvSource, PathsConfig, Policy, RelationToMsrv, RepoDetected, RepoInfo,
-    Report, RunInfo, SchemaId, Severity, Summary, SummaryCounts, ToolInfo, ToolchainPolicy,
-    Verdict,
+    Inputs, MsrvPolicy, MsrvSource, PathsConfig, Policy, Profile, RelationToMsrv, RepoDetected,
+    RepoInfo, Report, RunInfo, SchemaId, Severity, Summary, SummaryCounts, ToolInfo,
+    ToolchainPolicy, Verdict,
 };
 use chrono::{TimeZone, Utc};
 use proptest::prelude::*;
@@ -92,6 +92,15 @@ fn arb_msrv_source() -> impl Strategy<Value = MsrvSource> {
 /// Generate arbitrary RelationToMsrv values.
 fn arb_relation_to_msrv() -> impl Strategy<Value = RelationToMsrv> {
     prop_oneof![Just(RelationToMsrv::Equals), Just(RelationToMsrv::AtLeast),]
+}
+
+/// Generate arbitrary Profile values.
+fn arb_profile() -> impl Strategy<Value = Profile> {
+    prop_oneof![
+        Just(Profile::Oss),
+        Just(Profile::Team),
+        Just(Profile::Strict),
+    ]
 }
 
 /// Generate arbitrary Finding instances.
@@ -357,13 +366,15 @@ fn arb_check_config() -> impl Strategy<Value = CheckConfig> {
 /// Generate arbitrary Config instances.
 fn arb_config() -> impl Strategy<Value = Config> {
     (
+        arb_profile(),
         arb_defaults(),
         arb_paths_config(),
         arb_policy(),
         proptest::collection::vec(arb_check_config(), 0..5),
         proptest::collection::btree_map(arb_identifier(), arb_message(), 0..5),
     )
-        .prop_map(|(defaults, paths, policy, checks, meta)| Config {
+        .prop_map(|(profile, defaults, paths, policy, checks, meta)| Config {
+            profile,
             defaults,
             paths,
             policy,

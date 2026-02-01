@@ -136,7 +136,7 @@ fn check_produces_markdown_summary() {
 // MSRV validation tests
 // =============================================================================
 
-/// Test: Missing MSRV fails by default.
+/// Test: Missing MSRV fails with strict profile.
 /// _Requirements: 7.1_
 #[test]
 fn check_missing_msrv_fails() {
@@ -167,12 +167,14 @@ edition = "2021"
     cmd.arg("check")
         .arg("--root")
         .arg(dir.path())
+        .arg("--profile")
+        .arg("strict")
         .arg("--always");
 
     cmd.assert().code(2);
 }
 
-/// Test: MSRV defined only in crate (not workspace) fails with default policy.
+/// Test: MSRV defined only in crate (not workspace) fails with strict profile.
 /// _Requirements: 7.1_
 #[test]
 fn check_msrv_in_crate_only_fails_with_workspace_policy() {
@@ -204,9 +206,11 @@ rust-version = "1.75.0"
     cmd.arg("check")
         .arg("--root")
         .arg(dir.path())
+        .arg("--profile")
+        .arg("strict")
         .arg("--always");
 
-    // Should fail because default policy requires workspace-level MSRV
+    // Should fail because strict policy requires workspace-level MSRV
     cmd.assert().code(2);
 }
 
@@ -274,7 +278,7 @@ source = "any"
 // Toolchain pinning tests
 // =============================================================================
 
-/// Test: Missing rust-toolchain.toml fails with default policy.
+/// Test: Missing rust-toolchain.toml fails with strict profile.
 /// _Requirements: 7.2_
 #[test]
 fn check_missing_toolchain_fails() {
@@ -312,12 +316,14 @@ rust-version.workspace = true
     cmd.arg("check")
         .arg("--root")
         .arg(dir.path())
+        .arg("--profile")
+        .arg("strict")
         .arg("--always");
 
     cmd.assert().code(2);
 }
 
-/// Test: Unpinned toolchain (using channel like "stable") fails.
+/// Test: Unpinned toolchain (using channel like "stable") fails with strict profile.
 /// _Requirements: 7.2_
 #[test]
 fn check_unpinned_toolchain_fails() {
@@ -362,12 +368,14 @@ channel = "stable"
     cmd.arg("check")
         .arg("--root")
         .arg(dir.path())
+        .arg("--profile")
+        .arg("strict")
         .arg("--always");
 
     cmd.assert().code(2);
 }
 
-/// Test: Toolchain version mismatch with MSRV fails with default policy.
+/// Test: Toolchain version mismatch with MSRV fails with strict profile.
 /// _Requirements: 7.2_
 #[test]
 fn check_toolchain_msrv_mismatch_fails() {
@@ -412,9 +420,11 @@ channel = "1.76.0"
     cmd.arg("check")
         .arg("--root")
         .arg(dir.path())
+        .arg("--profile")
+        .arg("strict")
         .arg("--always");
 
-    // Default policy requires toolchain == MSRV
+    // Strict profile requires toolchain == MSRV
     cmd.assert().code(2);
 }
 
@@ -544,7 +554,7 @@ require_pinned = false
 // Checksums validation tests
 // =============================================================================
 
-/// Test: Missing checksums file fails with default policy.
+/// Test: Missing checksums file fails with strict profile.
 /// _Requirements: 7.3_
 #[test]
 fn check_missing_checksums_file_fails() {
@@ -589,6 +599,8 @@ channel = "1.75.0"
     cmd.arg("check")
         .arg("--root")
         .arg(dir.path())
+        .arg("--profile")
+        .arg("strict")
         .arg("--always");
 
     cmd.assert().code(2);
@@ -887,10 +899,12 @@ edition = "2021"
     cmd.arg("check")
         .arg("--root")
         .arg(dir.path())
+        .arg("--profile")
+        .arg("strict")
         .arg("--github-annotations")
         .arg("--always");
 
-    // Should fail with exit code 2
+    // Should fail with exit code 2 with strict profile
     // Note: Annotations are only output if findings have path AND line number
     cmd.assert().code(2);
 }
@@ -1009,6 +1023,8 @@ edition = "2021"
     cmd.arg("check")
         .arg("--root")
         .arg(dir.path())
+        .arg("--profile")
+        .arg("strict")
         .arg("--always");
 
     cmd.assert().code(2);
