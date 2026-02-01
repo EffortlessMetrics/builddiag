@@ -1,0 +1,51 @@
+[package]
+name = "builddiag-fuzz"
+version = "0.0.0"
+authors = ["Automatically generated"]
+publish = false
+edition = "2021"
+
+# Prevent cargo from including this in the parent workspace
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+# Crates to fuzz
+builddiag-domain = { path = "../crates/builddiag-domain" }
+builddiag-repo = { path = "../crates/builddiag-repo" }
+builddiag-types = { path = "../crates/builddiag-types" }
+
+# Dependencies needed for parsing
+toml = "0.8"
+
+[[bin]]
+name = "fuzz_version"
+path = "fuzz_targets/fuzz_version.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_toml"
+path = "fuzz_targets/fuzz_toml.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_checksums"
+path = "fuzz_targets/fuzz_checksums.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_config"
+path = "fuzz_targets/fuzz_config.rs"
+test = false
+doc = false
+bench = false

@@ -16,3 +16,5 @@ builddiag-types = { path = "../builddiag-types" }
 
 [dev-dependencies]
 insta.workspace = true
+proptest.workspace = true
+regex = "1"

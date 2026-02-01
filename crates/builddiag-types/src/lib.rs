@@ -605,3 +605,963 @@ impl Config {
         map
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Tests for Config default values
+    /// _Requirements: 2.1_
+    mod config_defaults {
+        use super::*;
+
+        #[test]
+        fn config_default_has_expected_defaults_field() {
+            let config = Config::default();
+            let defaults = config.defaults;
+
+            assert_eq!(defaults.fail_on, FailOn::Error);
+            assert_eq!(defaults.out_dir, "artifacts/builddiag");
+            assert!(!defaults.diff_aware);
+            assert_eq!(defaults.base, "origin/main");
+            assert_eq!(defaults.head, "HEAD");
+        }
+
+        #[test]
+        fn config_default_has_expected_paths_field() {
+            let config = Config::default();
+            let paths = config.paths;
+
+            assert_eq!(paths.cargo_root, "Cargo.toml");
+            assert_eq!(paths.rust_toolchain, "rust-toolchain.toml");
+            assert_eq!(paths.tools_checksums, "scripts/tools.sha256");
+            assert_eq!(paths.tools_manifest, "scripts/tools.toml");
+        }
+
+        #[test]
+        fn config_default_has_expected_policy_field() {
+            let config = Config::default();
+            let policy = config.policy;
+
+            // MSRV policy defaults
+            assert!(policy.msrv.require_defined);
+            assert_eq!(policy.msrv.source, MsrvSource::Workspace);
+            assert!(!policy.msrv.allow_per_crate_override);
+            assert!(policy.msrv.allow_overrides.is_empty());
+
+            // Toolchain policy defaults
+            assert!(policy.toolchain.require_pinned);
+            assert_eq!(policy.toolchain.relation_to_msrv, RelationToMsrv::Equals);
+            assert!(!policy.toolchain.allow_nightly);
+
+            // Checksums policy defaults
+            assert!(policy.checksums.require_file);
+            assert!(!policy.checksums.require_coverage);
+            assert!(!policy.checksums.verify_local_files);
+        }
+
+        #[test]
+        fn config_default_has_empty_checks_and_meta() {
+            let config = Config::default();
+
+            assert!(config.checks.is_empty());
+            assert!(config.meta.is_empty());
+        }
+    }
+
+    /// Tests for nested type defaults
+    /// _Requirements: 2.1_
+    mod nested_type_defaults {
+        use super::*;
+
+        #[test]
+        fn defaults_struct_has_expected_values() {
+            let defaults = Defaults::default();
+
+            assert_eq!(defaults.fail_on, FailOn::Error);
+            assert_eq!(defaults.out_dir, "artifacts/builddiag");
+            assert!(!defaults.diff_aware);
+            assert_eq!(defaults.base, "origin/main");
+            assert_eq!(defaults.head, "HEAD");
+        }
+
+        #[test]
+        fn paths_config_has_expected_values() {
+            let paths = PathsConfig::default();
+
+            assert_eq!(paths.cargo_root, "Cargo.toml");
+            assert_eq!(paths.rust_toolchain, "rust-toolchain.toml");
+            assert_eq!(paths.tools_checksums, "scripts/tools.sha256");
+            assert_eq!(paths.tools_manifest, "scripts/tools.toml");
+        }
+
+        #[test]
+        fn policy_has_expected_default_values() {
+            let policy = Policy::default();
+
+            // Verify nested defaults are applied
+            assert!(policy.msrv.require_defined);
+            assert!(policy.toolchain.require_pinned);
+            assert!(policy.checksums.require_file);
+        }
+
+        #[test]
+        fn msrv_policy_has_expected_values() {
+            let msrv = MsrvPolicy::default();
+
+            assert!(msrv.require_defined);
+            assert_eq!(msrv.source, MsrvSource::Workspace);
+            assert!(!msrv.allow_per_crate_override);
+            assert!(msrv.allow_overrides.is_empty());
+        }
+
+        #[test]
+        fn toolchain_policy_has_expected_values() {
+            let toolchain = ToolchainPolicy::default();
+
+            assert!(toolchain.require_pinned);
+            assert_eq!(toolchain.relation_to_msrv, RelationToMsrv::Equals);
+            assert!(!toolchain.allow_nightly);
+        }
+
+        #[test]
+        fn checksums_policy_has_expected_values() {
+            let checksums = ChecksumsPolicy::default();
+
+            assert!(checksums.require_file);
+            assert!(!checksums.require_coverage);
+            assert!(!checksums.verify_local_files);
+        }
+    }
+
+    /// Tests for check_overrides() method
+    /// _Requirements: 2.1_
+    mod check_overrides_tests {
+        use super::*;
+
+        #[test]
+        fn check_overrides_returns_empty_map_for_default_config() {
+            let config = Config::default();
+            let overrides = config.check_overrides();
+
+            assert!(overrides.is_empty());
+        }
+
+        #[test]
+        fn check_overrides_returns_map_with_single_check() {
+            let mut config = Config::default();
+            config.checks.push(CheckConfig {
+                id: "msrv_defined".to_string(),
+                severity: Severity::Warn,
+                enabled: true,
+                triggers: vec!["Cargo.toml".to_string()],
+            });
+
+            let overrides = config.check_overrides();
+
+            assert_eq!(overrides.len(), 1);
+            assert!(overrides.contains_key("msrv_defined"));
+
+            let check = overrides.get("msrv_defined").unwrap();
+            assert_eq!(check.id, "msrv_defined");
+            assert_eq!(check.severity, Severity::Warn);
+            assert!(check.enabled);
+            assert_eq!(check.triggers, vec!["Cargo.toml".to_string()]);
+        }
+
+        #[test]
+        fn check_overrides_returns_map_with_multiple_checks() {
+            let mut config = Config::default();
+            config.checks.push(CheckConfig {
+                id: "msrv_defined".to_string(),
+                severity: Severity::Error,
+                enabled: true,
+                triggers: vec![],
+            });
+            config.checks.push(CheckConfig {
+                id: "toolchain_pinned".to_string(),
+                severity: Severity::Warn,
+                enabled: false,
+                triggers: vec!["rust-toolchain.toml".to_string()],
+            });
+            config.checks.push(CheckConfig {
+                id: "checksums_valid".to_string(),
+                severity: Severity::Info,
+                enabled: true,
+                triggers: vec![],
+            });
+
+            let overrides = config.check_overrides();
+
+            assert_eq!(overrides.len(), 3);
+            assert!(overrides.contains_key("msrv_defined"));
+            assert!(overrides.contains_key("toolchain_pinned"));
+            assert!(overrides.contains_key("checksums_valid"));
+
+            // Verify ordering is deterministic (BTreeMap)
+            let keys: Vec<_> = overrides.keys().collect();
+            assert_eq!(
+                keys,
+                vec!["checksums_valid", "msrv_defined", "toolchain_pinned"]
+            );
+        }
+
+        #[test]
+        fn check_overrides_last_duplicate_wins() {
+            let mut config = Config::default();
+            config.checks.push(CheckConfig {
+                id: "msrv_defined".to_string(),
+                severity: Severity::Error,
+                enabled: true,
+                triggers: vec![],
+            });
+            config.checks.push(CheckConfig {
+                id: "msrv_defined".to_string(),
+                severity: Severity::Warn,
+                enabled: false,
+                triggers: vec!["override".to_string()],
+            });
+
+            let overrides = config.check_overrides();
+
+            assert_eq!(overrides.len(), 1);
+            let check = overrides.get("msrv_defined").unwrap();
+            // Last entry should win
+            assert_eq!(check.severity, Severity::Warn);
+            assert!(!check.enabled);
+            assert_eq!(check.triggers, vec!["override".to_string()]);
+        }
+    }
+
+    /// Tests for CheckConfig defaults
+    /// _Requirements: 2.1_
+    mod check_config_defaults {
+        use super::*;
+
+        #[test]
+        fn check_config_default_severity_is_error() {
+            assert_eq!(CheckConfig::default_severity(), Severity::Error);
+        }
+
+        #[test]
+        fn check_config_default_enabled_is_true() {
+            assert!(CheckConfig::default_enabled());
+        }
+    }
+
+    /// Tests for Finding construction with various severity levels
+    /// _Requirements: 2.1_
+    mod finding_tests {
+        use super::*;
+
+        #[test]
+        fn finding_with_error_severity() {
+            let finding = Finding {
+                severity: Severity::Error,
+                code: "missing_msrv".to_string(),
+                message: "Missing rust-version in Cargo.toml".to_string(),
+                path: Some("Cargo.toml".to_string()),
+                line: Some(1),
+                column: Some(5),
+            };
+
+            assert_eq!(finding.severity, Severity::Error);
+            assert_eq!(finding.code, "missing_msrv");
+            assert_eq!(finding.message, "Missing rust-version in Cargo.toml");
+            assert_eq!(finding.path, Some("Cargo.toml".to_string()));
+            assert_eq!(finding.line, Some(1));
+            assert_eq!(finding.column, Some(5));
+        }
+
+        #[test]
+        fn finding_with_warn_severity() {
+            let finding = Finding {
+                severity: Severity::Warn,
+                code: "msrv_mismatch".to_string(),
+                message: "MSRV differs from toolchain version".to_string(),
+                path: Some("rust-toolchain.toml".to_string()),
+                line: None,
+                column: None,
+            };
+
+            assert_eq!(finding.severity, Severity::Warn);
+            assert_eq!(finding.code, "msrv_mismatch");
+            assert_eq!(finding.path, Some("rust-toolchain.toml".to_string()));
+            assert!(finding.line.is_none());
+            assert!(finding.column.is_none());
+        }
+
+        #[test]
+        fn finding_with_info_severity() {
+            let finding = Finding {
+                severity: Severity::Info,
+                code: "workspace_detected".to_string(),
+                message: "Workspace with 5 members detected".to_string(),
+                path: None,
+                line: None,
+                column: None,
+            };
+
+            assert_eq!(finding.severity, Severity::Info);
+            assert_eq!(finding.code, "workspace_detected");
+            assert!(finding.path.is_none());
+        }
+
+        #[test]
+        fn finding_without_location_info() {
+            let finding = Finding {
+                severity: Severity::Error,
+                code: "general_error".to_string(),
+                message: "A general error occurred".to_string(),
+                path: None,
+                line: None,
+                column: None,
+            };
+
+            assert!(finding.path.is_none());
+            assert!(finding.line.is_none());
+            assert!(finding.column.is_none());
+        }
+
+        #[test]
+        fn finding_with_partial_location_info() {
+            let finding = Finding {
+                severity: Severity::Warn,
+                code: "partial_location".to_string(),
+                message: "Finding with path but no line".to_string(),
+                path: Some("src/lib.rs".to_string()),
+                line: None,
+                column: None,
+            };
+
+            assert_eq!(finding.path, Some("src/lib.rs".to_string()));
+            assert!(finding.line.is_none());
+            assert!(finding.column.is_none());
+        }
+
+        #[test]
+        fn severity_ordering() {
+            // Verify severity ordering: Info < Warn < Error
+            assert!(Severity::Info < Severity::Warn);
+            assert!(Severity::Warn < Severity::Error);
+            assert!(Severity::Info < Severity::Error);
+        }
+
+        #[test]
+        fn finding_equality() {
+            let finding1 = Finding {
+                severity: Severity::Error,
+                code: "test".to_string(),
+                message: "Test message".to_string(),
+                path: Some("test.rs".to_string()),
+                line: Some(10),
+                column: Some(5),
+            };
+
+            let finding2 = Finding {
+                severity: Severity::Error,
+                code: "test".to_string(),
+                message: "Test message".to_string(),
+                path: Some("test.rs".to_string()),
+                line: Some(10),
+                column: Some(5),
+            };
+
+            assert_eq!(finding1, finding2);
+        }
+
+        #[test]
+        fn finding_clone() {
+            let finding = Finding {
+                severity: Severity::Warn,
+                code: "clone_test".to_string(),
+                message: "Testing clone".to_string(),
+                path: Some("file.rs".to_string()),
+                line: Some(42),
+                column: None,
+            };
+
+            let cloned = finding.clone();
+            assert_eq!(finding, cloned);
+        }
+    }
+
+    /// Tests for CheckReport construction with different statuses
+    /// _Requirements: 2.1_
+    mod check_report_tests {
+        use super::*;
+
+        #[test]
+        fn check_report_with_pass_status() {
+            let report = CheckReport {
+                id: "msrv_defined".to_string(),
+                status: CheckStatus::Pass,
+                findings: vec![],
+                skipped_reason: None,
+            };
+
+            assert_eq!(report.id, "msrv_defined");
+            assert_eq!(report.status, CheckStatus::Pass);
+            assert!(report.findings.is_empty());
+            assert!(report.skipped_reason.is_none());
+        }
+
+        #[test]
+        fn check_report_with_warn_status() {
+            let finding = Finding {
+                severity: Severity::Warn,
+                code: "msrv_mismatch".to_string(),
+                message: "MSRV differs from toolchain".to_string(),
+                path: Some("Cargo.toml".to_string()),
+                line: None,
+                column: None,
+            };
+
+            let report = CheckReport {
+                id: "toolchain_check".to_string(),
+                status: CheckStatus::Warn,
+                findings: vec![finding],
+                skipped_reason: None,
+            };
+
+            assert_eq!(report.status, CheckStatus::Warn);
+            assert_eq!(report.findings.len(), 1);
+            assert_eq!(report.findings[0].severity, Severity::Warn);
+        }
+
+        #[test]
+        fn check_report_with_fail_status() {
+            let finding = Finding {
+                severity: Severity::Error,
+                code: "missing_msrv".to_string(),
+                message: "Missing rust-version".to_string(),
+                path: Some("Cargo.toml".to_string()),
+                line: Some(1),
+                column: None,
+            };
+
+            let report = CheckReport {
+                id: "msrv_defined".to_string(),
+                status: CheckStatus::Fail,
+                findings: vec![finding],
+                skipped_reason: None,
+            };
+
+            assert_eq!(report.status, CheckStatus::Fail);
+            assert_eq!(report.findings.len(), 1);
+            assert_eq!(report.findings[0].severity, Severity::Error);
+        }
+
+        #[test]
+        fn check_report_with_skip_status() {
+            let report = CheckReport {
+                id: "checksums_valid".to_string(),
+                status: CheckStatus::Skip,
+                findings: vec![],
+                skipped_reason: Some("Checksums file not found".to_string()),
+            };
+
+            assert_eq!(report.status, CheckStatus::Skip);
+            assert!(report.findings.is_empty());
+            assert_eq!(
+                report.skipped_reason,
+                Some("Checksums file not found".to_string())
+            );
+        }
+
+        #[test]
+        fn check_report_with_multiple_findings() {
+            let findings = vec![
+                Finding {
+                    severity: Severity::Error,
+                    code: "error1".to_string(),
+                    message: "First error".to_string(),
+                    path: Some("file1.rs".to_string()),
+                    line: Some(10),
+                    column: None,
+                },
+                Finding {
+                    severity: Severity::Warn,
+                    code: "warn1".to_string(),
+                    message: "First warning".to_string(),
+                    path: Some("file2.rs".to_string()),
+                    line: Some(20),
+                    column: None,
+                },
+                Finding {
+                    severity: Severity::Info,
+                    code: "info1".to_string(),
+                    message: "First info".to_string(),
+                    path: None,
+                    line: None,
+                    column: None,
+                },
+            ];
+
+            let report = CheckReport {
+                id: "multi_finding_check".to_string(),
+                status: CheckStatus::Fail,
+                findings,
+                skipped_reason: None,
+            };
+
+            assert_eq!(report.findings.len(), 3);
+            assert_eq!(report.findings[0].severity, Severity::Error);
+            assert_eq!(report.findings[1].severity, Severity::Warn);
+            assert_eq!(report.findings[2].severity, Severity::Info);
+        }
+
+        #[test]
+        fn check_report_equality() {
+            let report1 = CheckReport {
+                id: "test_check".to_string(),
+                status: CheckStatus::Pass,
+                findings: vec![],
+                skipped_reason: None,
+            };
+
+            let report2 = CheckReport {
+                id: "test_check".to_string(),
+                status: CheckStatus::Pass,
+                findings: vec![],
+                skipped_reason: None,
+            };
+
+            assert_eq!(report1, report2);
+        }
+
+        #[test]
+        fn check_status_variants() {
+            // Verify all CheckStatus variants can be constructed
+            assert_eq!(CheckStatus::Pass, CheckStatus::Pass);
+            assert_eq!(CheckStatus::Warn, CheckStatus::Warn);
+            assert_eq!(CheckStatus::Fail, CheckStatus::Fail);
+            assert_eq!(CheckStatus::Skip, CheckStatus::Skip);
+
+            // Verify they are distinct
+            assert_ne!(CheckStatus::Pass, CheckStatus::Fail);
+            assert_ne!(CheckStatus::Warn, CheckStatus::Skip);
+        }
+    }
+
+    /// Tests for Summary construction with counts and verdict
+    /// _Requirements: 2.1_
+    mod summary_tests {
+        use super::*;
+
+        #[test]
+        fn summary_with_pass_verdict() {
+            let summary = Summary {
+                counts: SummaryCounts {
+                    info: 0,
+                    warn: 0,
+                    error: 0,
+                },
+                verdict: Verdict::Pass,
+                reasons: vec![],
+            };
+
+            assert_eq!(summary.verdict, Verdict::Pass);
+            assert_eq!(summary.counts.info, 0);
+            assert_eq!(summary.counts.warn, 0);
+            assert_eq!(summary.counts.error, 0);
+            assert!(summary.reasons.is_empty());
+        }
+
+        #[test]
+        fn summary_with_warn_verdict() {
+            let summary = Summary {
+                counts: SummaryCounts {
+                    info: 1,
+                    warn: 2,
+                    error: 0,
+                },
+                verdict: Verdict::Warn,
+                reasons: vec!["2 warnings found".to_string()],
+            };
+
+            assert_eq!(summary.verdict, Verdict::Warn);
+            assert_eq!(summary.counts.info, 1);
+            assert_eq!(summary.counts.warn, 2);
+            assert_eq!(summary.counts.error, 0);
+            assert_eq!(summary.reasons.len(), 1);
+        }
+
+        #[test]
+        fn summary_with_fail_verdict() {
+            let summary = Summary {
+                counts: SummaryCounts {
+                    info: 2,
+                    warn: 1,
+                    error: 3,
+                },
+                verdict: Verdict::Fail,
+                reasons: vec!["3 errors found".to_string(), "1 warning found".to_string()],
+            };
+
+            assert_eq!(summary.verdict, Verdict::Fail);
+            assert_eq!(summary.counts.error, 3);
+            assert_eq!(summary.reasons.len(), 2);
+        }
+
+        #[test]
+        fn summary_with_skip_verdict() {
+            let summary = Summary {
+                counts: SummaryCounts {
+                    info: 0,
+                    warn: 0,
+                    error: 0,
+                },
+                verdict: Verdict::Skip,
+                reasons: vec!["All checks were skipped".to_string()],
+            };
+
+            assert_eq!(summary.verdict, Verdict::Skip);
+            assert_eq!(summary.reasons, vec!["All checks were skipped".to_string()]);
+        }
+
+        #[test]
+        fn summary_counts_construction() {
+            let counts = SummaryCounts {
+                info: 5,
+                warn: 10,
+                error: 15,
+            };
+
+            assert_eq!(counts.info, 5);
+            assert_eq!(counts.warn, 10);
+            assert_eq!(counts.error, 15);
+        }
+
+        #[test]
+        fn summary_with_multiple_reasons() {
+            let summary = Summary {
+                counts: SummaryCounts {
+                    info: 1,
+                    warn: 2,
+                    error: 1,
+                },
+                verdict: Verdict::Fail,
+                reasons: vec![
+                    "MSRV not defined".to_string(),
+                    "Toolchain not pinned".to_string(),
+                    "Checksums missing".to_string(),
+                ],
+            };
+
+            assert_eq!(summary.reasons.len(), 3);
+            assert!(summary.reasons.contains(&"MSRV not defined".to_string()));
+            assert!(
+                summary
+                    .reasons
+                    .contains(&"Toolchain not pinned".to_string())
+            );
+            assert!(summary.reasons.contains(&"Checksums missing".to_string()));
+        }
+
+        #[test]
+        fn verdict_variants() {
+            // Verify all Verdict variants can be constructed
+            assert_eq!(Verdict::Pass, Verdict::Pass);
+            assert_eq!(Verdict::Warn, Verdict::Warn);
+            assert_eq!(Verdict::Fail, Verdict::Fail);
+            assert_eq!(Verdict::Skip, Verdict::Skip);
+
+            // Verify they are distinct
+            assert_ne!(Verdict::Pass, Verdict::Fail);
+            assert_ne!(Verdict::Warn, Verdict::Skip);
+        }
+
+        #[test]
+        fn summary_equality() {
+            let summary1 = Summary {
+                counts: SummaryCounts {
+                    info: 1,
+                    warn: 2,
+                    error: 3,
+                },
+                verdict: Verdict::Fail,
+                reasons: vec!["test".to_string()],
+            };
+
+            let summary2 = Summary {
+                counts: SummaryCounts {
+                    info: 1,
+                    warn: 2,
+                    error: 3,
+                },
+                verdict: Verdict::Fail,
+                reasons: vec!["test".to_string()],
+            };
+
+            assert_eq!(summary1, summary2);
+        }
+    }
+
+    /// Tests for Report construction with all fields
+    /// _Requirements: 2.1_
+    mod report_tests {
+        use super::*;
+        use chrono::TimeZone;
+
+        fn create_test_report() -> Report {
+            Report {
+                schema: SchemaId("https://builddiag.dev/schema/report/v1".to_string()),
+                tool: ToolInfo {
+                    name: "builddiag".to_string(),
+                    version: "0.1.0".to_string(),
+                },
+                run: RunInfo {
+                    id: "run-123".to_string(),
+                    started_at: Utc.with_ymd_and_hms(2024, 1, 15, 10, 30, 0).unwrap(),
+                    ended_at: Some(Utc.with_ymd_and_hms(2024, 1, 15, 10, 30, 5).unwrap()),
+                },
+                repo: RepoInfo {
+                    root: "/home/user/project".to_string(),
+                    detected: RepoDetected {
+                        is_workspace: true,
+                        members: 5,
+                    },
+                },
+                inputs: Inputs {
+                    cargo_root: Some("Cargo.toml".to_string()),
+                    rust_toolchain: Some("rust-toolchain.toml".to_string()),
+                    tools_checksums: None,
+                    tools_manifest: None,
+                },
+                checks: vec![
+                    CheckReport {
+                        id: "msrv_defined".to_string(),
+                        status: CheckStatus::Pass,
+                        findings: vec![],
+                        skipped_reason: None,
+                    },
+                    CheckReport {
+                        id: "toolchain_pinned".to_string(),
+                        status: CheckStatus::Warn,
+                        findings: vec![Finding {
+                            severity: Severity::Warn,
+                            code: "toolchain_mismatch".to_string(),
+                            message: "Toolchain version differs from MSRV".to_string(),
+                            path: Some("rust-toolchain.toml".to_string()),
+                            line: None,
+                            column: None,
+                        }],
+                        skipped_reason: None,
+                    },
+                ],
+                summary: Summary {
+                    counts: SummaryCounts {
+                        info: 0,
+                        warn: 1,
+                        error: 0,
+                    },
+                    verdict: Verdict::Warn,
+                    reasons: vec!["1 warning found".to_string()],
+                },
+            }
+        }
+
+        #[test]
+        fn report_construction_with_all_fields() {
+            let report = create_test_report();
+
+            assert_eq!(report.schema.0, "https://builddiag.dev/schema/report/v1");
+            assert_eq!(report.tool.name, "builddiag");
+            assert_eq!(report.tool.version, "0.1.0");
+            assert_eq!(report.run.id, "run-123");
+            assert!(report.run.ended_at.is_some());
+            assert_eq!(report.repo.root, "/home/user/project");
+            assert!(report.repo.detected.is_workspace);
+            assert_eq!(report.repo.detected.members, 5);
+            assert_eq!(report.checks.len(), 2);
+            assert_eq!(report.summary.verdict, Verdict::Warn);
+        }
+
+        #[test]
+        fn report_schema_id_construction() {
+            let schema = SchemaId("test-schema-v1".to_string());
+            assert_eq!(schema.0, "test-schema-v1");
+        }
+
+        #[test]
+        fn report_tool_info_construction() {
+            let tool = ToolInfo {
+                name: "builddiag".to_string(),
+                version: "1.2.3".to_string(),
+            };
+
+            assert_eq!(tool.name, "builddiag");
+            assert_eq!(tool.version, "1.2.3");
+        }
+
+        #[test]
+        fn report_run_info_construction() {
+            let started = Utc.with_ymd_and_hms(2024, 6, 15, 12, 0, 0).unwrap();
+            let ended = Utc.with_ymd_and_hms(2024, 6, 15, 12, 0, 10).unwrap();
+
+            let run = RunInfo {
+                id: "unique-run-id".to_string(),
+                started_at: started,
+                ended_at: Some(ended),
+            };
+
+            assert_eq!(run.id, "unique-run-id");
+            assert_eq!(run.started_at, started);
+            assert_eq!(run.ended_at, Some(ended));
+        }
+
+        #[test]
+        fn report_run_info_without_end_time() {
+            let started = Utc.with_ymd_and_hms(2024, 6, 15, 12, 0, 0).unwrap();
+
+            let run = RunInfo {
+                id: "in-progress-run".to_string(),
+                started_at: started,
+                ended_at: None,
+            };
+
+            assert!(run.ended_at.is_none());
+        }
+
+        #[test]
+        fn report_repo_info_construction() {
+            let repo = RepoInfo {
+                root: "/path/to/repo".to_string(),
+                detected: RepoDetected {
+                    is_workspace: false,
+                    members: 1,
+                },
+            };
+
+            assert_eq!(repo.root, "/path/to/repo");
+            assert!(!repo.detected.is_workspace);
+            assert_eq!(repo.detected.members, 1);
+        }
+
+        #[test]
+        fn report_repo_detected_workspace() {
+            let detected = RepoDetected {
+                is_workspace: true,
+                members: 10,
+            };
+
+            assert!(detected.is_workspace);
+            assert_eq!(detected.members, 10);
+        }
+
+        #[test]
+        fn report_repo_detected_single_crate() {
+            let detected = RepoDetected {
+                is_workspace: false,
+                members: 1,
+            };
+
+            assert!(!detected.is_workspace);
+            assert_eq!(detected.members, 1);
+        }
+
+        #[test]
+        fn report_inputs_all_present() {
+            let inputs = Inputs {
+                cargo_root: Some("Cargo.toml".to_string()),
+                rust_toolchain: Some("rust-toolchain.toml".to_string()),
+                tools_checksums: Some("scripts/tools.sha256".to_string()),
+                tools_manifest: Some("scripts/tools.toml".to_string()),
+            };
+
+            assert!(inputs.cargo_root.is_some());
+            assert!(inputs.rust_toolchain.is_some());
+            assert!(inputs.tools_checksums.is_some());
+            assert!(inputs.tools_manifest.is_some());
+        }
+
+        #[test]
+        fn report_inputs_partial() {
+            let inputs = Inputs {
+                cargo_root: Some("Cargo.toml".to_string()),
+                rust_toolchain: None,
+                tools_checksums: None,
+                tools_manifest: None,
+            };
+
+            assert!(inputs.cargo_root.is_some());
+            assert!(inputs.rust_toolchain.is_none());
+            assert!(inputs.tools_checksums.is_none());
+            assert!(inputs.tools_manifest.is_none());
+        }
+
+        #[test]
+        fn report_inputs_all_none() {
+            let inputs = Inputs {
+                cargo_root: None,
+                rust_toolchain: None,
+                tools_checksums: None,
+                tools_manifest: None,
+            };
+
+            assert!(inputs.cargo_root.is_none());
+            assert!(inputs.rust_toolchain.is_none());
+            assert!(inputs.tools_checksums.is_none());
+            assert!(inputs.tools_manifest.is_none());
+        }
+
+        #[test]
+        fn report_with_empty_checks() {
+            let report = Report {
+                schema: SchemaId("v1".to_string()),
+                tool: ToolInfo {
+                    name: "builddiag".to_string(),
+                    version: "0.1.0".to_string(),
+                },
+                run: RunInfo {
+                    id: "run-1".to_string(),
+                    started_at: Utc::now(),
+                    ended_at: None,
+                },
+                repo: RepoInfo {
+                    root: ".".to_string(),
+                    detected: RepoDetected {
+                        is_workspace: false,
+                        members: 1,
+                    },
+                },
+                inputs: Inputs {
+                    cargo_root: None,
+                    rust_toolchain: None,
+                    tools_checksums: None,
+                    tools_manifest: None,
+                },
+                checks: vec![],
+                summary: Summary {
+                    counts: SummaryCounts {
+                        info: 0,
+                        warn: 0,
+                        error: 0,
+                    },
+                    verdict: Verdict::Skip,
+                    reasons: vec!["No checks executed".to_string()],
+                },
+            };
+
+            assert!(report.checks.is_empty());
+            assert_eq!(report.summary.verdict, Verdict::Skip);
+        }
+
+        #[test]
+        fn report_equality() {
+            let report1 = create_test_report();
+            let report2 = create_test_report();
+
+            assert_eq!(report1, report2);
+        }
+
+        #[test]
+        fn report_clone() {
+            let report = create_test_report();
+            let cloned = report.clone();
+
+            assert_eq!(report, cloned);
+        }
+    }
+}

@@ -2,12 +2,16 @@ use anyhow::{Context, Result};
 use builddiag_app::{compute_changed_files, load_config, run_check, write_outputs};
 use builddiag_render::{render_github_annotations, render_markdown};
 use builddiag_types::Config;
-use camino::{Utf8PathBuf, Utf8Path};
+use camino::{Utf8Path, Utf8PathBuf};
 use clap::{Parser, Subcommand};
 use std::process;
 
 #[derive(Debug, Parser)]
-#[command(name = "builddiag", version, about = "Check the build contract of a Rust repository")]
+#[command(
+    name = "builddiag",
+    version,
+    about = "Check the build contract of a Rust repository"
+)]
 struct Cli {
     #[command(subcommand)]
     cmd: Command,
@@ -123,8 +127,8 @@ fn try_main() -> Result<()> {
         }
         Command::Md { report, out } => {
             let bytes = std::fs::read(&report).with_context(|| format!("read {report}"))?;
-            let report: builddiag_types::Report = serde_json::from_slice(&bytes)
-                .with_context(|| format!("parse {report}"))?;
+            let report: builddiag_types::Report =
+                serde_json::from_slice(&bytes).with_context(|| format!("parse {report}"))?;
             let md = render_markdown(&report);
             if let Some(out) = out {
                 builddiag_app::write_atomic(&out, md.as_bytes())?;
@@ -134,8 +138,8 @@ fn try_main() -> Result<()> {
         }
         Command::GithubAnnotations { report } => {
             let bytes = std::fs::read(&report).with_context(|| format!("read {report}"))?;
-            let report: builddiag_types::Report = serde_json::from_slice(&bytes)
-                .with_context(|| format!("parse {report}"))?;
+            let report: builddiag_types::Report =
+                serde_json::from_slice(&bytes).with_context(|| format!("parse {report}"))?;
             for line in render_github_annotations(&report) {
                 println!("{line}");
             }

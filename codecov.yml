@@ -1,0 +1,48 @@
+# Codecov configuration for builddiag
+# https://docs.codecov.com/docs/codecov-yaml
+
+coverage:
+  # Overall project coverage settings
+  status:
+    project:
+      default:
+        # Require 80% coverage threshold
+        target: 80%
+        # Allow 1% drop from base coverage
+        threshold: 1%
+        # Only check coverage on files that were changed
+        only_changed_files: false
+    patch:
+      default:
+        # Require 80% coverage on new code
+        target: 80%
+        # Allow 5% threshold for patches
+        threshold: 5%
+
+  # Precision of coverage percentage (2 decimal places)
+  precision: 2
+  round: down
+  range: "70...100"
+
+# Ignore certain paths from coverage
+ignore:
+  - "fuzz/**"
+  - "xtask/**"
+  - "**/tests/**"
+  - "**/*_test.rs"
+  - "**/test_*.rs"
+
+# Comment settings for PR comments
+comment:
+  layout: "reach,diff,flags,files"
+  behavior: default
+  require_changes: false
+  require_base: false
+  require_head: true
+
+# Flags for different test types
+flags:
+  unittests:
+    paths:
+      - crates/
+    carryforward: true

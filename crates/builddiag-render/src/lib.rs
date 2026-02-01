@@ -12,10 +12,7 @@ pub fn render_markdown(report: &Report) -> String {
 
     out.push_str(&format!(
         "## builddiag: {} {:?} ({} errors, {} warnings)\n\n",
-        icon,
-        report.summary.verdict,
-        report.summary.counts.error,
-        report.summary.counts.warn
+        icon, report.summary.verdict, report.summary.counts.error, report.summary.counts.warn
     ));
 
     let mut rows = Vec::new();
@@ -34,7 +31,12 @@ pub fn render_markdown(report: &Report) -> String {
         let sb = severity_rank(b.1.severity);
         sb.cmp(&sa)
             .then_with(|| a.0.cmp(b.0))
-            .then_with(|| a.1.path.as_deref().unwrap_or("").cmp(b.1.path.as_deref().unwrap_or("")))
+            .then_with(|| {
+                a.1.path
+                    .as_deref()
+                    .unwrap_or("")
+                    .cmp(b.1.path.as_deref().unwrap_or(""))
+            })
             .then_with(|| a.1.line.unwrap_or(0).cmp(&b.1.line.unwrap_or(0)))
     });
 
@@ -133,17 +135,50 @@ mod tests {
     fn markdown_smoke() {
         let report = Report {
             schema: SchemaId("builddiag.report.v1".to_string()),
-            tool: ToolInfo { name: "builddiag".into(), version: "0.1.0".into() },
-            run: RunInfo { id: "x".into(), started_at: Utc::now(), ended_at: None },
-            repo: RepoInfo { root: ".".into(), detected: RepoDetected { is_workspace: true, members: 1 } },
-            inputs: Inputs { cargo_root: Some("Cargo.toml".into()), rust_toolchain: None, tools_checksums: None, tools_manifest: None },
+            tool: ToolInfo {
+                name: "builddiag".into(),
+                version: "0.1.0".into(),
+            },
+            run: RunInfo {
+                id: "x".into(),
+                started_at: Utc::now(),
+                ended_at: None,
+            },
+            repo: RepoInfo {
+                root: ".".into(),
+                detected: RepoDetected {
+                    is_workspace: true,
+                    members: 1,
+                },
+            },
+            inputs: Inputs {
+                cargo_root: Some("Cargo.toml".into()),
+                rust_toolchain: None,
+                tools_checksums: None,
+                tools_manifest: None,
+            },
             checks: vec![CheckReport {
                 id: "rust.msrv_defined".into(),
                 status: CheckStatus::Fail,
-                findings: vec![Finding { severity: Severity::Error, code: "missing".into(), message: "Missing MSRV".into(), path: Some("Cargo.toml".into()), line: Some(1), column: None }],
+                findings: vec![Finding {
+                    severity: Severity::Error,
+                    code: "missing".into(),
+                    message: "Missing MSRV".into(),
+                    path: Some("Cargo.toml".into()),
+                    line: Some(1),
+                    column: None,
+                }],
                 skipped_reason: None,
             }],
-            summary: Summary { counts: SummaryCounts { info: 0, warn: 0, error: 1 }, verdict: Verdict::Fail, reasons: vec!["rust.msrv_defined: fail".into()] },
+            summary: Summary {
+                counts: SummaryCounts {
+                    info: 0,
+                    warn: 0,
+                    error: 1,
+                },
+                verdict: Verdict::Fail,
+                reasons: vec!["rust.msrv_defined: fail".into()],
+            },
         };
         let md = render_markdown(&report);
         assert!(md.contains("Missing MSRV"));
