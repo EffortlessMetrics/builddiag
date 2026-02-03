@@ -1,10 +1,11 @@
 [package]
 name = "depguard"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 description = "Dependency hygiene sensor for Rust workspaces"
-repository = "https://github.com/EffortlessMetrics/builddiag"
 readme = "README.md"
 keywords = ["rust", "dependencies", "lint", "workspace"]
 categories = ["development-tools"]

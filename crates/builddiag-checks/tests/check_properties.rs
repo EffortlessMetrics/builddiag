@@ -163,6 +163,7 @@ fn mock_repo_state() -> RepoState {
         tools_checksums: None,
         tools_manifest: None,
         changed_files: None,
+        lockfile_exists: true,
     }
 }
 
@@ -604,6 +605,7 @@ proptest! {
             rust_version_workspace: false,
             edition: Some("2021".to_string()),
             edition_workspace: true,
+            has_binary_target: false,
         };
 
         let repo = mock_repo_with_members(Some(&workspace_msrv), vec![member]);

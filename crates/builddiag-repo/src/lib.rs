@@ -170,6 +170,8 @@ pub struct Member {
     pub rust_version_workspace: bool,
     pub edition: Option<String>,
     pub edition_workspace: bool,
+    /// Whether this member has at least one binary target (explicit [[bin]] or src/main.rs).
+    pub has_binary_target: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -212,6 +214,8 @@ pub struct RepoState {
     pub tools_checksums: Option<ToolsChecksums>,
     pub tools_manifest: Option<(Utf8PathBuf, ToolsManifest)>,
     pub changed_files: Option<BTreeSet<String>>,
+    /// Whether Cargo.lock exists at the workspace root.
+    pub lockfile_exists: bool,
 }
 
 pub fn load_repo_state(
@@ -274,6 +278,15 @@ pub fn load_repo_state(
         }
     };
 
+    // Check for Cargo.lock at the workspace root
+    let lockfile_exists = if let Some(ref cargo_root) = cargo_root {
+        cargo_root
+            .parent()
+            .is_some_and(|p| p.join("Cargo.lock").exists())
+    } else {
+        root.join("Cargo.lock").exists()
+    };
+
     Ok(RepoState {
         root,
         cargo_root,
@@ -283,6 +296,7 @@ pub fn load_repo_state(
         tools_checksums,
         tools_manifest,
         changed_files,
+        lockfile_exists,
     })
 }
 
@@ -362,6 +376,9 @@ fn load_workspace(manifest_path: &Utf8Path) -> Result<WorkspaceInfo> {
         let (edition, edition_workspace) =
             parse_package_inheritable_string(&manifest_value, "edition")?;
 
+        // Check for binary targets
+        let has_binary = has_binary_target(&manifest_path, &manifest_value)?;
+
         members.push(Member {
             name: pkg.name.to_string(),
             manifest_path,
@@ -369,6 +386,7 @@ fn load_workspace(manifest_path: &Utf8Path) -> Result<WorkspaceInfo> {
             rust_version_workspace,
             edition,
             edition_workspace,
+            has_binary_target: has_binary,
         });
     }
 
@@ -457,6 +475,28 @@ fn parse_package_inheritable_string(v: &toml::Value, key: &str) -> Result<(Optio
         }
         Some(_) => Err(anyhow!("unsupported type for package.{key}")),
     }
+}
+
+/// Determines whether a Cargo manifest has binary targets.
+///
+/// A package has binary targets if:
+/// - It has an explicit `[[bin]]` section with at least one entry, OR
+/// - It has a `src/main.rs` file in the package directory
+fn has_binary_target(manifest_path: &Utf8Path, manifest: &toml::Value) -> Result<bool> {
+    // Check for explicit [[bin]] section
+    if let Some(bins) = manifest.get("bin").and_then(|b| b.as_array())
+        && !bins.is_empty()
+    {
+        return Ok(true);
+    }
+
+    // Check for src/main.rs
+    let src_main = manifest_path.parent().unwrap().join("src/main.rs");
+    if src_main.exists() {
+        return Ok(true);
+    }
+
+    Ok(false)
 }
 
 // ============================================================================

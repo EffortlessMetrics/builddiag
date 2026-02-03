@@ -83,28 +83,41 @@ fn write_json(path: Utf8PathBuf, value: &impl serde::Serialize) -> Result<()> {
 }
 
 fn run_ci() -> Result<()> {
-    run(["cargo", "fmt", "--all", "--", "--check"])?;
-    run([
-        "cargo",
-        "clippy",
-        "--all-targets",
-        "--all-features",
-        "--",
-        "-D",
-        "warnings",
-    ])?;
-    run(["cargo", "test", "--all"])?;
-    run(["cargo", "run", "-p", "xtask", "--", "schema"])?;
+    // Use a separate target directory to avoid locking issues on Windows.
+    // When xtask runs `cargo run -p xtask`, it would try to overwrite the
+    // running xtask.exe, which fails on Windows. Using target/ci sidesteps this.
+    let target_dir = Some("target/ci");
+
+    run_with_target_dir(["cargo", "fmt", "--all", "--", "--check"], target_dir)?;
+    run_with_target_dir(
+        [
+            "cargo",
+            "clippy",
+            "--all-targets",
+            "--all-features",
+            "--",
+            "-D",
+            "warnings",
+        ],
+        target_dir,
+    )?;
+    run_with_target_dir(["cargo", "test", "--all"], target_dir)?;
+    run_with_target_dir(["cargo", "run", "-p", "xtask", "--", "schema"], target_dir)?;
     Ok(())
 }
 
-fn run(args: impl IntoIterator<Item = &'static str>) -> Result<()> {
+fn run_with_target_dir(
+    args: impl IntoIterator<Item = &'static str>,
+    target_dir: Option<&str>,
+) -> Result<()> {
     let mut it = args.into_iter();
     let cmd = it.next().unwrap();
-    let status = std::process::Command::new(cmd)
-        .args(it)
-        .status()
-        .with_context(|| format!("run {cmd}"))?;
+    let mut command = std::process::Command::new(cmd);
+    command.args(it);
+    if let Some(dir) = target_dir {
+        command.env("CARGO_TARGET_DIR", dir);
+    }
+    let status = command.status().with_context(|| format!("run {cmd}"))?;
     if !status.success() {
         anyhow::bail!("command failed: {cmd}");
     }

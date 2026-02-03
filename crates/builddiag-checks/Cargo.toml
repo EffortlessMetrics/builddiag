@@ -1,12 +1,12 @@
 [package]
 name = "builddiag-checks"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 description = "Check implementations for builddiag build contract validator"
-repository = "https://github.com/user/builddiag"
-homepage = "https://github.com/user/builddiag"
-keywords = ["rust", "build", "validation"]
+keywords = ["rust", "build", "validation", "lint"]
 categories = ["development-tools"]
 
 [dependencies]
@@ -17,6 +17,7 @@ hex.workspace = true
 builddiag-types = { path = "../builddiag-types" }
 builddiag-domain = { path = "../builddiag-domain" }
 builddiag-repo = { path = "../builddiag-repo" }
+depguard = { path = "../depguard" }
 camino.workspace = true
 
 [dev-dependencies]

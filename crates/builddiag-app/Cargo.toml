@@ -1,11 +1,11 @@
 [package]
 name = "builddiag-app"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 description = "Application orchestration for builddiag build contract validator"
-repository = "https://github.com/user/builddiag"
-homepage = "https://github.com/user/builddiag"
 keywords = ["rust", "build", "validation"]
 categories = ["development-tools"]
 

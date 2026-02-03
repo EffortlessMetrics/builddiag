@@ -1,11 +1,11 @@
 [package]
 name = "builddiag"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 description = "CLI tool to validate the build contract of Rust repositories"
-repository = "https://github.com/EffortlessMetrics/builddiag"
-homepage = "https://github.com/EffortlessMetrics/builddiag"
 readme = "README.md"
 keywords = ["rust", "cli", "build", "validation", "msrv"]
 categories = ["development-tools", "command-line-utilities"]
@@ -26,3 +26,9 @@ serde_json.workspace = true
 assert_cmd.workspace = true
 tempfile.workspace = true
 predicates.workspace = true
+cucumber.workspace = true
+tokio.workspace = true
+
+[[test]]
+name = "cucumber"
+harness = false

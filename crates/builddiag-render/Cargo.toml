@@ -1,12 +1,12 @@
 [package]
 name = "builddiag-render"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 description = "Markdown and GitHub annotation rendering for builddiag"
-repository = "https://github.com/user/builddiag"
-homepage = "https://github.com/user/builddiag"
-keywords = ["rust", "build", "validation"]
+keywords = ["rust", "build", "validation", "markdown"]
 categories = ["development-tools"]
 
 [dependencies]

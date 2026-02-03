@@ -1,3 +1,24 @@
+//! Application orchestration for builddiag build contract validation.
+//!
+//! This crate provides the high-level orchestration layer that coordinates
+//! repository loading, check execution, and report generation. It serves as
+//! the bridge between the CLI and the underlying domain logic.
+//!
+//! # Key Functions
+//!
+//! - [`load_config`]: Load configuration from a TOML file
+//! - [`run_checks`]: Execute all checks and produce a complete report
+//! - [`compute_changed_files`]: Determine files changed between git refs for diff-aware mode
+//!
+//! # Report Generation
+//!
+//! The main entry point is [`run_checks`], which:
+//! 1. Loads repository state from the target directory
+//! 2. Runs all configured checks
+//! 3. Collects and sorts findings
+//! 4. Computes summary statistics
+//! 5. Returns a complete [`Report`](builddiag_types::Report)
+
 use anyhow::{Context, Result, anyhow};
 use builddiag_checks::run_selected_checks;
 use builddiag_domain::{determine_verdict, exit_code_for, sort_findings_canonical, summarize};

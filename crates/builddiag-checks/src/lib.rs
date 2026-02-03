@@ -1,3 +1,33 @@
+//! Check implementations for builddiag build contract validation.
+//!
+//! This crate provides the core check implementations used by builddiag to validate
+//! Rust project build contracts. Each check examines a specific aspect of the repository
+//! configuration and produces findings with associated severities.
+//!
+//! # Available Checks
+//!
+//! - **MSRV checks**: Validate Minimum Supported Rust Version configuration
+//! - **Toolchain checks**: Verify rust-toolchain.toml settings
+//! - **Checksum checks**: Validate file integrity via SHA-256 checksums
+//! - **Dependency checks**: Hygiene validation for Cargo.toml dependencies
+//!
+//! # Usage
+//!
+//! ```ignore
+//! use builddiag_checks::{run_selected_checks, CHECK_DOCS};
+//! use builddiag_repo::load_repo_state;
+//! use builddiag_types::Config;
+//!
+//! let repo = load_repo_state(root)?;
+//! let config = Config::default();
+//! let reports = run_selected_checks(&repo, &config, None)?;
+//! ```
+//!
+//! # Check Documentation
+//!
+//! Use [`CHECK_DOCS`] to access documentation for all available checks,
+//! including descriptions, remediation help, and related finding codes.
+
 use anyhow::{Context, Result, anyhow};
 use builddiag_domain::{check_status_from_findings, parse_rust_version};
 use builddiag_repo::{RepoState, maybe_parse_numeric_version};
@@ -129,6 +159,71 @@ pub static CHECK_DOCS: &[CheckDocumentation] = &[
         ),
         codes: &["resolver_not_v2"],
     },
+    CheckDocumentation {
+        id: "deps.wildcard_version",
+        name: "No Wildcard Versions",
+        description: "Validates that dependencies do not use wildcard version specifications (\"*\"). \
+                      Wildcard versions are fragile and can cause unexpected breakage.",
+        help: "Replace `foo = \"*\"` with a specific version like `foo = \"1.0\"`.",
+        url: None,
+        codes: &["wildcard_version"],
+    },
+    CheckDocumentation {
+        id: "deps.path_missing_version",
+        name: "Path Dependencies Have Version",
+        description: "Validates that path dependencies also specify a version. Path-only \
+                      dependencies cannot be published to crates.io.",
+        help: "Add a version field: `foo = { path = \"../foo\", version = \"0.1\" }`.",
+        url: None,
+        codes: &["path_missing_version"],
+    },
+    CheckDocumentation {
+        id: "deps.workspace_inheritance",
+        name: "Workspace Inheritance",
+        description: "Suggests using workspace dependency inheritance when a dependency is \
+                      defined in workspace.dependencies.",
+        help: "Use `foo.workspace = true` instead of duplicating the version.",
+        url: None,
+        codes: &["missing_workspace_inheritance"],
+    },
+    CheckDocumentation {
+        id: "workspace.edition_consistent",
+        name: "Edition Consistent",
+        description: "Validates that all workspace members use the same Rust edition. \
+                      Inconsistent editions across crates can cause confusing behavior differences.",
+        help: "Ensure all crates either inherit from workspace.package.edition or \
+               explicitly set the same edition.",
+        url: Some("https://doc.rust-lang.org/edition-guide/"),
+        codes: &[
+            "invalid_workspace_edition",
+            "missing_member_edition",
+            "invalid_member_edition",
+            "edition_mismatch",
+        ],
+    },
+    CheckDocumentation {
+        id: "workspace.member_ordering",
+        name: "Member Ordering",
+        description: "Validates that workspace members in [workspace.members] are sorted \
+                      alphabetically. Sorted members improve readability and reduce merge conflicts.",
+        help: "Sort the members array alphabetically in Cargo.toml.",
+        url: None,
+        codes: &["members_not_sorted"],
+    },
+    CheckDocumentation {
+        id: "deps.lockfile_present",
+        name: "Lockfile Present",
+        description: "Validates that Cargo.lock exists for binary crates. \
+                      A lockfile ensures reproducible builds for applications.",
+        help: "Run `cargo build` to generate Cargo.lock and commit it to version control.",
+        url: Some(
+            "https://doc.rust-lang.org/cargo/faq.html#why-do-binaries-have-cargolock-in-version-control-but-not-libraries",
+        ),
+        codes: &[
+            "missing_lockfile_for_binary",
+            "unexpected_lockfile_for_library",
+        ],
+    },
 ];
 
 /// Look up documentation for a check ID or finding code.
@@ -201,6 +296,36 @@ pub const BUILTIN_CHECKS: &[CheckDef] = &[
         default_severity: Severity::Warn,
         default_triggers: &["Cargo.toml"],
     },
+    CheckDef {
+        id: "deps.wildcard_version",
+        default_severity: Severity::Warn,
+        default_triggers: &["Cargo.toml", "**/Cargo.toml"],
+    },
+    CheckDef {
+        id: "deps.path_missing_version",
+        default_severity: Severity::Warn,
+        default_triggers: &["Cargo.toml", "**/Cargo.toml"],
+    },
+    CheckDef {
+        id: "deps.workspace_inheritance",
+        default_severity: Severity::Info,
+        default_triggers: &["Cargo.toml", "**/Cargo.toml"],
+    },
+    CheckDef {
+        id: "workspace.edition_consistent",
+        default_severity: Severity::Error,
+        default_triggers: &["Cargo.toml", "**/Cargo.toml"],
+    },
+    CheckDef {
+        id: "workspace.member_ordering",
+        default_severity: Severity::Info,
+        default_triggers: &["Cargo.toml"],
+    },
+    CheckDef {
+        id: "deps.lockfile_present",
+        default_severity: Severity::Warn,
+        default_triggers: &["Cargo.lock", "Cargo.toml"],
+    },
 ];
 
 pub fn run_selected_checks(
@@ -268,6 +393,18 @@ pub fn run_selected_checks(
                 check_checksums_verify_local(repo, config, effective.severity)?
             }
             "workspace.resolver_v2" => check_workspace_resolver(repo, config, effective.severity)?,
+            "deps.wildcard_version" => check_deps_wildcard(repo, config, effective.severity)?,
+            "deps.path_missing_version" => {
+                check_deps_path_version(repo, config, effective.severity)?
+            }
+            "deps.workspace_inheritance" => {
+                check_deps_workspace_inheritance(repo, config, effective.severity)?
+            }
+            "workspace.edition_consistent" => {
+                check_edition_consistent(repo, config, effective.severity)?
+            }
+            "workspace.member_ordering" => check_member_ordering(repo, config, effective.severity)?,
+            "deps.lockfile_present" => check_lockfile_present(repo, config, effective.severity)?,
             _ => return Err(anyhow!("unknown check id: {}", def.id)),
         };
 
@@ -928,8 +1065,355 @@ fn check_workspace_resolver(
     })
 }
 
+fn check_edition_consistent(
+    repo: &RepoState,
+    config: &Config,
+    default_sev: Severity,
+) -> Result<CheckReport> {
+    let mut findings = Vec::new();
+
+    // Get workspace edition
+    let Some(workspace_edition) = repo.workspace.workspace_edition.clone() else {
+        return Ok(CheckReport {
+            id: "workspace.edition_consistent".to_string(),
+            status: CheckStatus::Skip,
+            findings: Vec::new(),
+            skipped_reason: Some("no workspace edition to compare".to_string()),
+        });
+    };
+
+    // Validate workspace edition is valid (2015, 2018, 2021, 2024)
+    if !is_valid_edition(&workspace_edition) {
+        findings.push(mk_finding(
+            default_sev,
+            "workspace.edition_consistent",
+            "invalid_workspace_edition",
+            format!("Invalid workspace edition: {workspace_edition}"),
+            repo.cargo_root.as_ref().map(|p| rel_path(&repo.root, p)),
+            None,
+        ));
+        return Ok(CheckReport {
+            id: "workspace.edition_consistent".to_string(),
+            status: check_status_from_findings(&findings),
+            findings,
+            skipped_reason: None,
+        });
+    }
+
+    let allowlist: HashSet<String> = config
+        .policy
+        .edition
+        .allow_overrides
+        .iter()
+        .cloned()
+        .collect();
+
+    for m in &repo.workspace.members {
+        let rel = rel_path(&repo.root, &m.manifest_path);
+
+        // Get effective edition
+        let effective = if let Some(ref ed) = m.edition {
+            Some(ed.clone())
+        } else if m.edition_workspace {
+            Some(workspace_edition.clone())
+        } else {
+            None
+        };
+
+        let Some(effective_ed) = effective else {
+            findings.push(mk_finding(
+                default_sev,
+                "workspace.edition_consistent",
+                "missing_member_edition",
+                format!(
+                    "{}: missing package.edition (and not set to inherit from workspace)",
+                    m.name
+                ),
+                Some(rel),
+                None,
+            ));
+            continue;
+        };
+
+        if !is_valid_edition(&effective_ed) {
+            findings.push(mk_finding(
+                default_sev,
+                "workspace.edition_consistent",
+                "invalid_member_edition",
+                format!("{}: invalid edition '{effective_ed}'", m.name),
+                Some(rel),
+                None,
+            ));
+            continue;
+        }
+
+        if effective_ed != workspace_edition {
+            let allowed =
+                config.policy.edition.allow_per_crate_override || allowlist.contains(&rel);
+            if !allowed {
+                findings.push(mk_finding(
+                    default_sev,
+                    "workspace.edition_consistent",
+                    "edition_mismatch",
+                    format!("{}: edition {effective_ed} does not match workspace edition {workspace_edition}", m.name),
+                    Some(rel),
+                    None,
+                ));
+            }
+        }
+    }
+
+    Ok(CheckReport {
+        id: "workspace.edition_consistent".to_string(),
+        status: check_status_from_findings(&findings),
+        findings,
+        skipped_reason: None,
+    })
+}
+
+fn is_valid_edition(ed: &str) -> bool {
+    matches!(ed, "2015" | "2018" | "2021" | "2024")
+}
+
+fn check_member_ordering(
+    repo: &RepoState,
+    config: &Config,
+    default_sev: Severity,
+) -> Result<CheckReport> {
+    const CHECK_ID: &str = "workspace.member_ordering";
+    let mut findings = Vec::new();
+
+    if !repo.workspace.is_workspace {
+        return Ok(CheckReport {
+            id: CHECK_ID.to_string(),
+            status: CheckStatus::Skip,
+            findings,
+            skipped_reason: Some("not a workspace".to_string()),
+        });
+    }
+
+    // Get member patterns from workspace model if available
+    let Some(ref model) = repo.workspace_model else {
+        return Ok(CheckReport {
+            id: CHECK_ID.to_string(),
+            status: CheckStatus::Skip,
+            findings,
+            skipped_reason: Some("workspace model not available".to_string()),
+        });
+    };
+
+    if !config.policy.member_ordering.require_sorted {
+        return Ok(CheckReport {
+            id: CHECK_ID.to_string(),
+            status: CheckStatus::Skip,
+            findings,
+            skipped_reason: Some("sorting not required by policy".to_string()),
+        });
+    }
+
+    let patterns = &model.member_patterns;
+    if patterns.is_empty() {
+        return Ok(CheckReport {
+            id: CHECK_ID.to_string(),
+            status: CheckStatus::Pass,
+            findings,
+            skipped_reason: None,
+        });
+    }
+
+    // Check if patterns are sorted
+    let mut sorted = patterns.clone();
+    sorted.sort();
+
+    if patterns != &sorted {
+        findings.push(mk_finding(
+            default_sev,
+            CHECK_ID,
+            "members_not_sorted",
+            "workspace.members is not sorted alphabetically".to_string(),
+            Some("Cargo.toml".to_string()),
+            None,
+        ));
+    }
+
+    Ok(CheckReport {
+        id: CHECK_ID.to_string(),
+        status: check_status_from_findings(&findings),
+        findings,
+        skipped_reason: None,
+    })
+}
+
 fn rel_path(root: &camino::Utf8Path, p: &camino::Utf8Path) -> String {
     p.strip_prefix(root).ok().unwrap_or(p).to_string()
+}
+
+fn check_deps_wildcard(
+    repo: &RepoState,
+    _config: &Config,
+    default_sev: Severity,
+) -> Result<CheckReport> {
+    let depguard_config = depguard::Config {
+        check_wildcards: true,
+        check_path_version: false,
+        check_workspace_inheritance: false,
+        severity: depguard::Severity::Warn,
+        ignore: Vec::new(),
+    };
+
+    let depguard_findings = depguard::check_workspace(&repo.root, &depguard_config)?;
+
+    let findings: Vec<Finding> = depguard_findings
+        .into_iter()
+        .filter(|f| f.code == "wildcard_version")
+        .map(|f| {
+            mk_finding(
+                default_sev,
+                "deps.wildcard_version",
+                &f.code,
+                f.message,
+                f.path,
+                f.line,
+            )
+        })
+        .collect();
+
+    Ok(CheckReport {
+        id: "deps.wildcard_version".to_string(),
+        status: check_status_from_findings(&findings),
+        findings,
+        skipped_reason: None,
+    })
+}
+
+fn check_deps_path_version(
+    repo: &RepoState,
+    _config: &Config,
+    default_sev: Severity,
+) -> Result<CheckReport> {
+    let depguard_config = depguard::Config {
+        check_wildcards: false,
+        check_path_version: true,
+        check_workspace_inheritance: false,
+        severity: depguard::Severity::Warn,
+        ignore: Vec::new(),
+    };
+
+    let depguard_findings = depguard::check_workspace(&repo.root, &depguard_config)?;
+
+    let findings: Vec<Finding> = depguard_findings
+        .into_iter()
+        .filter(|f| f.code == "path_missing_version")
+        .map(|f| {
+            mk_finding(
+                default_sev,
+                "deps.path_missing_version",
+                &f.code,
+                f.message,
+                f.path,
+                f.line,
+            )
+        })
+        .collect();
+
+    Ok(CheckReport {
+        id: "deps.path_missing_version".to_string(),
+        status: check_status_from_findings(&findings),
+        findings,
+        skipped_reason: None,
+    })
+}
+
+fn check_deps_workspace_inheritance(
+    repo: &RepoState,
+    _config: &Config,
+    default_sev: Severity,
+) -> Result<CheckReport> {
+    let depguard_config = depguard::Config {
+        check_wildcards: false,
+        check_path_version: false,
+        check_workspace_inheritance: true,
+        severity: depguard::Severity::Info,
+        ignore: Vec::new(),
+    };
+
+    let depguard_findings = depguard::check_workspace(&repo.root, &depguard_config)?;
+
+    let findings: Vec<Finding> = depguard_findings
+        .into_iter()
+        .filter(|f| f.code == "missing_workspace_inheritance")
+        .map(|f| {
+            mk_finding(
+                default_sev,
+                "deps.workspace_inheritance",
+                &f.code,
+                f.message,
+                f.path,
+                f.line,
+            )
+        })
+        .collect();
+
+    Ok(CheckReport {
+        id: "deps.workspace_inheritance".to_string(),
+        status: check_status_from_findings(&findings),
+        findings,
+        skipped_reason: None,
+    })
+}
+
+fn check_lockfile_present(
+    repo: &RepoState,
+    _config: &Config,
+    default_sev: Severity,
+) -> Result<CheckReport> {
+    const CHECK_ID: &str = "deps.lockfile_present";
+    let mut findings = Vec::new();
+
+    // Determine if workspace has any binary targets
+    let has_any_binary = repo.workspace.members.iter().any(|m| m.has_binary_target);
+
+    if has_any_binary && !repo.lockfile_exists {
+        // Binary crate without Cargo.lock
+        let binary_crates: Vec<&str> = repo
+            .workspace
+            .members
+            .iter()
+            .filter(|m| m.has_binary_target)
+            .map(|m| m.name.as_str())
+            .collect();
+
+        let message = if binary_crates.len() == 1 {
+            format!(
+                "Cargo.lock is missing but crate '{}' has binary targets; \
+                 lockfile ensures reproducible builds",
+                binary_crates[0]
+            )
+        } else {
+            format!(
+                "Cargo.lock is missing but {} crates have binary targets ({}); \
+                 lockfile ensures reproducible builds",
+                binary_crates.len(),
+                binary_crates.join(", ")
+            )
+        };
+
+        findings.push(mk_finding(
+            default_sev,
+            CHECK_ID,
+            "missing_lockfile_for_binary",
+            message,
+            Some("Cargo.lock".to_string()),
+            None,
+        ));
+    }
+
+    Ok(CheckReport {
+        id: CHECK_ID.to_string(),
+        status: check_status_from_findings(&findings),
+        findings,
+        skipped_reason: None,
+    })
 }
 
 #[cfg(test)]
@@ -956,6 +1440,7 @@ mod tests {
             tools_checksums: None,
             tools_manifest: None,
             changed_files: None,
+            lockfile_exists: true,
         }
     }
 
@@ -1003,6 +1488,7 @@ mod tests {
             rust_version_workspace,
             edition: Some("2021".to_string()),
             edition_workspace: true,
+            has_binary_target: false,
         }
     }
 

@@ -562,8 +562,12 @@ impl Profile {
                 "rust.toolchain_pinning" => ProfileCheckState::Enabled(Severity::Info),
                 "rust.toolchain_msrv_relation" => ProfileCheckState::Enabled(Severity::Warn),
                 "workspace.resolver_v2" => ProfileCheckState::Enabled(Severity::Info),
+                "workspace.edition_consistent" => ProfileCheckState::Enabled(Severity::Warn),
+                "workspace.member_ordering" => ProfileCheckState::Enabled(Severity::Info),
                 // All tools.* checks are skipped in oss profile
                 id if id.starts_with("tools.") => ProfileCheckState::Skip,
+                // All deps.* checks are info in oss profile
+                id if id.starts_with("deps.") => ProfileCheckState::Enabled(Severity::Info),
                 // Unknown checks default to warn
                 _ => ProfileCheckState::Enabled(Severity::Warn),
             },
@@ -573,8 +577,12 @@ impl Profile {
                 "rust.toolchain_pinning" => ProfileCheckState::Enabled(Severity::Warn),
                 "rust.toolchain_msrv_relation" => ProfileCheckState::Enabled(Severity::Error),
                 "workspace.resolver_v2" => ProfileCheckState::Enabled(Severity::Warn),
+                "workspace.edition_consistent" => ProfileCheckState::Enabled(Severity::Error),
+                "workspace.member_ordering" => ProfileCheckState::Enabled(Severity::Info),
                 // All tools.* checks are warn in team profile
                 id if id.starts_with("tools.") => ProfileCheckState::Enabled(Severity::Warn),
+                // All deps.* checks are warn in team profile
+                id if id.starts_with("deps.") => ProfileCheckState::Enabled(Severity::Warn),
                 // Unknown checks default to warn
                 _ => ProfileCheckState::Enabled(Severity::Warn),
             },
@@ -806,9 +814,89 @@ impl Default for ChecksumsPolicy {
     }
 }
 
+/// Policy settings for edition consistency checks.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct EditionPolicy {
+    /// Require all crates to have consistent edition.
+    #[serde(default = "EditionPolicy::default_require_consistent")]
+    pub require_consistent: bool,
+    /// Allow individual crates to override the workspace edition.
+    #[serde(default)]
+    pub allow_per_crate_override: bool,
+    /// List of crate paths allowed to have different edition.
+    #[serde(default)]
+    pub allow_overrides: Vec<String>,
+}
+
+impl EditionPolicy {
+    fn default_require_consistent() -> bool {
+        true
+    }
+}
+
+impl Default for EditionPolicy {
+    fn default() -> Self {
+        Self {
+            require_consistent: true,
+            allow_per_crate_override: false,
+            allow_overrides: Vec::new(),
+        }
+    }
+}
+
+/// Policy settings for member ordering checks.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct MemberOrderingPolicy {
+    /// Require workspace.members to be sorted alphabetically.
+    #[serde(default = "MemberOrderingPolicy::default_require_sorted")]
+    pub require_sorted: bool,
+}
+
+impl MemberOrderingPolicy {
+    fn default_require_sorted() -> bool {
+        true
+    }
+}
+
+impl Default for MemberOrderingPolicy {
+    fn default() -> Self {
+        Self {
+            require_sorted: true,
+        }
+    }
+}
+
+/// Policy settings for lockfile checks.
+///
+/// Controls how builddiag validates Cargo.lock presence.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct LockfilePolicy {
+    /// Require Cargo.lock for binary crates.
+    #[serde(default = "LockfilePolicy::default_require_for_binaries")]
+    pub require_for_binaries: bool,
+    /// Warn about lockfile in library-only crates.
+    #[serde(default)]
+    pub warn_for_libraries: bool,
+}
+
+impl LockfilePolicy {
+    fn default_require_for_binaries() -> bool {
+        true
+    }
+}
+
+impl Default for LockfilePolicy {
+    fn default() -> Self {
+        Self {
+            require_for_binaries: true,
+            warn_for_libraries: false,
+        }
+    }
+}
+
 /// Combined policy settings for all check categories.
 ///
-/// Groups together MSRV, toolchain, and checksums policies.
+/// Groups together MSRV, toolchain, checksums, edition, member ordering, and lockfile policies.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct Policy {
     /// MSRV validation policy.
@@ -820,6 +908,15 @@ pub struct Policy {
     /// Checksums verification policy.
     #[serde(default)]
     pub checksums: ChecksumsPolicy,
+    /// Edition consistency policy.
+    #[serde(default)]
+    pub edition: EditionPolicy,
+    /// Member ordering policy.
+    #[serde(default)]
+    pub member_ordering: MemberOrderingPolicy,
+    /// Lockfile policy.
+    #[serde(default)]
+    pub lockfile: LockfilePolicy,
 }
 
 /// Per-check configuration override.

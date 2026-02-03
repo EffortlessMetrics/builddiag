@@ -10,9 +10,10 @@
 //! - **Property 2**: Report Serialization Round-Trip (Requirements 3.9, 8.5)
 
 use builddiag_types::{
-    CheckConfig, ChecksumsPolicy, Config, Defaults, FailOn, Finding, GitInfo, HostInfo, Location,
-    MsrvPolicy, MsrvSource, PathsConfig, Policy, Profile, RelationToMsrv, Report, RunInfo,
-    Severity, Summary, ToolInfo, ToolchainPolicy, Verdict,
+    CheckConfig, ChecksumsPolicy, Config, Defaults, EditionPolicy, FailOn, Finding, GitInfo,
+    HostInfo, Location, LockfilePolicy, MemberOrderingPolicy, MsrvPolicy, MsrvSource, PathsConfig,
+    Policy, Profile, RelationToMsrv, Report, RunInfo, Severity, Summary, ToolInfo, ToolchainPolicy,
+    Verdict,
 };
 use chrono::{TimeZone, Utc};
 use proptest::prelude::*;
@@ -302,18 +303,57 @@ fn arb_checksums_policy() -> impl Strategy<Value = ChecksumsPolicy> {
     )
 }
 
+/// Generate arbitrary EditionPolicy instances.
+fn arb_edition_policy() -> impl Strategy<Value = EditionPolicy> {
+    (
+        any::<bool>(),
+        any::<bool>(),
+        proptest::collection::vec(arb_identifier(), 0..5),
+    )
+        .prop_map(
+            |(require_consistent, allow_per_crate_override, allow_overrides)| EditionPolicy {
+                require_consistent,
+                allow_per_crate_override,
+                allow_overrides,
+            },
+        )
+}
+
+/// Generate arbitrary MemberOrderingPolicy instances.
+fn arb_member_ordering_policy() -> impl Strategy<Value = MemberOrderingPolicy> {
+    any::<bool>().prop_map(|require_sorted| MemberOrderingPolicy { require_sorted })
+}
+
+/// Generate arbitrary LockfilePolicy instances.
+fn arb_lockfile_policy() -> impl Strategy<Value = LockfilePolicy> {
+    (any::<bool>(), any::<bool>()).prop_map(|(require_for_binaries, warn_for_libraries)| {
+        LockfilePolicy {
+            require_for_binaries,
+            warn_for_libraries,
+        }
+    })
+}
+
 /// Generate arbitrary Policy instances.
 fn arb_policy() -> impl Strategy<Value = Policy> {
     (
         arb_msrv_policy(),
         arb_toolchain_policy(),
         arb_checksums_policy(),
+        arb_edition_policy(),
+        arb_member_ordering_policy(),
+        arb_lockfile_policy(),
     )
-        .prop_map(|(msrv, toolchain, checksums)| Policy {
-            msrv,
-            toolchain,
-            checksums,
-        })
+        .prop_map(
+            |(msrv, toolchain, checksums, edition, member_ordering, lockfile)| Policy {
+                msrv,
+                toolchain,
+                checksums,
+                edition,
+                member_ordering,
+                lockfile,
+            },
+        )
 }
 
 /// Generate arbitrary CheckConfig instances.

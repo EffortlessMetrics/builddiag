@@ -1,0 +1,17 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 91f0ddfbe20521274e24eabc376d1347fe980f8f5d4d85aedf24c025fe18de8a # shrinks to _dummy = ()
+cc bf835708ee808082dadb41cdafcb39cfbed1827b17c0676af3afeeb5d3f839ac # shrinks to resolver = Some("1")
+cc 238798c90d27b25f3945ec844aeea0820c0c90aaabefa1c9db88322c3c1c8fac # shrinks to channel = "stable"
+cc f116d6e3f047066e1c0095ec61147d81c017ba194fb13db376404846dee2c6ab # shrinks to has_msrv = false, has_toolchain = false, resolver = Some("2")
+cc 6e4a98bd0915dbd05a5f2ee9ebee2891e769c207b46a06404ef3f3bcd2e59b94 # shrinks to workspace_minor = 70, member_minor = 60
+cc d6727338326310b1980e5b9fbafd3e44ceba0287a79402c7608c73afaa36fc28 # shrinks to msrv_minor = 60, toolchain_minor = 75
+cc c3bd1a339fe5bf5973015e680f2929900bd666aab0ec8f00fb62eb7965189dde # shrinks to _dummy = ()
+cc 2859116127b98133abb625ccad72b0db5dcf22eef899be2fa23851964d5eaae7 # shrinks to version = "1.50.0"
+cc 9a68e4cc8d784d60096b838e7d77fcb3ad3f87800374d1e1eb92d7e867ec651d # shrinks to msrv = "1.50"
+cc 34dc39643e286c2a1e6873bc84308ec6436bdc14ed8dcd710ee0880b8b78bd68 # shrinks to msrv = "1.50", toolchain = "1.50.0"
+cc d46a36040345d03525b90a13d0fd2075045b99e01318cc361cfaa869966f4774 # shrinks to channel = "1.50.0"
