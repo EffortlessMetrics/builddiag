@@ -16,6 +16,7 @@ clap.workspace = true
 camino.workspace = true
 builddiag-app = { path = "../builddiag-app" }
 builddiag-checks = { path = "../builddiag-checks" }
+builddiag-domain = { path = "../builddiag-domain" }
 builddiag-render = { path = "../builddiag-render" }
 builddiag-types = { path = "../builddiag-types" }
 serde.workspace = true

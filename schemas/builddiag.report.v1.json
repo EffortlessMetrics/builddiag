@@ -1,0 +1,195 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "$id": "https://builddiag.dev/schemas/builddiag.report.v1.json",
+  "title": "Builddiag Report",
+  "description": "The main report output from builddiag build contract validator.",
+  "type": "object",
+  "required": ["schema", "tool", "run", "verdict", "findings"],
+  "properties": {
+    "schema": {
+      "type": "string",
+      "const": "builddiag.report.v1",
+      "description": "Schema identifier for this report format."
+    },
+    "tool": {
+      "type": "object",
+      "description": "Information about the builddiag tool that generated the report.",
+      "required": ["name", "version"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Name of the tool (e.g., \"builddiag\")."
+        },
+        "version": {
+          "type": "string",
+          "description": "Version of the tool (e.g., \"0.1.0\")."
+        }
+      },
+      "additionalProperties": false
+    },
+    "run": {
+      "type": "object",
+      "description": "Information about a single execution run.",
+      "required": ["started_at"],
+      "properties": {
+        "started_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when the run started (ISO 8601 format)."
+        },
+        "ended_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when the run completed (ISO 8601 format)."
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Duration of the run in milliseconds."
+        },
+        "host": {
+          "type": "object",
+          "description": "Information about the host machine.",
+          "properties": {
+            "os": {
+              "type": "string",
+              "description": "Operating system name (e.g., \"linux\", \"macos\", \"windows\")."
+            },
+            "arch": {
+              "type": "string",
+              "description": "CPU architecture (e.g., \"x86_64\", \"aarch64\")."
+            }
+          },
+          "additionalProperties": false
+        },
+        "git": {
+          "type": "object",
+          "description": "Git commit information for diff-aware mode.",
+          "properties": {
+            "base_sha": {
+              "type": "string",
+              "description": "Base commit SHA for diff comparison.",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            "head_sha": {
+              "type": "string",
+              "description": "Head commit SHA being analyzed.",
+              "pattern": "^[0-9a-f]{40}$"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "verdict": {
+      "type": "string",
+      "enum": ["pass", "warn", "fail", "error"],
+      "description": "Overall verdict summarizing all check results."
+    },
+    "findings": {
+      "type": "array",
+      "description": "Array of all findings from executed checks.",
+      "items": {
+        "$ref": "#/$defs/Finding"
+      }
+    },
+    "summary": {
+      "type": "object",
+      "description": "Aggregated summary of all check results.",
+      "properties": {
+        "total_findings": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total number of findings across all checks."
+        },
+        "by_severity": {
+          "type": "object",
+          "description": "Counts of findings by severity level.",
+          "properties": {
+            "info": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Number of informational findings."
+            },
+            "warn": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Number of warning findings."
+            },
+            "error": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Number of error findings."
+            }
+          },
+          "additionalProperties": false
+        },
+        "by_check": {
+          "type": "object",
+          "description": "Counts of findings by check ID.",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "Finding": {
+      "type": "object",
+      "description": "A single validation finding from a check.",
+      "required": ["check_id", "code", "severity", "message"],
+      "properties": {
+        "check_id": {
+          "type": "string",
+          "description": "Identifier of the check that produced this finding (e.g., \"rust.msrv_consistent\").",
+          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+        },
+        "code": {
+          "type": "string",
+          "description": "Machine-readable code identifying the type of finding (e.g., \"mismatch\", \"missing\", \"invalid\")."
+        },
+        "severity": {
+          "type": "string",
+          "enum": ["info", "warn", "error"],
+          "description": "Severity level of this finding."
+        },
+        "message": {
+          "type": "string",
+          "description": "Human-readable description of the finding."
+        },
+        "location": {
+          "type": "object",
+          "description": "Location where the finding was detected.",
+          "properties": {
+            "path": {
+              "type": "string",
+              "description": "File path relative to repository root."
+            },
+            "line": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Line number in the file (1-indexed)."
+            },
+            "col": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Column number in the file (1-indexed)."
+            }
+          },
+          "additionalProperties": false
+        },
+        "data": {
+          "type": "object",
+          "description": "Optional structured data providing additional context or hints.",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

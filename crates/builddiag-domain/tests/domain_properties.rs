@@ -13,8 +13,10 @@
 //! - **Property 6**: Check Status Consistency (Requirements 3.2)
 //! - **Property 7**: Summary Aggregation Consistency (Requirements 3.3)
 
-use builddiag_domain::{check_status_from_findings, parse_rust_version, summarize};
-use builddiag_types::{CheckReport, CheckStatus, Finding, Severity, Verdict};
+use builddiag_domain::{
+    check_status_from_findings, parse_rust_version, sort_findings_canonical, summarize,
+};
+use builddiag_types::{CheckReport, CheckStatus, Finding, Location, Severity};
 use proptest::prelude::*;
 
 // =============================================================================
@@ -63,23 +65,32 @@ fn arb_check_status() -> impl Strategy<Value = CheckStatus> {
     ]
 }
 
-/// Generate arbitrary Finding instances.
-fn arb_finding() -> impl Strategy<Value = Finding> {
+/// Generate arbitrary Location instances.
+fn arb_location() -> impl Strategy<Value = Location> {
     (
-        arb_severity(),
-        arb_identifier(),
-        arb_message(),
-        proptest::option::of(arb_path()),
+        arb_path(),
         proptest::option::of(1u32..1000),
         proptest::option::of(1u32..200),
     )
-        .prop_map(|(severity, code, message, path, line, column)| Finding {
-            severity,
+        .prop_map(|(path, line, col)| Location { path, line, col })
+}
+
+/// Generate arbitrary Finding instances.
+fn arb_finding() -> impl Strategy<Value = Finding> {
+    (
+        arb_identifier(),
+        arb_identifier(),
+        arb_severity(),
+        arb_message(),
+        proptest::option::of(arb_location()),
+    )
+        .prop_map(|(check_id, code, severity, message, location)| Finding {
+            check_id,
             code,
+            severity,
             message,
-            path,
-            line,
-            column,
+            location,
+            data: None,
         })
 }
 
@@ -123,18 +134,17 @@ fn arb_valid_rust_version() -> impl Strategy<Value = String> {
 fn arb_finding_with_severity(severity: Severity) -> impl Strategy<Value = Finding> {
     (
         arb_identifier(),
+        arb_identifier(),
         arb_message(),
-        proptest::option::of(arb_path()),
-        proptest::option::of(1u32..1000),
-        proptest::option::of(1u32..200),
+        proptest::option::of(arb_location()),
     )
-        .prop_map(move |(code, message, path, line, column)| Finding {
-            severity,
+        .prop_map(move |(check_id, code, message, location)| Finding {
+            check_id,
             code,
+            severity,
             message,
-            path,
-            line,
-            column,
+            location,
+            data: None,
         })
 }
 
@@ -260,29 +270,33 @@ proptest! {
             .count();
 
         // Verify that summary counts match the expected counts
+        let actual_error_count = *summary.by_severity.get("error").unwrap_or(&0);
+        let actual_warn_count = *summary.by_severity.get("warn").unwrap_or(&0);
+        let actual_info_count = *summary.by_severity.get("info").unwrap_or(&0);
+
         prop_assert_eq!(
-            summary.counts.error as usize,
+            actual_error_count,
             expected_error_count,
             "Error count mismatch: summary has {} but expected {} from {} checks",
-            summary.counts.error,
+            actual_error_count,
             expected_error_count,
             checks.len()
         );
 
         prop_assert_eq!(
-            summary.counts.warn as usize,
+            actual_warn_count,
             expected_warn_count,
             "Warn count mismatch: summary has {} but expected {} from {} checks",
-            summary.counts.warn,
+            actual_warn_count,
             expected_warn_count,
             checks.len()
         );
 
         prop_assert_eq!(
-            summary.counts.info as usize,
+            actual_info_count,
             expected_info_count,
             "Info count mismatch: summary has {} but expected {} from {} checks",
-            summary.counts.info,
+            actual_info_count,
             expected_info_count,
             checks.len()
         );
@@ -318,9 +332,148 @@ mod generator_tests {
     fn test_summarize_empty_reports() {
         let reports: Vec<CheckReport> = vec![];
         let summary = summarize(&reports);
-        assert_eq!(summary.verdict, Verdict::Skip);
-        assert_eq!(summary.counts.info, 0);
-        assert_eq!(summary.counts.warn, 0);
-        assert_eq!(summary.counts.error, 0);
+        assert_eq!(summary.total_findings, 0);
+        assert_eq!(*summary.by_severity.get("info").unwrap_or(&0), 0);
+        assert_eq!(*summary.by_severity.get("warn").unwrap_or(&0), 0);
+        assert_eq!(*summary.by_severity.get("error").unwrap_or(&0), 0);
+    }
+}
+
+// =============================================================================
+// Property Tests for Canonical Sorting
+// =============================================================================
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(PROPTEST_CASES))]
+
+    // =========================================================================
+    // Property: Sorting Idempotency
+    // =========================================================================
+
+    /// Feature: deterministic-output, Property: Sorting Idempotency
+    ///
+    /// For any vector of findings, sorting twice produces the same result as
+    /// sorting once. This ensures that the sort operation is stable and does
+    /// not reorder equal elements differently on subsequent calls.
+    #[test]
+    fn prop_sort_findings_idempotent(findings in arb_findings_vec()) {
+        let mut first_sort = findings.clone();
+        sort_findings_canonical(&mut first_sort);
+
+        let mut second_sort = first_sort.clone();
+        sort_findings_canonical(&mut second_sort);
+
+        prop_assert_eq!(
+            first_sort,
+            second_sort,
+            "Sorting should be idempotent: sorting twice should give same result as sorting once"
+        );
+    }
+
+    // =========================================================================
+    // Property: Sorting Determinism
+    // =========================================================================
+
+    /// Feature: deterministic-output, Property: Sorting Determinism
+    ///
+    /// For any vector of findings, sorting produces the same result regardless
+    /// of the initial order. This is tested by comparing sorting of the original
+    /// vector with sorting of a shuffled version.
+    #[test]
+    fn prop_sort_findings_deterministic(
+        findings in arb_findings_vec(),
+        seed in any::<u64>()
+    ) {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        // Create two copies with potentially different orderings
+        let mut sorted1 = findings.clone();
+        sort_findings_canonical(&mut sorted1);
+
+        // Create a "shuffled" version by sorting by hash
+        let mut shuffled = findings.clone();
+        shuffled.sort_by(|a, b| {
+            let mut ha = DefaultHasher::new();
+            let mut hb = DefaultHasher::new();
+            // Hash with seed for different orderings
+            seed.hash(&mut ha);
+            a.code.hash(&mut ha);
+            a.message.hash(&mut ha);
+            seed.hash(&mut hb);
+            b.code.hash(&mut hb);
+            b.message.hash(&mut hb);
+            ha.finish().cmp(&hb.finish())
+        });
+
+        let mut sorted2 = shuffled;
+        sort_findings_canonical(&mut sorted2);
+
+        prop_assert_eq!(
+            sorted1,
+            sorted2,
+            "Sorting should be deterministic: same elements in different order should produce same sorted result"
+        );
+    }
+
+    // =========================================================================
+    // Property: Sorting Totality (No Panics)
+    // =========================================================================
+
+    /// Feature: deterministic-output, Property: Sorting Totality
+    ///
+    /// For any valid vector of findings, sorting should complete without
+    /// panicking and produce a valid result. This tests that the comparison
+    /// function handles all edge cases (None values, empty strings, etc.).
+    #[test]
+    fn prop_sort_findings_total(findings in arb_findings_vec()) {
+        let mut to_sort = findings.clone();
+
+        // Should not panic
+        sort_findings_canonical(&mut to_sort);
+
+        // Result should have same length
+        prop_assert_eq!(
+            to_sort.len(),
+            findings.len(),
+            "Sorting should preserve all elements"
+        );
+
+        // Result should contain all original elements (unordered comparison)
+        for f in &findings {
+            prop_assert!(
+                to_sort.contains(f),
+                "Sorted result should contain all original findings"
+            );
+        }
+    }
+
+    // =========================================================================
+    // Property: Severity Ordering
+    // =========================================================================
+
+    /// Feature: deterministic-output, Property: Severity Ordering
+    ///
+    /// After sorting, findings should be ordered by severity (Error > Warn > Info).
+    /// This means errors come first, then warnings, then info.
+    #[test]
+    fn prop_sort_findings_severity_order(findings in arb_findings_vec()) {
+        let mut sorted = findings.clone();
+        sort_findings_canonical(&mut sorted);
+
+        // Check that severity is non-increasing (Error >= Warn >= Info)
+        for window in sorted.windows(2) {
+            let prev_severity = &window[0].severity;
+            let curr_severity = &window[1].severity;
+
+            // In our ordering: Error > Warn > Info
+            // So prev should be >= curr (where Error is greatest)
+            prop_assert!(
+                prev_severity >= curr_severity,
+                "Findings should be sorted by severity (Error > Warn > Info), but found {:?} before {:?}",
+                prev_severity,
+                curr_severity
+            );
+        }
     }
 }

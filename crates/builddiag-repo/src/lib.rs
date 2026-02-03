@@ -1,11 +1,151 @@
+//! Repository state loading for builddiag.
+//!
+//! This crate provides functionality for discovering and loading workspace
+//! information from Cargo repositories. It supports:
+//!
+//! - Multi-crate workspaces with glob patterns in members/exclude
+//! - Single-crate repositories (treated as "workspace of one")
+//! - Virtual workspaces (workspace with no root package)
+//! - Deterministic ordering of discovered members
+//!
+//! # Path Normalization
+//!
+//! All paths are normalized to use forward slashes regardless of platform,
+//! and are expressed as repo-relative paths where appropriate.
+
 use anyhow::{Context, Result, anyhow};
 use builddiag_domain::parse_rust_version;
 use builddiag_types::Config;
 use camino::{Utf8Path, Utf8PathBuf};
 use cargo_metadata::{Metadata, MetadataCommand, PackageId};
+use globset::{Glob, GlobSetBuilder};
 use serde::Deserialize;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+
+// ============================================================================
+// Path Normalization Utilities
+// ============================================================================
+
+/// Normalizes a path to use forward slashes on all platforms.
+///
+/// This ensures consistent path representation regardless of the operating system.
+///
+/// # Examples
+///
+/// ```
+/// use builddiag_repo::normalize_slashes;
+///
+/// assert_eq!(normalize_slashes("foo\\bar\\baz"), "foo/bar/baz");
+/// assert_eq!(normalize_slashes("foo/bar/baz"), "foo/bar/baz");
+/// ```
+pub fn normalize_slashes(path: &str) -> String {
+    path.replace('\\', "/")
+}
+
+/// Converts an absolute path to a repo-relative path with forward slashes.
+///
+/// If the path is not under the repo root, returns the original path normalized.
+///
+/// # Examples
+///
+/// ```
+/// use builddiag_repo::to_repo_relative;
+/// use camino::Utf8Path;
+///
+/// let repo_root = Utf8Path::new("/home/user/project");
+/// let abs_path = Utf8Path::new("/home/user/project/crates/foo/Cargo.toml");
+/// assert_eq!(to_repo_relative(repo_root, abs_path), "crates/foo/Cargo.toml");
+/// ```
+pub fn to_repo_relative(repo_root: &Utf8Path, abs_path: &Utf8Path) -> String {
+    let repo_str = normalize_slashes(repo_root.as_str());
+    let abs_str = normalize_slashes(abs_path.as_str());
+
+    // Handle both with and without trailing slash
+    let repo_prefix = if repo_str.ends_with('/') {
+        repo_str.clone()
+    } else {
+        format!("{}/", repo_str)
+    };
+
+    if abs_str.starts_with(&repo_prefix) {
+        abs_str[repo_prefix.len()..].to_string()
+    } else if abs_str == repo_str.trim_end_matches('/') {
+        ".".to_string()
+    } else {
+        abs_str
+    }
+}
+
+/// Joins a repo-relative path to a root, returning a normalized absolute path.
+pub fn join_normalized(root: &Utf8Path, relative: &str) -> Utf8PathBuf {
+    let joined = root.join(relative);
+    Utf8PathBuf::from(normalize_slashes(joined.as_str()))
+}
+
+// ============================================================================
+// Workspace Model Types
+// ============================================================================
+
+/// Parsed representation of a Cargo.toml manifest.
+#[derive(Debug, Clone)]
+pub struct ParsedManifest {
+    /// The raw TOML value of the manifest.
+    pub value: toml::Value,
+    /// The package name, if this is a package manifest.
+    pub package_name: Option<String>,
+    /// The rust-version field, if present (not inherited).
+    pub rust_version: Option<String>,
+    /// Whether rust-version inherits from workspace.
+    pub rust_version_workspace: bool,
+    /// The edition field, if present (not inherited).
+    pub edition: Option<String>,
+    /// Whether edition inherits from workspace.
+    pub edition_workspace: bool,
+}
+
+/// Comprehensive model of a Cargo workspace.
+///
+/// This type represents the complete parsed state of a workspace, including
+/// the root manifest and all member manifests. It supports both multi-crate
+/// workspaces and single-crate repositories (treated as "workspace of one").
+#[derive(Debug, Clone)]
+pub struct WorkspaceModel {
+    /// Parsed root Cargo.toml manifest.
+    pub root_manifest: ParsedManifest,
+    /// Map of repo-relative paths to parsed member manifests.
+    /// Uses BTreeMap for deterministic ordering.
+    pub member_manifests: BTreeMap<String, ParsedManifest>,
+    /// Whether this is a virtual workspace (has [workspace] but no [package]).
+    pub is_virtual: bool,
+    /// The workspace MSRV, if defined at workspace level.
+    pub workspace_msrv: Option<String>,
+    /// The workspace edition, if defined at workspace level.
+    pub workspace_edition: Option<String>,
+    /// The workspace resolver version, if defined.
+    pub workspace_resolver: Option<String>,
+    /// The list of member patterns from [workspace.members].
+    pub member_patterns: Vec<String>,
+    /// The list of exclude patterns from [workspace.exclude].
+    pub exclude_patterns: Vec<String>,
+}
+
+impl WorkspaceModel {
+    /// Returns whether this workspace has any members.
+    pub fn has_members(&self) -> bool {
+        !self.member_manifests.is_empty()
+    }
+
+    /// Returns the number of workspace members.
+    pub fn member_count(&self) -> usize {
+        self.member_manifests.len()
+    }
+
+    /// Returns all member paths in sorted order.
+    pub fn member_paths(&self) -> Vec<&str> {
+        self.member_manifests.keys().map(|s| s.as_str()).collect()
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct Toolchain {
@@ -66,6 +206,9 @@ pub struct RepoState {
     pub cargo_root: Option<Utf8PathBuf>,
     pub toolchain: Option<Toolchain>,
     pub workspace: WorkspaceInfo,
+    /// The comprehensive workspace model with all discovery information.
+    /// This provides direct access to parsed manifests and workspace patterns.
+    pub workspace_model: Option<WorkspaceModel>,
     pub tools_checksums: Option<ToolsChecksums>,
     pub tools_manifest: Option<(Utf8PathBuf, ToolsManifest)>,
     pub changed_files: Option<BTreeSet<String>>,
@@ -91,16 +234,22 @@ pub fn load_repo_state(
 
     let toolchain = find_toolchain(&root, &config.paths.rust_toolchain)?;
 
-    let workspace = if let Some(ref cargo_root) = cargo_root {
-        load_workspace(cargo_root)?
+    let (workspace, workspace_model) = if let Some(ref cargo_root) = cargo_root {
+        let ws = load_workspace(cargo_root)?;
+        // Also build the comprehensive workspace model
+        let model = discover_workspace(cargo_root).ok();
+        (ws, model)
     } else {
-        WorkspaceInfo {
-            is_workspace: false,
-            members: Vec::new(),
-            workspace_msrv: None,
-            workspace_edition: None,
-            workspace_resolver: None,
-        }
+        (
+            WorkspaceInfo {
+                is_workspace: false,
+                members: Vec::new(),
+                workspace_msrv: None,
+                workspace_edition: None,
+                workspace_resolver: None,
+            },
+            None,
+        )
     };
 
     let tools_checksums = {
@@ -130,6 +279,7 @@ pub fn load_repo_state(
         cargo_root,
         toolchain,
         workspace,
+        workspace_model,
         tools_checksums,
         tools_manifest,
         changed_files,
@@ -307,6 +457,340 @@ fn parse_package_inheritable_string(v: &toml::Value, key: &str) -> Result<(Optio
         }
         Some(_) => Err(anyhow!("unsupported type for package.{key}")),
     }
+}
+
+// ============================================================================
+// Workspace Discovery
+// ============================================================================
+
+/// Discovers workspace members by parsing Cargo.toml and expanding glob patterns.
+///
+/// This function implements the full workspace discovery algorithm:
+/// 1. Parses the root Cargo.toml to find [workspace.members] and [workspace.exclude]
+/// 2. Expands glob patterns in both arrays
+/// 3. Filters out excluded paths
+/// 4. Returns all member manifest paths in sorted order
+///
+/// For single-crate repos (no [workspace] section), it treats the repo as a
+/// "workspace of one" with the root manifest as the only member.
+///
+/// # Arguments
+///
+/// * `root_manifest_path` - Path to the root Cargo.toml file
+///
+/// # Returns
+///
+/// A `WorkspaceModel` containing all discovered workspace information.
+pub fn discover_workspace(root_manifest_path: &Utf8Path) -> Result<WorkspaceModel> {
+    // Get the workspace root directory
+    let workspace_root = root_manifest_path
+        .parent()
+        .ok_or_else(|| anyhow!("manifest path has no parent directory: {root_manifest_path}"))?;
+
+    // Parse the root manifest
+    let root_txt = fs::read_to_string(root_manifest_path)
+        .with_context(|| format!("read {root_manifest_path}"))?;
+    let root_value: toml::Value =
+        toml::from_str(&root_txt).with_context(|| format!("parse {root_manifest_path}"))?;
+
+    // Check if this is a workspace
+    let has_workspace_section = root_value.get("workspace").is_some();
+    let has_package_section = root_value.get("package").is_some();
+
+    // Parse root manifest fields
+    let root_manifest = parse_manifest(&root_value)?;
+
+    // Extract workspace-level settings
+    let (workspace_msrv, workspace_edition, workspace_resolver) =
+        extract_workspace_settings(&root_value)?;
+
+    // Determine if this is a virtual workspace
+    let is_virtual = has_workspace_section && !has_package_section;
+
+    if !has_workspace_section {
+        // Single-crate repo: treat as "workspace of one"
+        let relative_path = "Cargo.toml".to_string();
+        let mut member_manifests = BTreeMap::new();
+        member_manifests.insert(relative_path, root_manifest.clone());
+
+        return Ok(WorkspaceModel {
+            root_manifest,
+            member_manifests,
+            is_virtual: false,
+            workspace_msrv,
+            workspace_edition,
+            workspace_resolver,
+            member_patterns: Vec::new(),
+            exclude_patterns: Vec::new(),
+        });
+    }
+
+    // Parse members and exclude patterns
+    let member_patterns = extract_string_array(&root_value, &["workspace", "members"]);
+    let exclude_patterns = extract_string_array(&root_value, &["workspace", "exclude"]);
+
+    // Discover all member paths
+    let member_paths =
+        expand_workspace_patterns(workspace_root, &member_patterns, &exclude_patterns)?;
+
+    // Parse each member manifest
+    let mut member_manifests = BTreeMap::new();
+    for member_path in member_paths {
+        let manifest_path = join_normalized(workspace_root, &member_path).join("Cargo.toml");
+        if manifest_path.exists() {
+            let txt = fs::read_to_string(&manifest_path)
+                .with_context(|| format!("read member manifest: {manifest_path}"))?;
+            let value: toml::Value = toml::from_str(&txt)
+                .with_context(|| format!("parse member manifest: {manifest_path}"))?;
+            let manifest = parse_manifest(&value)?;
+            let relative_manifest_path = format!("{}/Cargo.toml", member_path);
+            member_manifests.insert(relative_manifest_path, manifest);
+        }
+    }
+
+    // For non-virtual workspaces, also include the root package as a member
+    if !is_virtual && has_package_section {
+        member_manifests.insert("Cargo.toml".to_string(), root_manifest.clone());
+    }
+
+    Ok(WorkspaceModel {
+        root_manifest,
+        member_manifests,
+        is_virtual,
+        workspace_msrv,
+        workspace_edition,
+        workspace_resolver,
+        member_patterns,
+        exclude_patterns,
+    })
+}
+
+/// Parses a Cargo.toml manifest into a `ParsedManifest`.
+fn parse_manifest(value: &toml::Value) -> Result<ParsedManifest> {
+    let package_name = value
+        .get("package")
+        .and_then(|p| p.get("name"))
+        .and_then(|n| n.as_str())
+        .map(|s| s.to_string());
+
+    let (rust_version, rust_version_workspace) =
+        parse_package_inheritable_string(value, "rust-version")?;
+    let (edition, edition_workspace) = parse_package_inheritable_string(value, "edition")?;
+
+    Ok(ParsedManifest {
+        value: value.clone(),
+        package_name,
+        rust_version,
+        rust_version_workspace,
+        edition,
+        edition_workspace,
+    })
+}
+
+/// Extracts workspace-level settings from a root manifest.
+fn extract_workspace_settings(
+    value: &toml::Value,
+) -> Result<(Option<String>, Option<String>, Option<String>)> {
+    let workspace_msrv = value
+        .get("workspace")
+        .and_then(|w| w.get("package"))
+        .and_then(|p| p.get("rust-version"))
+        .and_then(|rv| rv.as_str())
+        .map(|s| s.to_string());
+
+    let workspace_edition = value
+        .get("workspace")
+        .and_then(|w| w.get("package"))
+        .and_then(|p| p.get("edition"))
+        .and_then(|e| e.as_str())
+        .map(|s| s.to_string());
+
+    let workspace_resolver = value
+        .get("workspace")
+        .and_then(|w| w.get("resolver"))
+        .and_then(|r| r.as_str())
+        .map(|s| s.to_string());
+
+    // Also check for non-workspace package MSRV as fallback
+    let package_msrv = value
+        .get("package")
+        .and_then(|p| p.get("rust-version"))
+        .and_then(|rv| rv.as_str())
+        .map(|s| s.to_string());
+
+    let msrv = workspace_msrv.or(package_msrv);
+
+    Ok((msrv, workspace_edition, workspace_resolver))
+}
+
+/// Extracts a string array from a nested path in a TOML value.
+fn extract_string_array(value: &toml::Value, path: &[&str]) -> Vec<String> {
+    let mut current = value;
+    for key in path {
+        match current.get(*key) {
+            Some(v) => current = v,
+            None => return Vec::new(),
+        }
+    }
+
+    current
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Expands workspace member patterns and filters by exclude patterns.
+///
+/// Returns a sorted, deduplicated list of member paths (directories containing Cargo.toml).
+fn expand_workspace_patterns(
+    workspace_root: &Utf8Path,
+    member_patterns: &[String],
+    exclude_patterns: &[String],
+) -> Result<Vec<String>> {
+    // Build exclude globset
+    let mut exclude_builder = GlobSetBuilder::new();
+    for pattern in exclude_patterns {
+        let glob = Glob::new(pattern)
+            .with_context(|| format!("invalid exclude glob pattern: {pattern}"))?;
+        exclude_builder.add(glob);
+    }
+    let exclude_set = exclude_builder
+        .build()
+        .context("failed to build exclude globset")?;
+
+    // Expand each member pattern
+    let mut discovered: BTreeSet<String> = BTreeSet::new();
+
+    for pattern in member_patterns {
+        let expanded = expand_glob_pattern(workspace_root, pattern)?;
+        for path in expanded {
+            // Check if excluded
+            if !exclude_set.is_match(&path) {
+                discovered.insert(path);
+            }
+        }
+    }
+
+    // Return sorted vec (BTreeSet already sorts)
+    Ok(discovered.into_iter().collect())
+}
+
+/// Expands a single glob pattern relative to the workspace root.
+///
+/// Returns paths that:
+/// 1. Match the glob pattern
+/// 2. Contain a Cargo.toml file (are valid Cargo packages)
+fn expand_glob_pattern(workspace_root: &Utf8Path, pattern: &str) -> Result<Vec<String>> {
+    let normalized_pattern = normalize_slashes(pattern);
+
+    // Check if pattern contains glob characters
+    if !contains_glob_chars(&normalized_pattern) {
+        // No glob, just return the pattern if it's a valid package directory
+        let candidate = workspace_root.join(&normalized_pattern);
+        if candidate.join("Cargo.toml").exists() {
+            return Ok(vec![normalized_pattern]);
+        }
+        return Ok(Vec::new());
+    }
+
+    // Split pattern into base path (no globs) and glob part
+    let (base_path, glob_pattern) = split_glob_pattern(&normalized_pattern);
+
+    let search_root = if base_path.is_empty() {
+        workspace_root.to_owned()
+    } else {
+        workspace_root.join(&base_path)
+    };
+
+    if !search_root.exists() {
+        return Ok(Vec::new());
+    }
+
+    // Build glob matcher
+    let glob = Glob::new(&glob_pattern)
+        .with_context(|| format!("invalid glob pattern: {glob_pattern}"))?
+        .compile_matcher();
+
+    // Walk the directory tree
+    let mut results = Vec::new();
+    walk_for_cargo_tomls(&search_root, &base_path, &glob, &mut results)?;
+
+    Ok(results)
+}
+
+/// Checks if a string contains glob metacharacters.
+fn contains_glob_chars(s: &str) -> bool {
+    s.contains('*') || s.contains('?') || s.contains('[') || s.contains('{')
+}
+
+/// Splits a glob pattern into a base path (no globs) and the glob portion.
+fn split_glob_pattern(pattern: &str) -> (String, String) {
+    let parts: Vec<&str> = pattern.split('/').collect();
+    let mut base_parts = Vec::new();
+
+    for (i, part) in parts.iter().enumerate() {
+        if contains_glob_chars(part) {
+            // Return base and remainder
+            let base = base_parts.join("/");
+            let glob = parts[i..].join("/");
+            return (base, glob);
+        }
+        base_parts.push(*part);
+    }
+
+    // No glob found, entire pattern is base
+    (pattern.to_string(), String::new())
+}
+
+/// Recursively walks directories looking for Cargo.toml files that match the glob.
+fn walk_for_cargo_tomls(
+    current_dir: &Utf8Path,
+    relative_prefix: &str,
+    glob: &globset::GlobMatcher,
+    results: &mut Vec<String>,
+) -> Result<()> {
+    let entries = match fs::read_dir(current_dir) {
+        Ok(e) => e,
+        Err(_) => return Ok(()), // Skip directories we can't read
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+
+        let utf8_path = match Utf8PathBuf::from_path_buf(path.clone()) {
+            Ok(p) => p,
+            Err(_) => continue, // Skip non-UTF8 paths
+        };
+
+        let dir_name = match utf8_path.file_name() {
+            Some(n) => n,
+            None => continue,
+        };
+
+        // Build relative path
+        let relative = if relative_prefix.is_empty() {
+            dir_name.to_string()
+        } else {
+            format!("{}/{}", relative_prefix, dir_name)
+        };
+
+        // Check if this directory matches the glob and has a Cargo.toml
+        if glob.is_match(&relative) && utf8_path.join("Cargo.toml").exists() {
+            results.push(relative.clone());
+        }
+
+        // Recurse into subdirectories (needed for patterns like "crates/**")
+        walk_for_cargo_tomls(&utf8_path, &relative, glob, results)?;
+    }
+
+    Ok(())
 }
 
 fn parse_checksums(path: &Utf8Path) -> Result<ToolsChecksums> {
@@ -719,5 +1203,402 @@ components = ["rustfmt"]
         let result = find_toolchain(&root, "rust-toolchain.toml").unwrap();
 
         assert!(result.is_none());
+    }
+
+    // =========================================================================
+    // Tests for path normalization utilities
+    // =========================================================================
+
+    #[test]
+    fn normalize_slashes_converts_backslashes() {
+        assert_eq!(normalize_slashes("foo\\bar\\baz"), "foo/bar/baz");
+        assert_eq!(normalize_slashes("a\\b\\c\\d"), "a/b/c/d");
+    }
+
+    #[test]
+    fn normalize_slashes_preserves_forward_slashes() {
+        assert_eq!(normalize_slashes("foo/bar/baz"), "foo/bar/baz");
+    }
+
+    #[test]
+    fn normalize_slashes_handles_mixed_slashes() {
+        assert_eq!(normalize_slashes("foo\\bar/baz\\qux"), "foo/bar/baz/qux");
+    }
+
+    #[test]
+    fn normalize_slashes_handles_empty_string() {
+        assert_eq!(normalize_slashes(""), "");
+    }
+
+    #[test]
+    fn to_repo_relative_removes_prefix() {
+        let root = Utf8Path::new("/home/user/project");
+        let abs = Utf8Path::new("/home/user/project/crates/foo/Cargo.toml");
+        assert_eq!(to_repo_relative(root, abs), "crates/foo/Cargo.toml");
+    }
+
+    #[test]
+    fn to_repo_relative_handles_root_with_trailing_slash() {
+        let root = Utf8Path::new("/home/user/project/");
+        let abs = Utf8Path::new("/home/user/project/src/lib.rs");
+        assert_eq!(to_repo_relative(root, abs), "src/lib.rs");
+    }
+
+    #[test]
+    fn to_repo_relative_returns_dot_for_root() {
+        let root = Utf8Path::new("/home/user/project");
+        let abs = Utf8Path::new("/home/user/project");
+        assert_eq!(to_repo_relative(root, abs), ".");
+    }
+
+    #[test]
+    fn to_repo_relative_returns_normalized_for_non_child() {
+        let root = Utf8Path::new("/home/user/project");
+        let abs = Utf8Path::new("/home/other/file.txt");
+        // When not under root, returns normalized path
+        assert_eq!(to_repo_relative(root, abs), "/home/other/file.txt");
+    }
+
+    // =========================================================================
+    // Tests for glob pattern helpers
+    // =========================================================================
+
+    #[test]
+    fn contains_glob_chars_detects_asterisk() {
+        assert!(contains_glob_chars("crates/*"));
+        assert!(contains_glob_chars("**/*.rs"));
+    }
+
+    #[test]
+    fn contains_glob_chars_detects_question_mark() {
+        assert!(contains_glob_chars("file?.txt"));
+    }
+
+    #[test]
+    fn contains_glob_chars_detects_brackets() {
+        assert!(contains_glob_chars("file[0-9].txt"));
+    }
+
+    #[test]
+    fn contains_glob_chars_detects_braces() {
+        assert!(contains_glob_chars("{foo,bar}"));
+    }
+
+    #[test]
+    fn contains_glob_chars_returns_false_for_plain_path() {
+        assert!(!contains_glob_chars("crates/foo/bar"));
+        assert!(!contains_glob_chars("simple.txt"));
+    }
+
+    #[test]
+    fn split_glob_pattern_with_glob_in_middle() {
+        let (base, glob) = split_glob_pattern("crates/*/src");
+        assert_eq!(base, "crates");
+        assert_eq!(glob, "*/src");
+    }
+
+    #[test]
+    fn split_glob_pattern_with_glob_at_start() {
+        let (base, glob) = split_glob_pattern("*/foo/bar");
+        assert_eq!(base, "");
+        assert_eq!(glob, "*/foo/bar");
+    }
+
+    #[test]
+    fn split_glob_pattern_with_no_glob() {
+        let (base, glob) = split_glob_pattern("crates/foo/bar");
+        assert_eq!(base, "crates/foo/bar");
+        assert_eq!(glob, "");
+    }
+
+    // =========================================================================
+    // Tests for workspace discovery
+    // =========================================================================
+
+    /// Helper to create a minimal Cargo.toml content for a package.
+    fn make_package_toml(name: &str) -> String {
+        format!(
+            r#"[package]
+name = "{name}"
+version = "0.1.0"
+edition = "2021"
+"#
+        )
+    }
+
+    /// Helper to create a workspace Cargo.toml with members.
+    fn make_workspace_toml(members: &[&str]) -> String {
+        let members_str: Vec<String> = members.iter().map(|m| format!("\"{}\"", m)).collect();
+        format!(
+            r#"[workspace]
+resolver = "2"
+members = [
+    {}
+]
+"#,
+            members_str.join(",\n    ")
+        )
+    }
+
+    #[test]
+    fn discover_workspace_single_crate() {
+        let temp_dir = TempDir::new().unwrap();
+        let manifest_path = temp_dir.path().join("Cargo.toml");
+        std::fs::write(&manifest_path, make_package_toml("my-crate")).unwrap();
+        let path = Utf8PathBuf::from_path_buf(manifest_path).unwrap();
+
+        let model = discover_workspace(&path).unwrap();
+
+        assert!(!model.is_virtual);
+        assert_eq!(model.member_manifests.len(), 1);
+        assert!(model.member_manifests.contains_key("Cargo.toml"));
+        assert!(model.member_patterns.is_empty());
+        assert!(model.exclude_patterns.is_empty());
+    }
+
+    #[test]
+    fn discover_workspace_with_explicit_members() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        // Create root Cargo.toml
+        let manifest_path = root.join("Cargo.toml");
+        std::fs::write(
+            &manifest_path,
+            make_workspace_toml(&["crates/foo", "crates/bar"]),
+        )
+        .unwrap();
+
+        // Create member directories
+        std::fs::create_dir_all(root.join("crates/foo")).unwrap();
+        std::fs::create_dir_all(root.join("crates/bar")).unwrap();
+
+        // Create member Cargo.tomls
+        std::fs::write(root.join("crates/foo/Cargo.toml"), make_package_toml("foo")).unwrap();
+        std::fs::write(root.join("crates/bar/Cargo.toml"), make_package_toml("bar")).unwrap();
+
+        let path = Utf8PathBuf::from_path_buf(manifest_path).unwrap();
+        let model = discover_workspace(&path).unwrap();
+
+        assert!(model.is_virtual);
+        assert_eq!(model.member_manifests.len(), 2);
+        assert!(model.member_manifests.contains_key("crates/bar/Cargo.toml"));
+        assert!(model.member_manifests.contains_key("crates/foo/Cargo.toml"));
+
+        // Verify deterministic ordering (bar comes before foo alphabetically)
+        let paths: Vec<&str> = model.member_manifests.keys().map(|s| s.as_str()).collect();
+        assert_eq!(
+            paths,
+            vec!["crates/bar/Cargo.toml", "crates/foo/Cargo.toml"]
+        );
+    }
+
+    #[test]
+    fn discover_workspace_with_glob_pattern() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        // Create root Cargo.toml with glob pattern
+        let manifest_path = root.join("Cargo.toml");
+        std::fs::write(&manifest_path, make_workspace_toml(&["crates/*"])).unwrap();
+
+        // Create member directories
+        std::fs::create_dir_all(root.join("crates/alpha")).unwrap();
+        std::fs::create_dir_all(root.join("crates/beta")).unwrap();
+        std::fs::create_dir_all(root.join("crates/gamma")).unwrap();
+
+        // Create member Cargo.tomls
+        std::fs::write(
+            root.join("crates/alpha/Cargo.toml"),
+            make_package_toml("alpha"),
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("crates/beta/Cargo.toml"),
+            make_package_toml("beta"),
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("crates/gamma/Cargo.toml"),
+            make_package_toml("gamma"),
+        )
+        .unwrap();
+
+        let path = Utf8PathBuf::from_path_buf(manifest_path).unwrap();
+        let model = discover_workspace(&path).unwrap();
+
+        assert!(model.is_virtual);
+        assert_eq!(model.member_manifests.len(), 3);
+
+        // Verify deterministic ordering (alphabetical)
+        let paths: Vec<&str> = model.member_manifests.keys().map(|s| s.as_str()).collect();
+        assert_eq!(
+            paths,
+            vec![
+                "crates/alpha/Cargo.toml",
+                "crates/beta/Cargo.toml",
+                "crates/gamma/Cargo.toml"
+            ]
+        );
+    }
+
+    #[test]
+    fn discover_workspace_with_exclude_pattern() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        // Create root Cargo.toml with exclude
+        let manifest_content = r#"[workspace]
+resolver = "2"
+members = ["crates/*"]
+exclude = ["crates/excluded"]
+"#;
+        let manifest_path = root.join("Cargo.toml");
+        std::fs::write(&manifest_path, manifest_content).unwrap();
+
+        // Create member directories
+        std::fs::create_dir_all(root.join("crates/included")).unwrap();
+        std::fs::create_dir_all(root.join("crates/excluded")).unwrap();
+
+        // Create member Cargo.tomls
+        std::fs::write(
+            root.join("crates/included/Cargo.toml"),
+            make_package_toml("included"),
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("crates/excluded/Cargo.toml"),
+            make_package_toml("excluded"),
+        )
+        .unwrap();
+
+        let path = Utf8PathBuf::from_path_buf(manifest_path).unwrap();
+        let model = discover_workspace(&path).unwrap();
+
+        // Should only have the included member
+        assert_eq!(model.member_manifests.len(), 1);
+        assert!(
+            model
+                .member_manifests
+                .contains_key("crates/included/Cargo.toml")
+        );
+        assert!(
+            !model
+                .member_manifests
+                .contains_key("crates/excluded/Cargo.toml")
+        );
+    }
+
+    #[test]
+    fn discover_workspace_non_virtual_includes_root_package() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        // Create root Cargo.toml with both package and workspace
+        let manifest_content = r#"[package]
+name = "root-pkg"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+resolver = "2"
+members = ["crates/sub"]
+"#;
+        let manifest_path = root.join("Cargo.toml");
+        std::fs::write(&manifest_path, manifest_content).unwrap();
+
+        // Create sub-crate
+        std::fs::create_dir_all(root.join("crates/sub")).unwrap();
+        std::fs::write(root.join("crates/sub/Cargo.toml"), make_package_toml("sub")).unwrap();
+
+        let path = Utf8PathBuf::from_path_buf(manifest_path).unwrap();
+        let model = discover_workspace(&path).unwrap();
+
+        // Should not be virtual (has package)
+        assert!(!model.is_virtual);
+        // Should include both root and sub
+        assert_eq!(model.member_manifests.len(), 2);
+        assert!(model.member_manifests.contains_key("Cargo.toml"));
+        assert!(model.member_manifests.contains_key("crates/sub/Cargo.toml"));
+    }
+
+    #[test]
+    fn discover_workspace_extracts_workspace_msrv() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        let manifest_content = r#"[workspace]
+resolver = "2"
+members = []
+
+[workspace.package]
+rust-version = "1.70.0"
+edition = "2021"
+"#;
+        let manifest_path = root.join("Cargo.toml");
+        std::fs::write(&manifest_path, manifest_content).unwrap();
+
+        let path = Utf8PathBuf::from_path_buf(manifest_path).unwrap();
+        let model = discover_workspace(&path).unwrap();
+
+        assert_eq!(model.workspace_msrv, Some("1.70.0".to_string()));
+        assert_eq!(model.workspace_edition, Some("2021".to_string()));
+        assert_eq!(model.workspace_resolver, Some("2".to_string()));
+    }
+
+    #[test]
+    fn discover_workspace_deterministic_ordering() {
+        // Run discovery twice and verify same order
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        let manifest_path = root.join("Cargo.toml");
+        std::fs::write(&manifest_path, make_workspace_toml(&["crates/*"])).unwrap();
+
+        // Create members in "random" order
+        for name in ["zeta", "alpha", "mango", "beta", "delta"] {
+            std::fs::create_dir_all(root.join(format!("crates/{}", name))).unwrap();
+            std::fs::write(
+                root.join(format!("crates/{}/Cargo.toml", name)),
+                make_package_toml(name),
+            )
+            .unwrap();
+        }
+
+        let path = Utf8PathBuf::from_path_buf(manifest_path).unwrap();
+
+        // Run discovery multiple times
+        let model1 = discover_workspace(&path).unwrap();
+        let model2 = discover_workspace(&path).unwrap();
+
+        // Should have same order (alphabetical)
+        let paths1: Vec<&str> = model1.member_manifests.keys().map(|s| s.as_str()).collect();
+        let paths2: Vec<&str> = model2.member_manifests.keys().map(|s| s.as_str()).collect();
+
+        assert_eq!(paths1, paths2);
+        assert_eq!(
+            paths1,
+            vec![
+                "crates/alpha/Cargo.toml",
+                "crates/beta/Cargo.toml",
+                "crates/delta/Cargo.toml",
+                "crates/mango/Cargo.toml",
+                "crates/zeta/Cargo.toml"
+            ]
+        );
+    }
+
+    #[test]
+    fn workspace_model_methods() {
+        let temp_dir = TempDir::new().unwrap();
+        let manifest_path = temp_dir.path().join("Cargo.toml");
+        std::fs::write(&manifest_path, make_package_toml("test")).unwrap();
+        let path = Utf8PathBuf::from_path_buf(manifest_path).unwrap();
+
+        let model = discover_workspace(&path).unwrap();
+
+        assert!(model.has_members());
+        assert_eq!(model.member_count(), 1);
+        assert_eq!(model.member_paths(), vec!["Cargo.toml"]);
     }
 }

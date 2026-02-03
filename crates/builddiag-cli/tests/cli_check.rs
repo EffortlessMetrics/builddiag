@@ -849,11 +849,11 @@ fn check_custom_output_paths_via_cli() {
 // GitHub annotations tests
 // =============================================================================
 
-/// Test: --github-annotations flag outputs annotations to stdout when findings have location.
+/// Test: --annotations github flag outputs annotations to stdout when findings have location.
 /// Note: Annotations are only generated for findings that have both path and line number.
 /// _Requirements: 6.1_
 #[test]
-fn check_github_annotations_flag() {
+fn check_annotations_github_flag() {
     let dir = TempDir::new().unwrap();
     create_valid_workspace(&dir);
 
@@ -861,17 +861,18 @@ fn check_github_annotations_flag() {
     cmd.arg("check")
         .arg("--root")
         .arg(dir.path())
-        .arg("--github-annotations")
+        .arg("--annotations")
+        .arg("github")
         .arg("--always");
 
     // Valid workspace should pass and not output annotations (no findings)
     cmd.assert().success().code(0);
 }
 
-/// Test: --github-annotations outputs error annotations for findings with location.
+/// Test: --annotations github outputs error annotations for findings with location.
 /// _Requirements: 6.1_
 #[test]
-fn check_github_annotations_outputs_errors_with_location() {
+fn check_annotations_github_outputs_errors_with_location() {
     let dir = TempDir::new().unwrap();
 
     // Create a workspace with missing MSRV - this should produce findings with location
@@ -901,7 +902,8 @@ edition = "2021"
         .arg(dir.path())
         .arg("--profile")
         .arg("strict")
-        .arg("--github-annotations")
+        .arg("--annotations")
+        .arg("github")
         .arg("--always");
 
     // Should fail with exit code 2 with strict profile
@@ -1034,13 +1036,10 @@ edition = "2021"
     let content = fs::read_to_string(&report_path).unwrap();
     let report: serde_json::Value = serde_json::from_str(&content).unwrap();
 
-    // Check that findings exist and have messages
-    let checks = report["checks"].as_array().unwrap();
-    let has_findings = checks.iter().any(|check| {
-        check["findings"]
-            .as_array()
-            .map(|f| !f.is_empty())
-            .unwrap_or(false)
-    });
-    assert!(has_findings, "Report should contain findings for errors");
+    // Check that findings exist and have messages (new schema uses flat findings array)
+    let findings = report["findings"].as_array().unwrap();
+    assert!(
+        !findings.is_empty(),
+        "Report should contain findings for errors"
+    );
 }

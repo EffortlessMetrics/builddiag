@@ -159,6 +159,7 @@ fn mock_repo_state() -> RepoState {
             workspace_edition: Some("2021".to_string()),
             workspace_resolver: Some("2".to_string()),
         },
+        workspace_model: None,
         tools_checksums: None,
         tools_manifest: None,
         changed_files: None,

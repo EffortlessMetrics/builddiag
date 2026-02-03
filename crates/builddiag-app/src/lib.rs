@@ -1,9 +1,9 @@
 use anyhow::{Context, Result, anyhow};
 use builddiag_checks::run_selected_checks;
-use builddiag_domain::{exit_code_for, summarize};
+use builddiag_domain::{determine_verdict, exit_code_for, sort_findings_canonical, summarize};
 use builddiag_render::{render_github_annotations, render_markdown};
 use builddiag_repo::load_repo_state;
-use builddiag_types::{Config, Inputs, RepoDetected, RepoInfo, Report, SchemaId, ToolInfo};
+use builddiag_types::{Config, GitInfo, HostInfo, Report, RunInfo, ToolInfo};
 use camino::Utf8Path;
 use chrono::Utc;
 use std::collections::BTreeSet;
@@ -72,54 +72,51 @@ pub fn run_check(
 
     let repo_state = load_repo_state(root, config, changed_files)?;
 
-    let checks = run_selected_checks(&repo_state, config, allow_all)?;
-    let summary = summarize(&checks);
+    // Run checks and sort findings for deterministic output
+    let mut checks = run_selected_checks(&repo_state, config, allow_all)?;
+    for check in &mut checks {
+        sort_findings_canonical(&mut check.findings);
+    }
 
-    let inputs = Inputs {
-        cargo_root: repo_state
-            .cargo_root
-            .as_ref()
-            .map(|p| rel(&repo_state.root, p)),
-        rust_toolchain: repo_state
-            .toolchain
-            .as_ref()
-            .map(|t| rel(&repo_state.root, &t.path)),
-        tools_checksums: repo_state
-            .tools_checksums
-            .as_ref()
-            .map(|t| rel(&repo_state.root, &t.path)),
-        tools_manifest: repo_state
-            .tools_manifest
-            .as_ref()
-            .map(|(p, _)| rel(&repo_state.root, p)),
-    };
+    // Flatten findings from all check reports
+    let mut findings = Vec::new();
+    for check in &checks {
+        findings.extend(check.findings.clone());
+    }
+    sort_findings_canonical(&mut findings);
+
+    let summary = summarize(&checks);
+    let verdict = determine_verdict(&checks);
+    let end = Utc::now();
+    let duration_ms = (end - start).num_milliseconds().max(0) as u64;
+
+    // Get git info if available
+    let git_info = get_git_info(root);
 
     let report = Report {
-        schema: SchemaId(REPORT_SCHEMA_V1.to_string()),
+        schema: REPORT_SCHEMA_V1.to_string(),
         tool: ToolInfo {
             name: "builddiag".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
         },
-        run: builddiag_types::RunInfo {
-            id: start.to_rfc3339(),
+        run: RunInfo {
             started_at: start,
-            ended_at: Some(Utc::now()),
-        },
-        repo: RepoInfo {
-            root: repo_state.root.to_string(),
-            detected: RepoDetected {
-                is_workspace: repo_state.workspace.is_workspace,
-                members: repo_state.workspace.members.len(),
+            ended_at: Some(end),
+            duration_ms,
+            host: HostInfo {
+                os: std::env::consts::OS.to_string(),
+                arch: std::env::consts::ARCH.to_string(),
             },
+            git: git_info,
         },
-        inputs,
-        checks: checks.clone(),
-        summary: summary.clone(),
+        verdict,
+        findings,
+        summary: Some(summary),
     };
 
     let markdown = render_markdown(&report);
     let annotations = render_github_annotations(&report);
-    let exit_code = exit_code_for(&summary, config.defaults.fail_on);
+    let exit_code = exit_code_for(verdict, config.defaults.fail_on);
 
     Ok(CheckRun {
         report,
@@ -152,8 +149,53 @@ pub fn write_outputs(out_json: &Utf8Path, out_md: Option<&Utf8Path>, run: &Check
     Ok(())
 }
 
-fn rel(root: &Utf8Path, p: &Utf8Path) -> String {
-    p.strip_prefix(root).ok().unwrap_or(p).to_string()
+fn get_git_info(root: &Utf8Path) -> Option<GitInfo> {
+    // Get current commit SHA
+    let commit_out = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .arg("rev-parse")
+        .arg("HEAD")
+        .output()
+        .ok()?;
+    if !commit_out.status.success() {
+        return None;
+    }
+    let commit = String::from_utf8_lossy(&commit_out.stdout)
+        .trim()
+        .to_string();
+
+    // Get current branch name
+    let branch_out = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .arg("rev-parse")
+        .arg("--abbrev-ref")
+        .arg("HEAD")
+        .output()
+        .ok();
+    let branch = branch_out
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|b| b != "HEAD"); // detached HEAD
+
+    // Check if working directory is dirty
+    let status_out = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .arg("status")
+        .arg("--porcelain")
+        .output()
+        .ok();
+    let dirty = status_out
+        .map(|o| o.status.success() && !o.stdout.is_empty())
+        .unwrap_or(false);
+
+    Some(GitInfo {
+        commit,
+        branch,
+        dirty,
+    })
 }
 
 #[cfg(test)]

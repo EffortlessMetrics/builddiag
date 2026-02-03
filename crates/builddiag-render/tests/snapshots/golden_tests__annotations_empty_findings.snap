@@ -1,0 +1,5 @@
+---
+source: crates/builddiag-render/tests/golden_tests.rs
+expression: "annotations.join(\"\\n\")"
+---
+

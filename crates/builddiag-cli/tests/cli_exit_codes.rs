@@ -4,9 +4,9 @@
 //! based on check results and the `fail_on` configuration.
 //!
 //! Exit codes:
-//! - 0: All checks pass, or warnings with fail_on=error (default)
-//! - 2: Errors present (checks failed)
-//! - 3: Warnings present with fail_on=warn
+//! - 0: Success - all checks pass, or warnings with fail_on=error (default)
+//! - 1: Tool/runtime error (e.g., config file not found, invalid arguments)
+//! - 2: Policy failure - errors present, or warnings with fail_on=warn
 //!
 //! _Requirements: 6.8_
 
@@ -464,14 +464,14 @@ fail_on = "never"
 }
 
 // =============================================================================
-// Exit Code 3 Tests - Warnings with fail_on=warn
+// Exit Code 2 Tests - Warnings with fail_on=warn (policy failure)
 // =============================================================================
 
-/// Test: Exit code 3 when warnings exist with fail_on=warn.
+/// Test: Exit code 2 when warnings exist with fail_on=warn.
 /// This test creates a scenario where a check produces a warning (not error).
 /// _Requirements: 6.8_
 #[test]
-fn exit_code_3_when_warnings_with_fail_on_warn() {
+fn exit_code_2_when_warnings_with_fail_on_warn() {
     let dir = TempDir::new().unwrap();
 
     // Create a valid workspace first
@@ -534,8 +534,8 @@ severity = "warn"
         .arg(dir.path().join(".builddiag.toml"))
         .arg("--always");
 
-    // Should exit with code 3 (warning with fail_on=warn)
-    cmd.assert().code(3);
+    // Should exit with code 2 (policy failure: warning with fail_on=warn)
+    cmd.assert().code(2);
 }
 
 /// Test: Exit code 0 when no warnings with fail_on=warn.
@@ -570,11 +570,11 @@ fail_on = "warn"
 // Edge Cases
 // =============================================================================
 
-/// Test: Exit code 2 takes precedence over exit code 3.
-/// When both errors and warnings exist, exit code should be 2.
+/// Test: Exit code 2 for mixed errors and warnings.
+/// When both errors and warnings exist, exit code should be 2 (policy failure).
 /// _Requirements: 6.8_
 #[test]
-fn exit_code_2_takes_precedence_over_3() {
+fn exit_code_2_for_mixed_errors_and_warnings() {
     let dir = TempDir::new().unwrap();
 
     // Create workspace with both errors and warnings
@@ -633,7 +633,7 @@ severity = "warn"
         .arg(dir.path().join(".builddiag.toml"))
         .arg("--always");
 
-    // Should be exit code 2 (error) not 3 (warning)
+    // Should be exit code 2 (policy failure)
     cmd.assert().code(2);
 }
 

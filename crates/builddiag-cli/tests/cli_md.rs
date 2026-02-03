@@ -65,51 +65,26 @@ channel = "1.75.0"
 /// Creates a valid JSON report file for testing (passing report).
 fn create_valid_report(dir: &TempDir, rel: &str) -> String {
     let report = r#"{
-  "schema": "builddiag/v1",
+  "schema": "builddiag.report.v1",
   "tool": {
     "name": "builddiag",
     "version": "0.1.0"
   },
   "run": {
-    "id": "test-run-001",
     "started_at": "2024-01-01T00:00:00Z",
-    "ended_at": "2024-01-01T00:00:01Z"
-  },
-  "repo": {
-    "root": "/test/repo",
-    "detected": {
-      "is_workspace": true,
-      "members": 1
+    "ended_at": "2024-01-01T00:00:01Z",
+    "duration_ms": 1000,
+    "host": {
+      "os": "linux",
+      "arch": "x86_64"
     }
   },
-  "inputs": {
-    "cargo_root": "Cargo.toml",
-    "rust_toolchain": "rust-toolchain.toml",
-    "tools_checksums": "scripts/tools.sha256",
-    "tools_manifest": null
-  },
-  "checks": [
-    {
-      "id": "msrv.workspace_msrv_defined",
-      "status": "pass",
-      "findings": [],
-      "skipped_reason": null
-    },
-    {
-      "id": "toolchain.pinned",
-      "status": "pass",
-      "findings": [],
-      "skipped_reason": null
-    }
-  ],
+  "verdict": "pass",
+  "findings": [],
   "summary": {
-    "counts": {
-      "info": 0,
-      "warn": 0,
-      "error": 0
-    },
-    "verdict": "pass",
-    "reasons": []
+    "total_findings": 0,
+    "by_severity": {},
+    "by_check": {}
   }
 }"#;
     write_file(dir, rel, report);
@@ -119,60 +94,37 @@ fn create_valid_report(dir: &TempDir, rel: &str) -> String {
 /// Creates a JSON report with findings for testing (failing report).
 fn create_report_with_findings(dir: &TempDir, rel: &str) -> String {
     let report = r#"{
-  "schema": "builddiag/v1",
+  "schema": "builddiag.report.v1",
   "tool": {
     "name": "builddiag",
     "version": "0.1.0"
   },
   "run": {
-    "id": "test-run-002",
     "started_at": "2024-01-01T00:00:00Z",
-    "ended_at": "2024-01-01T00:00:01Z"
-  },
-  "repo": {
-    "root": "/test/repo",
-    "detected": {
-      "is_workspace": true,
-      "members": 1
+    "ended_at": "2024-01-01T00:00:01Z",
+    "duration_ms": 1000,
+    "host": {
+      "os": "linux",
+      "arch": "x86_64"
     }
   },
-  "inputs": {
-    "cargo_root": "Cargo.toml",
-    "rust_toolchain": "rust-toolchain.toml",
-    "tools_checksums": null,
-    "tools_manifest": null
-  },
-  "checks": [
+  "verdict": "fail",
+  "findings": [
     {
-      "id": "msrv.workspace_msrv_defined",
-      "status": "fail",
-      "findings": [
-        {
-          "severity": "error",
-          "code": "missing_msrv",
-          "message": "No rust-version found in workspace Cargo.toml",
-          "path": "Cargo.toml",
-          "line": 1,
-          "column": null
-        }
-      ],
-      "skipped_reason": null
-    },
-    {
-      "id": "toolchain.pinned",
-      "status": "pass",
-      "findings": [],
-      "skipped_reason": null
+      "check_id": "rust.msrv_defined",
+      "code": "missing_msrv",
+      "severity": "error",
+      "message": "No rust-version found in workspace Cargo.toml",
+      "location": {
+        "path": "Cargo.toml",
+        "line": 1
+      }
     }
   ],
   "summary": {
-    "counts": {
-      "info": 0,
-      "warn": 0,
-      "error": 1
-    },
-    "verdict": "fail",
-    "reasons": ["1 error found"]
+    "total_findings": 1,
+    "by_severity": { "error": 1 },
+    "by_check": { "rust.msrv_defined": 1 }
   }
 }"#;
     write_file(dir, rel, report);
@@ -455,44 +407,32 @@ fn md_stdout_output_format_is_clean() {
 // Edge case tests
 // =============================================================================
 
-/// Test: `builddiag md` with empty checks array.
+/// Test: `builddiag md` with empty findings array.
 /// _Requirements: 6.2_
 #[test]
 fn md_empty_checks_array() {
     let dir = TempDir::new().unwrap();
     let report = r#"{
-  "schema": "builddiag/v1",
+  "schema": "builddiag.report.v1",
   "tool": {
     "name": "builddiag",
     "version": "0.1.0"
   },
   "run": {
-    "id": "test-run-003",
     "started_at": "2024-01-01T00:00:00Z",
-    "ended_at": "2024-01-01T00:00:01Z"
-  },
-  "repo": {
-    "root": "/test/repo",
-    "detected": {
-      "is_workspace": true,
-      "members": 1
+    "ended_at": "2024-01-01T00:00:01Z",
+    "duration_ms": 1000,
+    "host": {
+      "os": "linux",
+      "arch": "x86_64"
     }
   },
-  "inputs": {
-    "cargo_root": "Cargo.toml",
-    "rust_toolchain": null,
-    "tools_checksums": null,
-    "tools_manifest": null
-  },
-  "checks": [],
+  "verdict": "pass",
+  "findings": [],
   "summary": {
-    "counts": {
-      "info": 0,
-      "warn": 0,
-      "error": 0
-    },
-    "verdict": "pass",
-    "reasons": []
+    "total_findings": 0,
+    "by_severity": {},
+    "by_check": {}
   }
 }"#;
     write_file(&dir, "empty_checks.json", report);
@@ -501,7 +441,7 @@ fn md_empty_checks_array() {
     let mut cmd = get_builddiag_cmd();
     cmd.arg("md").arg("--report").arg(&report_path);
 
-    // Should succeed even with empty checks
+    // Should succeed even with empty findings
     cmd.assert().success();
 }
 

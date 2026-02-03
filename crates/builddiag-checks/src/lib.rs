@@ -2,8 +2,8 @@ use anyhow::{Context, Result, anyhow};
 use builddiag_domain::{check_status_from_findings, parse_rust_version};
 use builddiag_repo::{RepoState, maybe_parse_numeric_version};
 use builddiag_types::{
-    CheckConfig, CheckReport, CheckStatus, Config, Finding, ProfileCheckState, RelationToMsrv,
-    Severity,
+    CheckConfig, CheckReport, CheckStatus, Config, Finding, Location, RelationToMsrv, Severity,
+    effective_check_config,
 };
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use sha2::{Digest, Sha256};
@@ -38,7 +38,7 @@ pub static CHECK_DOCS: &[CheckDocumentation] = &[
         help: "Add `rust-version = \"1.XX.0\"` to your workspace Cargo.toml under \
                [workspace.package] or [package].",
         url: Some("https://doc.rust-lang.org/cargo/reference/manifest.html#the-rust-version-field"),
-        codes: &["missing_msrv"],
+        codes: &["missing_msrv", "invalid_msrv_defined"],
     },
     CheckDocumentation {
         id: "rust.msrv_consistent",
@@ -215,26 +215,17 @@ pub fn run_selected_checks(
     for def in BUILTIN_CHECKS {
         let ov = overrides.get(def.id);
 
-        // Determine effective severity from profile, then user override
-        let profile_state = profile.check_state(def.id);
+        // Get effective configuration using the centralized function
+        // This combines profile defaults with any user overrides
+        let effective = effective_check_config(config, def.id);
 
-        // User override takes precedence over profile
-        let (enabled, effective_severity) = if let Some(ov) = ov {
-            (ov.enabled, ov.severity)
-        } else {
-            match profile_state {
-                ProfileCheckState::Enabled(sev) => (true, sev),
-                ProfileCheckState::Skip => (false, def.default_severity),
-            }
-        };
-
-        if !enabled {
+        if !effective.enabled {
             reports.push(CheckReport {
                 id: def.id.to_string(),
                 status: CheckStatus::Skip,
                 findings: Vec::new(),
                 skipped_reason: Some(if ov.is_some() {
-                    "disabled".to_string()
+                    "disabled by config".to_string()
                 } else {
                     format!("disabled by {} profile", profile)
                 }),
@@ -260,30 +251,25 @@ pub fn run_selected_checks(
         }
 
         let mut report = match def.id {
-            "rust.msrv_defined" => check_msrv_defined(repo, config, effective_severity)?,
-            "rust.msrv_consistent" => check_msrv_consistent(repo, config, effective_severity)?,
-            "rust.toolchain_pinning" => check_toolchain_pinning(repo, config, effective_severity)?,
+            "rust.msrv_defined" => check_msrv_defined(repo, config, effective.severity)?,
+            "rust.msrv_consistent" => check_msrv_consistent(repo, config, effective.severity)?,
+            "rust.toolchain_pinning" => check_toolchain_pinning(repo, config, effective.severity)?,
             "rust.toolchain_msrv_relation" => {
-                check_toolchain_msrv_relation(repo, config, effective_severity)?
+                check_toolchain_msrv_relation(repo, config, effective.severity)?
             }
             "tools.checksums_file_exists" => {
-                check_checksums_file_exists(repo, config, effective_severity)?
+                check_checksums_file_exists(repo, config, effective.severity)?
             }
-            "tools.checksums_format" => check_checksums_format(repo, config, effective_severity)?,
+            "tools.checksums_format" => check_checksums_format(repo, config, effective.severity)?,
             "tools.checksums_coverage" => {
-                check_checksums_coverage(repo, config, effective_severity)?
+                check_checksums_coverage(repo, config, effective.severity)?
             }
             "tools.checksums_verify_local" => {
-                check_checksums_verify_local(repo, config, effective_severity)?
+                check_checksums_verify_local(repo, config, effective.severity)?
             }
-            "workspace.resolver_v2" => check_workspace_resolver(repo, config, effective_severity)?,
+            "workspace.resolver_v2" => check_workspace_resolver(repo, config, effective.severity)?,
             _ => return Err(anyhow!("unknown check id: {}", def.id)),
         };
-
-        // Apply severity override if explicitly configured (belt-and-suspenders with profile)
-        if let Some(ov) = ov {
-            report.findings = apply_severity_override(report.findings, ov);
-        }
 
         report.status = check_status_from_findings(&report.findings);
         reports.push(report);
@@ -326,29 +312,29 @@ fn build_globset(globs: &[String]) -> Result<GlobSet> {
     Ok(b.build()?)
 }
 
-fn apply_severity_override(mut findings: Vec<Finding>, ov: &CheckConfig) -> Vec<Finding> {
-    for f in &mut findings {
-        if f.severity != Severity::Info {
-            f.severity = ov.severity;
-        }
-    }
-    findings
+fn mk_location(path: Option<String>, line: Option<u32>) -> Option<Location> {
+    path.map(|p| Location {
+        path: p,
+        line,
+        col: None,
+    })
 }
 
 fn mk_finding(
     severity: Severity,
+    check_id: &str,
     code: &str,
     message: impl Into<String>,
     path: Option<String>,
     line: Option<u32>,
 ) -> Finding {
     Finding {
-        severity,
+        check_id: check_id.to_string(),
         code: code.to_string(),
+        severity,
         message: message.into(),
-        path,
-        line,
-        column: None,
+        location: mk_location(path, line),
+        data: None,
     }
 }
 
@@ -362,10 +348,24 @@ fn check_msrv_defined(
 
     match config.policy.msrv.source {
         builddiag_types::MsrvSource::Workspace => {
-            if msrv.is_none() && config.policy.msrv.require_defined {
+            if let Some(ref msrv_raw) = msrv {
+                // Validate that MSRV is parseable
+                if parse_rust_version(msrv_raw).is_err() {
+                    let path = repo.cargo_root.as_ref().map(|p| rel_path(&repo.root, p));
+                    findings.push(mk_finding(
+                        default_sev,
+                        "rust.msrv_defined",
+                        "invalid_msrv_defined",
+                        format!("Invalid rust-version (MSRV) in Cargo.toml: '{msrv_raw}'"),
+                        path,
+                        None,
+                    ));
+                }
+            } else if config.policy.msrv.require_defined {
                 let path = repo.cargo_root.as_ref().map(|p| rel_path(&repo.root, p));
                 findings.push(mk_finding(
                     default_sev,
+                    "rust.msrv_defined",
                     "missing_msrv",
                     "Missing workspace/package rust-version (MSRV) in Cargo.toml",
                     path,
@@ -374,18 +374,32 @@ fn check_msrv_defined(
             }
         }
         builddiag_types::MsrvSource::Any => {
-            let mut any = msrv.is_some();
-            if !any {
+            let mut any_msrv: Option<String> = msrv.clone();
+            if any_msrv.is_none() {
                 for m in &repo.workspace.members {
                     if m.rust_version.is_some() {
-                        any = true;
+                        any_msrv = m.rust_version.clone();
                         break;
                     }
                 }
             }
-            if !any && config.policy.msrv.require_defined {
+            if let Some(ref msrv_raw) = any_msrv {
+                // Validate that MSRV is parseable
+                if parse_rust_version(msrv_raw).is_err() {
+                    let path = repo.cargo_root.as_ref().map(|p| rel_path(&repo.root, p));
+                    findings.push(mk_finding(
+                        default_sev,
+                        "rust.msrv_defined",
+                        "invalid_msrv_defined",
+                        format!("Invalid rust-version (MSRV): '{msrv_raw}'"),
+                        path,
+                        None,
+                    ));
+                }
+            } else if config.policy.msrv.require_defined {
                 findings.push(mk_finding(
                     default_sev,
+                    "rust.msrv_defined",
                     "missing_msrv",
                     "Missing rust-version (MSRV): define workspace.package.rust-version or per-crate package.rust-version",
                     repo.cargo_root.as_ref().map(|p| rel_path(&repo.root, p)),
@@ -423,6 +437,7 @@ fn check_msrv_consistent(
         Err(_) => {
             findings.push(mk_finding(
                 default_sev,
+                "rust.msrv_consistent",
                 "invalid_msrv",
                 format!("Invalid workspace MSRV rust-version: {workspace_msrv_raw}"),
                 repo.cargo_root.as_ref().map(|p| rel_path(&repo.root, p)),
@@ -453,6 +468,7 @@ fn check_msrv_consistent(
         let Some(effective_raw) = effective else {
             findings.push(mk_finding(
                 default_sev,
+                "rust.msrv_consistent",
                 "missing_member_msrv",
                 format!(
                     "{}: missing package.rust-version (and not set to inherit from workspace)",
@@ -469,6 +485,7 @@ fn check_msrv_consistent(
             Err(_) => {
                 findings.push(mk_finding(
                     default_sev,
+                    "rust.msrv_consistent",
                     "invalid_member_msrv",
                     format!("{}: invalid rust-version '{effective_raw}'", m.name),
                     Some(rel),
@@ -483,6 +500,7 @@ fn check_msrv_consistent(
             if !allowed {
                 findings.push(mk_finding(
                     default_sev,
+                    "rust.msrv_consistent",
                     "msrv_mismatch",
                     format!("{}: rust-version {effective_norm} does not match workspace MSRV {workspace_msrv}", m.name),
                     Some(rel),
@@ -511,6 +529,7 @@ fn check_toolchain_pinning(
         if config.policy.toolchain.require_pinned {
             findings.push(mk_finding(
                 default_sev,
+                "rust.toolchain_pinning",
                 "missing_toolchain",
                 "Missing rust-toolchain.toml (or rust-toolchain) at repo root",
                 None,
@@ -530,6 +549,7 @@ fn check_toolchain_pinning(
     if channel.eq_ignore_ascii_case("nightly") && !config.policy.toolchain.allow_nightly {
         findings.push(mk_finding(
             default_sev,
+            "rust.toolchain_pinning",
             "nightly_disallowed",
             "Toolchain channel is 'nightly' but policy disallows nightly",
             Some(rel_path(&repo.root, &tc.path)),
@@ -544,6 +564,7 @@ fn check_toolchain_pinning(
         {
             findings.push(mk_finding(
                 default_sev,
+                "rust.toolchain_pinning",
                 "unpinned_channel",
                 format!("Toolchain channel '{channel}' is not pinned to a specific version"),
                 Some(rel_path(&repo.root, &tc.path)),
@@ -552,6 +573,7 @@ fn check_toolchain_pinning(
         } else if maybe_parse_numeric_version(channel)?.is_none() {
             findings.push(mk_finding(
                 default_sev,
+                "rust.toolchain_pinning",
                 "invalid_toolchain_version",
                 format!("Toolchain channel '{channel}' is not a valid numeric Rust version"),
                 Some(rel_path(&repo.root, &tc.path)),
@@ -622,6 +644,7 @@ fn check_toolchain_msrv_relation(
         };
         findings.push(mk_finding(
             default_sev,
+            "rust.toolchain_msrv_relation",
             "toolchain_msrv_mismatch",
             format!("Toolchain ({}) {relation} MSRV ({})", tc_v, ms_v),
             Some(rel_path(&repo.root, &tc.path)),
@@ -646,6 +669,7 @@ fn check_checksums_file_exists(
     if repo.tools_checksums.is_none() && config.policy.checksums.require_file {
         findings.push(mk_finding(
             default_sev,
+            "tools.checksums_file_exists",
             "missing_checksums",
             "Missing scripts/tools.sha256",
             Some(config.paths.tools_checksums.clone()),
@@ -685,6 +709,7 @@ fn check_checksums_format(
         if e.hash.len() != 64 || hex::decode(&e.hash).is_err() {
             findings.push(mk_finding(
                 default_sev,
+                "tools.checksums_format",
                 "invalid_hash",
                 format!("Invalid sha256 hash for path '{}': '{}'", e.path, e.hash),
                 Some(rel.clone()),
@@ -695,6 +720,7 @@ fn check_checksums_format(
         if e.path.trim().is_empty() {
             findings.push(mk_finding(
                 default_sev,
+                "tools.checksums_format",
                 "missing_path",
                 "Checksum line missing path",
                 Some(rel.clone()),
@@ -703,6 +729,7 @@ fn check_checksums_format(
         } else if !seen_paths.insert(e.path.clone()) {
             findings.push(mk_finding(
                 default_sev,
+                "tools.checksums_format",
                 "duplicate_path",
                 format!("Duplicate checksum entry for path '{}'", e.path),
                 Some(rel.clone()),
@@ -764,6 +791,7 @@ fn check_checksums_coverage(
     for f in expected.difference(&have) {
         findings.push(mk_finding(
             default_sev,
+            "tools.checksums_coverage",
             "missing_checksum",
             format!("Missing checksum entry for expected tool file '{}'", f),
             Some(config.paths.tools_checksums.clone()),
@@ -775,6 +803,7 @@ fn check_checksums_coverage(
     for f in have.difference(&expected) {
         findings.push(mk_finding(
             Severity::Warn,
+            "tools.checksums_coverage",
             "unexpected_checksum",
             format!(
                 "Checksum contains entry not present in tools manifest: '{}'",
@@ -822,6 +851,7 @@ fn check_checksums_verify_local(
         if !p.exists() {
             findings.push(mk_finding(
                 Severity::Warn,
+                "tools.checksums_verify_local",
                 "missing_tool_file",
                 format!(
                     "Tool file '{}' not found on disk (skipping hash verify)",
@@ -842,6 +872,7 @@ fn check_checksums_verify_local(
         if got != want {
             findings.push(mk_finding(
                 default_sev,
+                "tools.checksums_verify_local",
                 "hash_mismatch",
                 format!(
                     "Hash mismatch for '{}': expected {}, got {}",
@@ -866,10 +897,11 @@ fn check_workspace_resolver(
     _config: &Config,
     default_sev: Severity,
 ) -> Result<CheckReport> {
+    const CHECK_ID: &str = "workspace.resolver_v2";
     let mut findings = Vec::new();
     if !repo.workspace.is_workspace {
         return Ok(CheckReport {
-            id: "workspace.resolver_v2".to_string(),
+            id: CHECK_ID.to_string(),
             status: CheckStatus::Skip,
             findings,
             skipped_reason: Some("not a workspace".to_string()),
@@ -880,6 +912,7 @@ fn check_workspace_resolver(
     if resolver != Some("2") {
         findings.push(mk_finding(
             default_sev,
+            CHECK_ID,
             "resolver_not_v2",
             format!("workspace.resolver is {:?}; expected '2'", resolver),
             Some("Cargo.toml".to_string()),
@@ -888,7 +921,7 @@ fn check_workspace_resolver(
     }
 
     Ok(CheckReport {
-        id: "workspace.resolver_v2".to_string(),
+        id: CHECK_ID.to_string(),
         status: check_status_from_findings(&findings),
         findings,
         skipped_reason: None,
@@ -919,6 +952,7 @@ mod tests {
                 workspace_edition: Some("2021".to_string()),
                 workspace_resolver: Some("2".to_string()),
             },
+            workspace_model: None,
             tools_checksums: None,
             tools_manifest: None,
             changed_files: None,
@@ -1053,6 +1087,96 @@ mod tests {
         assert_eq!(report.status, CheckStatus::Fail);
         assert_eq!(report.findings.len(), 1);
         assert_eq!(report.findings[0].code, "missing_msrv");
+    }
+
+    #[test]
+    fn msrv_defined_fails_with_invalid_msrv_workspace_source() {
+        // Arrange: Workspace MSRV is set but invalid (unparseable)
+        let repo = mock_repo_with_msrv("not-a-valid-version");
+        let config = Config::default();
+
+        // Act
+        let report = check_msrv_defined(&repo, &config, Severity::Error).unwrap();
+
+        // Assert: Fail because MSRV is invalid
+        assert_eq!(report.status, CheckStatus::Fail);
+        assert_eq!(report.findings.len(), 1);
+        assert_eq!(report.findings[0].code, "invalid_msrv_defined");
+        assert!(report.findings[0].message.contains("not-a-valid-version"));
+    }
+
+    #[test]
+    fn msrv_defined_fails_with_invalid_msrv_any_source() {
+        // Arrange: No workspace MSRV, member has invalid MSRV, source = Any
+        let members = vec![mock_member("my-crate", Some("garbage-version"), false)];
+        let repo = mock_repo_with_members(None, members);
+        let mut config = Config::default();
+        config.policy.msrv.source = MsrvSource::Any;
+
+        // Act
+        let report = check_msrv_defined(&repo, &config, Severity::Error).unwrap();
+
+        // Assert: Fail because MSRV is invalid
+        assert_eq!(report.status, CheckStatus::Fail);
+        assert_eq!(report.findings.len(), 1);
+        assert_eq!(report.findings[0].code, "invalid_msrv_defined");
+    }
+
+    #[test]
+    fn msrv_defined_single_crate_with_msrv() {
+        // Arrange: Single crate (not a workspace) with package.rust-version set
+        let mut repo = mock_repo_state();
+        repo.workspace.is_workspace = false;
+        repo.workspace.workspace_msrv = Some("1.75.0".to_string());
+        repo.workspace.members.clear();
+        let config = Config::default();
+
+        // Act
+        let report = check_msrv_defined(&repo, &config, Severity::Error).unwrap();
+
+        // Assert: Pass, MSRV is defined
+        assert_eq!(report.status, CheckStatus::Pass);
+        assert!(report.findings.is_empty());
+    }
+
+    #[test]
+    fn msrv_defined_single_crate_without_msrv() {
+        // Arrange: Single crate (not a workspace) without package.rust-version
+        let mut repo = mock_repo_state();
+        repo.workspace.is_workspace = false;
+        repo.workspace.workspace_msrv = None;
+        repo.workspace.members.clear();
+        let config = Config::default();
+
+        // Act
+        let report = check_msrv_defined(&repo, &config, Severity::Error).unwrap();
+
+        // Assert: Fail, MSRV is not defined
+        assert_eq!(report.status, CheckStatus::Fail);
+        assert_eq!(report.findings.len(), 1);
+        assert_eq!(report.findings[0].code, "missing_msrv");
+    }
+
+    #[test]
+    fn msrv_defined_includes_path_in_finding() {
+        // Arrange: No MSRV, verify the finding includes path
+        let repo = mock_repo_state();
+        let config = Config::default();
+
+        // Act
+        let report = check_msrv_defined(&repo, &config, Severity::Error).unwrap();
+
+        // Assert: Finding includes path to Cargo.toml
+        assert_eq!(report.findings.len(), 1);
+        assert!(report.findings[0].location.is_some());
+        assert!(
+            report.findings[0]
+                .location
+                .as_ref()
+                .unwrap()
+                .path
+                .contains("Cargo.toml")
+        );
     }
 
     // =========================================================================

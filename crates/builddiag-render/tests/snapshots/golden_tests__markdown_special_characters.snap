@@ -1,0 +1,13 @@
+---
+source: crates/builddiag-render/tests/golden_tests.rs
+expression: md
+---
+## builddiag: ❌ Fail (1 errors, 1 warnings)
+
+| severity | check | code | location | message |
+|---|---|---|---|---|
+| error | test.special_chars | pipe\|in\|code | path\|with\|pipes.rs:1 | Message with \| pipe and \\ backslash |
+| warn | test.special_chars | newline_test | file.rs:10 | Message with newline character |
+
+Reproduce:
+`builddiag check --root .`

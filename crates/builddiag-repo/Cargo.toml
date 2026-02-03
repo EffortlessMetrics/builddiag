@@ -15,8 +15,10 @@ serde.workspace = true
 toml.workspace = true
 cargo_metadata.workspace = true
 camino.workspace = true
+globset.workspace = true
 builddiag-domain = { path = "../builddiag-domain" }
 builddiag-types = { path = "../builddiag-types" }
 
 [dev-dependencies]
 tempfile.workspace = true
+proptest.workspace = true

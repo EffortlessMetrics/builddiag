@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use builddiag_app::{compute_changed_files, load_config, run_check, write_outputs};
 use builddiag_checks::{BUILTIN_CHECKS, CHECK_DOCS, explain_check};
+use builddiag_domain::explain::{all_check_ids, explain, explain_check_all_codes};
 use builddiag_render::{render_github_annotations, render_markdown};
 use builddiag_types::{Config, Profile, ProfileCheckState};
 use camino::{Utf8Path, Utf8PathBuf};
@@ -16,6 +17,16 @@ enum ProfileArg {
     Team,
     /// Strict profile with maximum enforcement.
     Strict,
+}
+
+/// Annotation output format for the check command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Default)]
+enum AnnotationFormat {
+    /// Output GitHub Actions workflow annotations.
+    Github,
+    /// No annotation output.
+    #[default]
+    None,
 }
 
 impl From<ProfileArg> for Profile {
@@ -63,9 +74,9 @@ enum Command {
         #[arg(long)]
         md: Option<Utf8PathBuf>,
 
-        /// Emit GitHub Actions annotations to stdout.
-        #[arg(long, default_value_t = false)]
-        github_annotations: bool,
+        /// Annotation output format (github or none).
+        #[arg(long, value_enum, default_value = "none")]
+        annotations: AnnotationFormat,
 
         /// Enable diff-aware skipping (only run checks triggered by changed files).
         #[arg(long, default_value_t = false)]
@@ -93,7 +104,9 @@ enum Command {
     },
 
     /// Emit GitHub Actions annotations from an existing report.
-    GithubAnnotations {
+    #[command(alias = "github-annotations")]
+    Annotations {
+        /// Path to the JSON report file.
         #[arg(long)]
         report: Utf8PathBuf,
     },
@@ -142,7 +155,7 @@ fn try_main() -> Result<()> {
             profile,
             out,
             md,
-            github_annotations,
+            annotations,
             diff_aware,
             base,
             head,
@@ -175,7 +188,7 @@ fn try_main() -> Result<()> {
             let out_md = md.or_else(|| Some(default_md_path(&cfg, &root)));
             write_outputs(&out_json, out_md.as_deref(), &run)?;
 
-            if github_annotations {
+            if annotations == AnnotationFormat::Github {
                 for line in &run.annotations {
                     println!("{line}");
                 }
@@ -194,7 +207,7 @@ fn try_main() -> Result<()> {
                 print!("{md}");
             }
         }
-        Command::GithubAnnotations { report } => {
+        Command::Annotations { report } => {
             let bytes = std::fs::read(&report).with_context(|| format!("read {report}"))?;
             let report: builddiag_types::Report =
                 serde_json::from_slice(&bytes).with_context(|| format!("parse {report}"))?;
@@ -203,28 +216,7 @@ fn try_main() -> Result<()> {
             }
         }
         Command::Explain { check_or_code } => {
-            if let Some(doc) = explain_check(&check_or_code) {
-                println!("{}", doc.name);
-                println!("{}", "=".repeat(doc.name.len()));
-                println!();
-                println!("{}", doc.description);
-                println!();
-                println!("Help: {}", doc.help);
-                if let Some(url) = &doc.url {
-                    println!("Documentation: {}", url);
-                }
-                println!();
-                println!("Finding codes:");
-                for code in doc.codes {
-                    println!("  - {}", code);
-                }
-            } else {
-                eprintln!(
-                    "Unknown check or finding code: '{}'\n\nRun 'builddiag explain --help' for usage.",
-                    check_or_code
-                );
-                process::exit(1);
-            }
+            run_explain(&check_or_code);
         }
         Command::ListChecks { profile, format } => {
             list_checks(profile.map(Profile::from), format);
@@ -232,6 +224,105 @@ fn try_main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn run_explain(check_or_code: &str) {
+    // Check if this is a check ID (contains a dot like "rust.msrv_defined")
+    if check_or_code.contains('.') {
+        // Show all codes for this check
+        let entries = explain_check_all_codes(check_or_code);
+        if entries.is_empty() {
+            // Fall back to old CHECK_DOCS for backward compatibility
+            if let Some(doc) = explain_check(check_or_code) {
+                print_legacy_doc(doc);
+                return;
+            }
+            eprintln!("Unknown check: '{}'\n\nAvailable checks:", check_or_code);
+            for id in all_check_ids() {
+                eprintln!("  - {}", id);
+            }
+            eprintln!("\nRun 'builddiag list-checks' for a full list.");
+            process::exit(1);
+        }
+
+        // Print check header
+        println!("Check: {}", check_or_code);
+        println!("{}", "=".repeat(7 + check_or_code.len()));
+        println!();
+
+        // Print each code's explanation
+        for (i, entry) in entries.iter().enumerate() {
+            if i > 0 {
+                println!();
+                println!("{}", "-".repeat(60));
+                println!();
+            }
+            print_explain_entry(entry);
+        }
+    } else {
+        // This is a finding code, show specific explanation
+        if let Some(entry) = explain(check_or_code) {
+            println!("Check: {} / Code: {}", entry.check_id, entry.code);
+            println!(
+                "{}",
+                "=".repeat(15 + entry.check_id.len() + entry.code.len())
+            );
+            println!();
+            print_explain_entry(entry);
+        } else {
+            // Fall back to old CHECK_DOCS
+            if let Some(doc) = explain_check(check_or_code) {
+                print_legacy_doc(doc);
+                return;
+            }
+            eprintln!(
+                "Unknown check or finding code: '{}'\n\nRun 'builddiag list-checks' to see available checks.",
+                check_or_code
+            );
+            process::exit(1);
+        }
+    }
+}
+
+fn print_explain_entry(entry: &builddiag_domain::explain::ExplainEntry) {
+    println!("{}", entry.name);
+    println!("{}", "-".repeat(entry.name.len()));
+    println!();
+    println!("Code: {}", entry.code);
+    println!();
+    println!("What it means:");
+    println!("  {}", entry.what_it_means.replace('\n', "\n  "));
+    println!();
+    println!("Why it matters:");
+    println!("  {}", entry.why_it_matters.replace('\n', "\n  "));
+    println!();
+    println!("How to fix:");
+    println!("  {}", entry.how_to_fix.replace('\n', "\n  "));
+
+    if !entry.links.is_empty() {
+        println!();
+        println!("Links:");
+        for link in entry.links {
+            println!("  - {}", link);
+        }
+    }
+}
+
+fn print_legacy_doc(doc: &builddiag_checks::CheckDocumentation) {
+    println!("{}", doc.name);
+    println!("{}", "=".repeat(doc.name.len()));
+    println!();
+    println!("{}", doc.description);
+    println!();
+    println!("Help: {}", doc.help);
+    if let Some(url) = &doc.url {
+        println!("Documentation: {}", url);
+    }
+    println!();
+    println!("Finding codes:");
+    for code in doc.codes {
+        println!("  - {}", code);
+    }
 }
 
 fn list_checks(profile_filter: Option<Profile>, format: ListFormat) {
