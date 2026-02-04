@@ -1,0 +1,6 @@
+profile = "strict"
+
+[policy.msrv]
+require_defined = true
+source = "workspace"
+allow_per_crate_override = false

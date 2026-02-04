@@ -1,0 +1,34 @@
+profile = "strict"
+
+[defaults]
+fail_on = "warn"
+out_dir = "build/reports"
+diff_aware = true
+base = "main"
+head = "HEAD"
+
+[paths]
+cargo_root = "Cargo.toml"
+rust_toolchain = "rust-toolchain.toml"
+tools_checksums = "scripts/tools.sha256"
+tools_manifest = "scripts/tools.toml"
+
+[policy.msrv]
+require_defined = true
+source = "workspace"
+
+[policy.toolchain]
+require_pinned = true
+relation_to_msrv = "equals"
+
+[policy.checksums]
+require_file = true
+require_coverage = true
+
+[[checks]]
+id = "rust.msrv_defined"
+severity = "error"
+enabled = true
+
+[meta]
+owner = "platform-team"

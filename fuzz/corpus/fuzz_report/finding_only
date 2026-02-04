@@ -1,0 +1,7 @@
+{
+  "check_id": "rust.toolchain_pinning",
+  "code": "not_pinned",
+  "severity": "warn",
+  "message": "Toolchain not pinned",
+  "location": {"path": "rust-toolchain.toml", "line": 2, "col": 5}
+}

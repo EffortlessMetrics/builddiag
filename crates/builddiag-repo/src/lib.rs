@@ -835,9 +835,44 @@ fn walk_for_cargo_tomls(
 
 fn parse_checksums(path: &Utf8Path) -> Result<ToolsChecksums> {
     let txt = fs::read_to_string(path).with_context(|| format!("read {path}"))?;
+    let entries = parse_checksums_content(&txt);
+
+    Ok(ToolsChecksums {
+        path: path.to_path_buf(),
+        entries,
+    })
+}
+
+/// Parses checksums content from a string.
+///
+/// This function parses checksums in the standard format used by sha256sum:
+/// `<hash><whitespace><path>` per line.
+///
+/// - Empty lines are ignored
+/// - Lines starting with `#` are treated as comments and ignored
+/// - Hash-only lines (no path) are parsed with an empty path
+///
+/// This is exposed publicly for fuzz testing. The main entry point for
+/// production use is [`load_repo_state`] which reads from a file.
+///
+/// # Examples
+///
+/// ```
+/// use builddiag_repo::parse_checksums_content;
+///
+/// let content = "abc123  path/to/file.txt\n# comment\ndef456  another/file.bin";
+/// let entries = parse_checksums_content(content);
+///
+/// assert_eq!(entries.len(), 2);
+/// assert_eq!(entries[0].hash, "abc123");
+/// assert_eq!(entries[0].path, "path/to/file.txt");
+/// assert_eq!(entries[0].line, 1);
+/// assert_eq!(entries[1].line, 3);
+/// ```
+pub fn parse_checksums_content(content: &str) -> Vec<ChecksumEntry> {
     let mut entries = Vec::new();
 
-    for (idx, line) in txt.lines().enumerate() {
+    for (idx, line) in content.lines().enumerate() {
         let line_no = idx + 1;
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
@@ -860,10 +895,7 @@ fn parse_checksums(path: &Utf8Path) -> Result<ToolsChecksums> {
         });
     }
 
-    Ok(ToolsChecksums {
-        path: path.to_path_buf(),
-        entries,
-    })
+    entries
 }
 
 /// A helper for checks that need normalized versions.

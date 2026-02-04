@@ -1,0 +1,6 @@
+profile = "oss"
+
+[policy.toolchain]
+require_pinned = true
+relation_to_msrv = "equals"
+allow_nightly = false

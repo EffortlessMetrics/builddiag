@@ -1,0 +1,12 @@
+profile = "team"
+
+[[checks]]
+id = "rust.msrv_defined"
+severity = "warn"
+enabled = true
+triggers = ["Cargo.toml"]
+
+[[checks]]
+id = "rust.toolchain_pinning"
+severity = "error"
+enabled = false

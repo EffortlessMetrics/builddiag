@@ -37,7 +37,8 @@ cargo run -p xtask -- coverage [--html]  # Code coverage
 
 ### Fuzz Testing (requires nightly)
 ```bash
-cd fuzz && cargo +nightly fuzz run fuzz_version -- -max_total_time=300
+cd fuzz && cargo +nightly fuzz list                                    # List targets
+cd fuzz && cargo +nightly fuzz run fuzz_version -- -max_total_time=300 # Run specific
 ```
 
 ### Mutation Testing
@@ -91,6 +92,6 @@ builddiag-types    Shared types, config schema, report schema
 - **Unit tests**: Inline `#[cfg(test)]` modules in source files
 - **Property tests**: `tests/<crate>_properties.rs` using `proptest`
 - **Integration tests**: `crates/builddiag-cli/tests/` using `assert_cmd` + `predicates`
-- **Fuzz tests**: `fuzz/fuzz_targets/` (4 targets: version, toml, checksums, config)
+- **Fuzz tests**: `fuzz/fuzz_targets/` (6 targets: version, toml, checksums, config, report, render)
 
 Test naming: unit tests use `test_<description>`, property tests use `prop_<property_name>`, integration tests use `<command>_<scenario>`.

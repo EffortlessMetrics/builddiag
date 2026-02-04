@@ -1,0 +1,4 @@
+[
+  {"check_id": "a", "code": "b", "severity": "info", "message": "m1"},
+  {"check_id": "c", "code": "d", "severity": "error", "message": "m2"}
+]

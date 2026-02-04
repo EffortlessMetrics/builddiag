@@ -125,7 +125,7 @@ jobs:
       - name: Run fuzz tests (5 minutes each)
         run: |
           cd fuzz
-          for target in fuzz_version fuzz_toml fuzz_checksums fuzz_config; do
+          for target in fuzz_version fuzz_toml fuzz_checksums fuzz_config fuzz_report fuzz_render; do
             echo "Fuzzing $target..."
             cargo +nightly fuzz run $target -- -max_total_time=300 || true
           done
