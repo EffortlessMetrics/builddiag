@@ -5,7 +5,7 @@ use builddiag_app::{
 };
 use builddiag_checks::{BUILTIN_CHECKS, CHECK_DOCS, explain_check};
 use builddiag_domain::explain::{all_check_ids, explain, explain_check_all_codes};
-use builddiag_render::{render_github_annotations, render_markdown};
+use builddiag_render::{render_diagnostics, render_github_annotations, render_markdown};
 use builddiag_types::{Config, Profile, ProfileCheckState};
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::Utc;
@@ -41,6 +41,8 @@ enum OutputFormat {
     Builddiag,
     /// Cockpit-compatible sensor.report.v1 format.
     Sensor,
+    /// IDE-compatible diagnostic lines (path:line:col: severity: message).
+    Diagnostics,
 }
 
 /// Exit code mode for the check command.
@@ -130,6 +132,14 @@ enum Command {
         /// Run all checks even when diff-aware.
         #[arg(long, default_value_t = false)]
         always: bool,
+
+        /// Disable caching of repo state (forces full re-parse).
+        #[arg(long, default_value_t = false)]
+        no_cache: bool,
+
+        /// Custom cache directory (default: .builddiag-cache/).
+        #[arg(long)]
+        cache_dir: Option<Utf8PathBuf>,
     },
 
     /// Render Markdown from an existing JSON report.
@@ -199,6 +209,8 @@ fn try_main() -> Result<()> {
             base,
             head,
             always,
+            no_cache,
+            cache_dir,
         } => {
             let start = Utc::now();
 
@@ -215,6 +227,8 @@ fn try_main() -> Result<()> {
                 base.as_deref(),
                 head.as_deref(),
                 always,
+                no_cache,
+                cache_dir.as_deref(),
             );
 
             match (result, mode) {
@@ -569,6 +583,8 @@ fn run_check_command(
     base: Option<&str>,
     head: Option<&str>,
     always: bool,
+    no_cache: bool,
+    cache_dir: Option<&Utf8Path>,
 ) -> Result<CheckCommandResult> {
     let mut cfg: Config = load_config(config)?;
 
@@ -580,6 +596,17 @@ fn run_check_command(
     if diff_aware {
         cfg.defaults.diff_aware = true;
     }
+
+    // Configure caching
+    let cache_config = if no_cache {
+        None
+    } else {
+        let mut cc = builddiag_app::CacheConfig::default();
+        if let Some(dir) = cache_dir {
+            cc.cache_dir = dir.to_path_buf();
+        }
+        Some(cc)
+    };
 
     let base = base
         .map(String::from)
@@ -602,8 +629,8 @@ fn run_check_command(
         .or_else(|| Some(default_md_path(&cfg, root)));
 
     match format {
-        OutputFormat::Builddiag => {
-            let run = run_check(root, &cfg, always, changed)?;
+        OutputFormat::Builddiag | OutputFormat::Diagnostics => {
+            let run = run_check(root, &cfg, always, changed, cache_config.as_ref())?;
             Ok(CheckCommandResult {
                 run,
                 out_json,
@@ -612,7 +639,7 @@ fn run_check_command(
             })
         }
         OutputFormat::Sensor => {
-            let sr = run_check_with_sensor(root, &cfg, always, changed)?;
+            let sr = run_check_with_sensor(root, &cfg, always, changed, cache_config.as_ref())?;
             Ok(CheckCommandResult {
                 run: sr.check_run,
                 out_json,
@@ -643,6 +670,16 @@ fn finish_check_output(
             if let Some(md_path) = md {
                 write_atomic(md_path, run.markdown.as_bytes())?;
             }
+        }
+        OutputFormat::Diagnostics => {
+            // Diagnostics format outputs to stdout for IDE integration
+            // No file writing - just print diagnostic lines
+            let lines = render_diagnostics(&run.report);
+            for line in lines {
+                println!("{line}");
+            }
+            // Still write the JSON report if explicitly requested
+            write_outputs(out_json, md, run)?;
         }
     }
 

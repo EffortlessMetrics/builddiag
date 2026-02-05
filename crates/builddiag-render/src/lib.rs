@@ -4,10 +4,11 @@
 //!
 //! - **Markdown** - Human-readable summary suitable for PR comments
 //! - **GitHub Annotations** - Inline annotations for GitHub Actions
+//! - **Diagnostics** - IDE-compatible diagnostic lines for VS Code and similar editors
 //!
 //! # Budget-Aware Rendering
 //!
-//! Both renderers support budget-awareness to handle large reports gracefully:
+//! All renderers support budget-awareness to handle large reports gracefully:
 //!
 //! - `max_findings` - Maximum number of findings to display (default: 50)
 //! - `show_info` - Whether to include info-level findings (default: false)
@@ -390,6 +391,107 @@ fn escape_md(s: &str) -> String {
 /// with special characters. Newlines are replaced with spaces.
 fn escape_github_annotation(s: &str) -> String {
     s.replace('\n', " ").replace('\r', "").replace('%', "%25")
+}
+
+/// Renders findings as IDE-compatible diagnostic lines.
+///
+/// This produces output in a format that can be parsed by VS Code's problem matcher
+/// and similar IDE integrations. Each line represents a single finding.
+///
+/// # Output Format
+///
+/// ```text
+/// path:line:col: severity: [check_id:code] message
+/// ```
+///
+/// For findings without a column, the column defaults to 1:
+/// ```text
+/// Cargo.toml:5:1: error: [rust.msrv_defined:missing_msrv] Missing rust-version
+/// ```
+///
+/// # Example
+///
+/// ```
+/// use builddiag_render::{render_diagnostics, RenderOptions};
+/// # use builddiag_types::*;
+/// # use chrono::Utc;
+///
+/// # let report = Report {
+/// #     schema: Report::SCHEMA_V1.to_string(),
+/// #     tool: None,
+/// #     run: None,
+/// #     verdict: Verdict::Pass,
+/// #     findings: vec![],
+/// #     summary: None,
+/// #     data: None,
+/// # };
+/// let lines = render_diagnostics(&report);
+/// for line in lines {
+///     println!("{}", line);
+/// }
+/// ```
+pub fn render_diagnostics(report: &Report) -> Vec<String> {
+    render_diagnostics_with_options(report, &RenderOptions::default())
+}
+
+/// Renders findings as IDE-compatible diagnostic lines with custom options.
+///
+/// See [`render_diagnostics`] for output format details.
+pub fn render_diagnostics_with_options(report: &Report, options: &RenderOptions) -> Vec<String> {
+    // Collect findings with location information
+    let mut findings: Vec<&Finding> = report
+        .findings
+        .iter()
+        .filter(|f| options.show_info || f.severity != Severity::Info)
+        .collect();
+
+    // Sort by severity (errors first), then path, line for deterministic output
+    findings.sort_by(|a, b| {
+        let sa = severity_rank(a.severity);
+        let sb = severity_rank(b.severity);
+        sb.cmp(&sa)
+            .then_with(|| a.check_id.cmp(&b.check_id))
+            .then_with(|| {
+                let path_a = a.location.as_ref().map(|l| l.path.as_str()).unwrap_or("");
+                let path_b = b.location.as_ref().map(|l| l.path.as_str()).unwrap_or("");
+                path_a.cmp(path_b)
+            })
+            .then_with(|| {
+                let line_a = a.location.as_ref().and_then(|l| l.line).unwrap_or(0);
+                let line_b = b.location.as_ref().and_then(|l| l.line).unwrap_or(0);
+                line_a.cmp(&line_b)
+            })
+    });
+
+    // Apply budget limit
+    let display_count = findings.len().min(options.max_findings);
+
+    let mut lines = Vec::with_capacity(display_count);
+    for f in findings.into_iter().take(display_count) {
+        let sev = match f.severity {
+            Severity::Error => "error",
+            Severity::Warn => "warning",
+            Severity::Info => "info",
+        };
+
+        // Format: path:line:col: severity: [check_id:code] message
+        let (path, line, col) = match &f.location {
+            Some(loc) => (
+                loc.path.as_str(),
+                loc.line.unwrap_or(1),
+                loc.col.unwrap_or(1),
+            ),
+            None => ("", 1, 1),
+        };
+
+        let message = f.message.replace('\n', " ").replace('\r', "");
+        let diagnostic = format!(
+            "{}:{}:{}: {}: [{}:{}] {}",
+            path, line, col, sev, f.check_id, f.code, message
+        );
+        lines.push(diagnostic);
+    }
+    lines
 }
 
 #[cfg(test)]
@@ -858,5 +960,114 @@ mod tests {
         assert!(md.contains("Missing MSRV"));
         let ann = render_github_annotations(&report);
         assert!(!ann.is_empty());
+    }
+
+    #[test]
+    fn test_diagnostics_empty() {
+        let report = create_test_report_empty();
+        let lines = render_diagnostics(&report);
+        assert!(lines.is_empty());
+    }
+
+    #[test]
+    fn test_diagnostics_with_findings() {
+        let report = create_test_report_with_findings();
+        let lines = render_diagnostics(&report);
+
+        // Should have 2 lines (error and warn, not info by default)
+        assert_eq!(lines.len(), 2);
+
+        // Error should come first (sorted by severity)
+        assert!(lines[0].contains("error:"));
+        assert!(lines[0].contains("Cargo.toml:1:1:"));
+        assert!(lines[0].contains("[rust.msrv_defined:missing_msrv]"));
+        assert!(lines[0].contains("Missing rust-version"));
+
+        // Warning should come second
+        assert!(lines[1].contains("warning:"));
+        assert!(lines[1].contains("rust-toolchain.toml:2:5:"));
+        assert!(lines[1].contains("[rust.toolchain_pinning:toolchain_not_pinned]"));
+    }
+
+    #[test]
+    fn test_diagnostics_show_info() {
+        let report = create_test_report_with_findings();
+        let options = RenderOptions {
+            max_findings: 50,
+            show_info: true,
+        };
+        let lines = render_diagnostics_with_options(&report, &options);
+
+        // Should now have 3 lines including info
+        assert_eq!(lines.len(), 3);
+
+        // Check that info is present
+        let has_info = lines.iter().any(|l| l.contains("info:"));
+        assert!(has_info);
+    }
+
+    #[test]
+    fn test_diagnostics_budget() {
+        let report = create_test_report_many_findings(100);
+        let options = RenderOptions {
+            max_findings: 10,
+            show_info: true,
+        };
+        let lines = render_diagnostics_with_options(&report, &options);
+
+        // Should be limited to 10
+        assert_eq!(lines.len(), 10);
+    }
+
+    #[test]
+    fn test_diagnostics_format() {
+        let mut report = create_test_report_empty();
+        report.findings = vec![Finding {
+            check_id: "test.check".into(),
+            code: "test_code".into(),
+            severity: Severity::Error,
+            message: "Test message".into(),
+            location: Some(Location {
+                path: "src/main.rs".into(),
+                line: Some(42),
+                col: Some(10),
+            }),
+        }];
+
+        let lines = render_diagnostics(&report);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(
+            lines[0],
+            "src/main.rs:42:10: error: [test.check:test_code] Test message"
+        );
+    }
+
+    #[test]
+    fn test_diagnostics_no_location() {
+        let mut report = create_test_report_empty();
+        report.findings = vec![Finding {
+            check_id: "test.check".into(),
+            code: "no_loc".into(),
+            severity: Severity::Error,
+            message: "No location".into(),
+            location: None,
+        }];
+
+        let lines = render_diagnostics(&report);
+        assert_eq!(lines.len(), 1);
+        // Should use empty path and defaults for line/col
+        assert_eq!(lines[0], ":1:1: error: [test.check:no_loc] No location");
+    }
+
+    #[test]
+    fn test_diagnostics_deterministic() {
+        let report = create_test_report_with_findings();
+
+        let lines1 = render_diagnostics(&report);
+        let lines2 = render_diagnostics(&report);
+        let lines3 = render_diagnostics(&report);
+
+        assert_eq!(lines1, lines2);
+        assert_eq!(lines2, lines3);
     }
 }

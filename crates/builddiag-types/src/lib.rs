@@ -814,12 +814,18 @@ impl Profile {
                 "rust.msrv_consistent" => ProfileCheckState::Enabled(Severity::Error),
                 "rust.toolchain_pinning" => ProfileCheckState::Enabled(Severity::Info),
                 "rust.toolchain_msrv_relation" => ProfileCheckState::Enabled(Severity::Warn),
+                "rust.edition_deprecations" => ProfileCheckState::Enabled(Severity::Info),
                 "workspace.resolver_v2" => ProfileCheckState::Enabled(Severity::Info),
                 "workspace.edition_consistent" => ProfileCheckState::Enabled(Severity::Warn),
                 "workspace.member_ordering" => ProfileCheckState::Enabled(Severity::Info),
+                "workspace.publish_ready" => ProfileCheckState::Enabled(Severity::Info),
                 // All tools.* checks are skipped in oss profile
                 id if id.starts_with("tools.") => ProfileCheckState::Skip,
-                // All deps.* checks are info in oss profile
+                // Security advisory check is opt-in for oss
+                "deps.security_advisory" => ProfileCheckState::Skip,
+                // deps.duplicate_versions is info in oss
+                "deps.duplicate_versions" => ProfileCheckState::Enabled(Severity::Info),
+                // All other deps.* checks are info in oss profile
                 id if id.starts_with("deps.") => ProfileCheckState::Enabled(Severity::Info),
                 // Unknown checks default to warn
                 _ => ProfileCheckState::Enabled(Severity::Warn),
@@ -829,12 +835,18 @@ impl Profile {
                 "rust.msrv_consistent" => ProfileCheckState::Enabled(Severity::Error),
                 "rust.toolchain_pinning" => ProfileCheckState::Enabled(Severity::Warn),
                 "rust.toolchain_msrv_relation" => ProfileCheckState::Enabled(Severity::Error),
+                "rust.edition_deprecations" => ProfileCheckState::Enabled(Severity::Warn),
                 "workspace.resolver_v2" => ProfileCheckState::Enabled(Severity::Warn),
                 "workspace.edition_consistent" => ProfileCheckState::Enabled(Severity::Error),
                 "workspace.member_ordering" => ProfileCheckState::Enabled(Severity::Info),
+                "workspace.publish_ready" => ProfileCheckState::Enabled(Severity::Warn),
                 // All tools.* checks are warn in team profile
                 id if id.starts_with("tools.") => ProfileCheckState::Enabled(Severity::Warn),
-                // All deps.* checks are warn in team profile
+                // Security advisory check is warn for team
+                "deps.security_advisory" => ProfileCheckState::Enabled(Severity::Warn),
+                // deps.duplicate_versions is warn in team
+                "deps.duplicate_versions" => ProfileCheckState::Enabled(Severity::Warn),
+                // All other deps.* checks are warn in team profile
                 id if id.starts_with("deps.") => ProfileCheckState::Enabled(Severity::Warn),
                 // Unknown checks default to warn
                 _ => ProfileCheckState::Enabled(Severity::Warn),

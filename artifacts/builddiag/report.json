@@ -2,18 +2,18 @@
   "schema": "builddiag.report.v1",
   "tool": {
     "name": "builddiag",
-    "version": "0.1.0"
+    "version": "0.2.0"
   },
   "run": {
-    "started_at": "2026-02-03T11:34:50.764421900Z",
-    "ended_at": "2026-02-03T11:34:50.797334400Z",
-    "duration_ms": 32,
+    "started_at": "2026-02-05T15:40:11.730824800Z",
+    "ended_at": "2026-02-05T15:40:11.875286800Z",
+    "duration_ms": 144,
     "host": {
       "os": "windows",
       "arch": "x86_64"
     },
     "git": {
-      "commit": "56925ffcda3f7992f4675c50998913f54360f95e",
+      "commit": "b50fd57a0efb7a6fd22d865e0e0f6ac4206fa924",
       "branch": "main",
       "dirty": true
     }
@@ -30,21 +30,484 @@
       }
     },
     {
+      "check_id": "deps.path_missing_version",
+      "code": "path_missing_version",
+      "severity": "info",
+      "message": "dependencies: path dependency 'builddiag-checks' should specify version for publishing",
+      "location": {
+        "path": "\\\\?\\D:\\Code\\Rust\\builddiag\\crates\\builddiag-app\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "deps.path_missing_version",
+      "code": "path_missing_version",
+      "severity": "info",
+      "message": "dependencies: path dependency 'builddiag-domain' should specify version for publishing",
+      "location": {
+        "path": "\\\\?\\D:\\Code\\Rust\\builddiag\\crates\\builddiag-app\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "deps.path_missing_version",
+      "code": "path_missing_version",
+      "severity": "info",
+      "message": "dependencies: path dependency 'builddiag-render' should specify version for publishing",
+      "location": {
+        "path": "\\\\?\\D:\\Code\\Rust\\builddiag\\crates\\builddiag-app\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "deps.path_missing_version",
+      "code": "path_missing_version",
+      "severity": "info",
+      "message": "dependencies: path dependency 'builddiag-repo' should specify version for publishing",
+      "location": {
+        "path": "\\\\?\\D:\\Code\\Rust\\builddiag\\crates\\builddiag-app\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "deps.path_missing_version",
+      "code": "path_missing_version",
+      "severity": "info",
+      "message": "dependencies: path dependency 'builddiag-types' should specify version for publishing",
+      "location": {
+        "path": "\\\\?\\D:\\Code\\Rust\\builddiag\\crates\\builddiag-app\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "deps.path_missing_version",
+      "code": "path_missing_version",
+      "severity": "info",
+      "message": "dependencies: path dependency 'builddiag-domain' should specify version for publishing",
+      "location": {
+        "path": "\\\\?\\D:\\Code\\Rust\\builddiag\\crates\\builddiag-checks\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "deps.path_missing_version",
+      "code": "path_missing_version",
+      "severity": "info",
+      "message": "dependencies: path dependency 'builddiag-repo' should specify version for publishing",
+      "location": {
+        "path": "\\\\?\\D:\\Code\\Rust\\builddiag\\crates\\builddiag-checks\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "deps.path_missing_version",
+      "code": "path_missing_version",
+      "severity": "info",
+      "message": "dependencies: path dependency 'builddiag-types' should specify version for publishing",
+      "location": {
+        "path": "\\\\?\\D:\\Code\\Rust\\builddiag\\crates\\builddiag-checks\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "deps.path_missing_version",
+      "code": "path_missing_version",
+      "severity": "info",
+      "message": "dependencies: path dependency 'depguard' should specify version for publishing",
+      "location": {
+        "path": "\\\\?\\D:\\Code\\Rust\\builddiag\\crates\\builddiag-checks\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "deps.path_missing_version",
+      "code": "path_missing_version",
+      "severity": "info",
+      "message": "dependencies: path dependency 'builddiag-app' should specify version for publishing",
+      "location": {
+        "path": "\\\\?\\D:\\Code\\Rust\\builddiag\\crates\\builddiag-cli\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "deps.path_missing_version",
+      "code": "path_missing_version",
+      "severity": "info",
+      "message": "dependencies: path dependency 'builddiag-checks' should specify version for publishing",
+      "location": {
+        "path": "\\\\?\\D:\\Code\\Rust\\builddiag\\crates\\builddiag-cli\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "deps.path_missing_version",
+      "code": "path_missing_version",
+      "severity": "info",
+      "message": "dependencies: path dependency 'builddiag-domain' should specify version for publishing",
+      "location": {
+        "path": "\\\\?\\D:\\Code\\Rust\\builddiag\\crates\\builddiag-cli\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "deps.path_missing_version",
+      "code": "path_missing_version",
+      "severity": "info",
+      "message": "dependencies: path dependency 'builddiag-render' should specify version for publishing",
+      "location": {
+        "path": "\\\\?\\D:\\Code\\Rust\\builddiag\\crates\\builddiag-cli\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "deps.path_missing_version",
+      "code": "path_missing_version",
+      "severity": "info",
+      "message": "dependencies: path dependency 'builddiag-types' should specify version for publishing",
+      "location": {
+        "path": "\\\\?\\D:\\Code\\Rust\\builddiag\\crates\\builddiag-cli\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "deps.path_missing_version",
+      "code": "path_missing_version",
+      "severity": "info",
+      "message": "dependencies: path dependency 'builddiag-types' should specify version for publishing",
+      "location": {
+        "path": "\\\\?\\D:\\Code\\Rust\\builddiag\\crates\\builddiag-domain\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "deps.path_missing_version",
+      "code": "path_missing_version",
+      "severity": "info",
+      "message": "dependencies: path dependency 'builddiag-types' should specify version for publishing",
+      "location": {
+        "path": "\\\\?\\D:\\Code\\Rust\\builddiag\\crates\\builddiag-render\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "deps.path_missing_version",
+      "code": "path_missing_version",
+      "severity": "info",
+      "message": "dependencies: path dependency 'builddiag-domain' should specify version for publishing",
+      "location": {
+        "path": "\\\\?\\D:\\Code\\Rust\\builddiag\\crates\\builddiag-repo\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "deps.path_missing_version",
+      "code": "path_missing_version",
+      "severity": "info",
+      "message": "dependencies: path dependency 'builddiag-types' should specify version for publishing",
+      "location": {
+        "path": "\\\\?\\D:\\Code\\Rust\\builddiag\\crates\\builddiag-repo\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "deps.path_missing_version",
+      "code": "path_missing_version",
+      "severity": "info",
+      "message": "dependencies: path dependency 'builddiag-types' should specify version for publishing",
+      "location": {
+        "path": "\\\\?\\D:\\Code\\Rust\\builddiag\\xtask\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "deps.workspace_inheritance",
+      "code": "missing_workspace_inheritance",
+      "severity": "info",
+      "message": "dev-dependencies: dependency 'proptest' could use workspace inheritance (foo.workspace = true)",
+      "location": {
+        "path": "\\\\?\\D:\\Code\\Rust\\builddiag\\crates\\builddiag-checks\\Cargo.toml"
+      }
+    },
+    {
       "check_id": "rust.toolchain_pinning",
       "code": "missing_toolchain",
       "severity": "info",
       "message": "Missing rust-toolchain.toml (or rust-toolchain) at repo root"
+    },
+    {
+      "check_id": "workspace.member_ordering",
+      "code": "members_not_sorted",
+      "severity": "info",
+      "message": "workspace.members is not sorted alphabetically",
+      "location": {
+        "path": "Cargo.toml"
+      }
+    },
+    {
+      "check_id": "workspace.publish_ready",
+      "code": "missing_documentation",
+      "severity": "info",
+      "message": "builddiag-app: missing recommended 'documentation' or 'homepage' field",
+      "location": {
+        "path": "crates\\builddiag-app\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "workspace.publish_ready",
+      "code": "missing_license",
+      "severity": "info",
+      "message": "builddiag-app: missing required 'license' or 'license-file' field for publishing",
+      "location": {
+        "path": "crates\\builddiag-app\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "workspace.publish_ready",
+      "code": "missing_readme",
+      "severity": "info",
+      "message": "builddiag-app: missing recommended 'readme' field",
+      "location": {
+        "path": "crates\\builddiag-app\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "workspace.publish_ready",
+      "code": "missing_repository",
+      "severity": "info",
+      "message": "builddiag-app: missing recommended 'repository' field",
+      "location": {
+        "path": "crates\\builddiag-app\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "workspace.publish_ready",
+      "code": "missing_documentation",
+      "severity": "info",
+      "message": "builddiag-checks: missing recommended 'documentation' or 'homepage' field",
+      "location": {
+        "path": "crates\\builddiag-checks\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "workspace.publish_ready",
+      "code": "missing_license",
+      "severity": "info",
+      "message": "builddiag-checks: missing required 'license' or 'license-file' field for publishing",
+      "location": {
+        "path": "crates\\builddiag-checks\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "workspace.publish_ready",
+      "code": "missing_readme",
+      "severity": "info",
+      "message": "builddiag-checks: missing recommended 'readme' field",
+      "location": {
+        "path": "crates\\builddiag-checks\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "workspace.publish_ready",
+      "code": "missing_repository",
+      "severity": "info",
+      "message": "builddiag-checks: missing recommended 'repository' field",
+      "location": {
+        "path": "crates\\builddiag-checks\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "workspace.publish_ready",
+      "code": "missing_documentation",
+      "severity": "info",
+      "message": "builddiag: missing recommended 'documentation' or 'homepage' field",
+      "location": {
+        "path": "crates\\builddiag-cli\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "workspace.publish_ready",
+      "code": "missing_license",
+      "severity": "info",
+      "message": "builddiag: missing required 'license' or 'license-file' field for publishing",
+      "location": {
+        "path": "crates\\builddiag-cli\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "workspace.publish_ready",
+      "code": "missing_repository",
+      "severity": "info",
+      "message": "builddiag: missing recommended 'repository' field",
+      "location": {
+        "path": "crates\\builddiag-cli\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "workspace.publish_ready",
+      "code": "missing_documentation",
+      "severity": "info",
+      "message": "builddiag-domain: missing recommended 'documentation' or 'homepage' field",
+      "location": {
+        "path": "crates\\builddiag-domain\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "workspace.publish_ready",
+      "code": "missing_license",
+      "severity": "info",
+      "message": "builddiag-domain: missing required 'license' or 'license-file' field for publishing",
+      "location": {
+        "path": "crates\\builddiag-domain\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "workspace.publish_ready",
+      "code": "missing_readme",
+      "severity": "info",
+      "message": "builddiag-domain: missing recommended 'readme' field",
+      "location": {
+        "path": "crates\\builddiag-domain\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "workspace.publish_ready",
+      "code": "missing_repository",
+      "severity": "info",
+      "message": "builddiag-domain: missing recommended 'repository' field",
+      "location": {
+        "path": "crates\\builddiag-domain\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "workspace.publish_ready",
+      "code": "missing_documentation",
+      "severity": "info",
+      "message": "builddiag-render: missing recommended 'documentation' or 'homepage' field",
+      "location": {
+        "path": "crates\\builddiag-render\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "workspace.publish_ready",
+      "code": "missing_license",
+      "severity": "info",
+      "message": "builddiag-render: missing required 'license' or 'license-file' field for publishing",
+      "location": {
+        "path": "crates\\builddiag-render\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "workspace.publish_ready",
+      "code": "missing_readme",
+      "severity": "info",
+      "message": "builddiag-render: missing recommended 'readme' field",
+      "location": {
+        "path": "crates\\builddiag-render\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "workspace.publish_ready",
+      "code": "missing_repository",
+      "severity": "info",
+      "message": "builddiag-render: missing recommended 'repository' field",
+      "location": {
+        "path": "crates\\builddiag-render\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "workspace.publish_ready",
+      "code": "missing_documentation",
+      "severity": "info",
+      "message": "builddiag-repo: missing recommended 'documentation' or 'homepage' field",
+      "location": {
+        "path": "crates\\builddiag-repo\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "workspace.publish_ready",
+      "code": "missing_license",
+      "severity": "info",
+      "message": "builddiag-repo: missing required 'license' or 'license-file' field for publishing",
+      "location": {
+        "path": "crates\\builddiag-repo\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "workspace.publish_ready",
+      "code": "missing_readme",
+      "severity": "info",
+      "message": "builddiag-repo: missing recommended 'readme' field",
+      "location": {
+        "path": "crates\\builddiag-repo\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "workspace.publish_ready",
+      "code": "missing_repository",
+      "severity": "info",
+      "message": "builddiag-repo: missing recommended 'repository' field",
+      "location": {
+        "path": "crates\\builddiag-repo\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "workspace.publish_ready",
+      "code": "missing_documentation",
+      "severity": "info",
+      "message": "builddiag-types: missing recommended 'documentation' or 'homepage' field",
+      "location": {
+        "path": "crates\\builddiag-types\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "workspace.publish_ready",
+      "code": "missing_license",
+      "severity": "info",
+      "message": "builddiag-types: missing required 'license' or 'license-file' field for publishing",
+      "location": {
+        "path": "crates\\builddiag-types\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "workspace.publish_ready",
+      "code": "missing_readme",
+      "severity": "info",
+      "message": "builddiag-types: missing recommended 'readme' field",
+      "location": {
+        "path": "crates\\builddiag-types\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "workspace.publish_ready",
+      "code": "missing_repository",
+      "severity": "info",
+      "message": "builddiag-types: missing recommended 'repository' field",
+      "location": {
+        "path": "crates\\builddiag-types\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "workspace.publish_ready",
+      "code": "missing_documentation",
+      "severity": "info",
+      "message": "depguard: missing recommended 'documentation' or 'homepage' field",
+      "location": {
+        "path": "crates\\depguard\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "workspace.publish_ready",
+      "code": "missing_license",
+      "severity": "info",
+      "message": "depguard: missing required 'license' or 'license-file' field for publishing",
+      "location": {
+        "path": "crates\\depguard\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "workspace.publish_ready",
+      "code": "missing_repository",
+      "severity": "info",
+      "message": "depguard: missing recommended 'repository' field",
+      "location": {
+        "path": "crates\\depguard\\Cargo.toml"
+      }
     }
   ],
   "summary": {
-    "total_findings": 2,
+    "total_findings": 53,
     "by_severity": {
-      "info": 1,
+      "info": 52,
       "warn": 1
     },
     "by_check": {
+      "deps.path_missing_version": 19,
+      "deps.workspace_inheritance": 1,
       "rust.msrv_defined": 1,
-      "rust.toolchain_pinning": 1
+      "rust.toolchain_pinning": 1,
+      "workspace.member_ordering": 1,
+      "workspace.publish_ready": 30
     }
   }
 }

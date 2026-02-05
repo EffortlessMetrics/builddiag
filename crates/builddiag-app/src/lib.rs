@@ -26,7 +26,12 @@ use builddiag_domain::{
     sort_findings_canonical, summarize,
 };
 use builddiag_render::{render_github_annotations, render_markdown};
+#[cfg(feature = "cache")]
+pub use builddiag_repo::CacheConfig;
+#[cfg(not(feature = "cache"))]
 use builddiag_repo::load_repo_state;
+#[cfg(feature = "cache")]
+use builddiag_repo::load_repo_state_cached;
 use builddiag_types::{
     Artifact, Capability, CheckReport, Config, Finding, GitInfo, HostInfo, Report, RunInfo,
     SENSOR_REPORT_SCHEMA_V1, SensorReport, SensorRunInfo, Severity, ToolInfo, Verdict,
@@ -89,6 +94,32 @@ pub struct CheckRun {
     pub exit_code: i32,
 }
 
+/// Run checks and produce a report.
+///
+/// # Arguments
+///
+/// * `root` - Repository root path
+/// * `config` - Build configuration
+/// * `allow_all` - If true, run all checks even in diff-aware mode
+/// * `changed_files` - Optional set of changed files for diff-aware mode
+/// * `cache_config` - Optional cache configuration (requires `cache` feature)
+#[cfg(feature = "cache")]
+pub fn run_check(
+    root: &Utf8Path,
+    config: &Config,
+    allow_all: bool,
+    changed_files: Option<BTreeSet<String>>,
+    cache_config: Option<&CacheConfig>,
+) -> Result<CheckRun> {
+    let start = Utc::now();
+
+    let repo_state = load_repo_state_cached(root, config, changed_files, cache_config)?;
+
+    run_check_inner(root, config, allow_all, repo_state, start)
+}
+
+/// Run checks and produce a report (without caching support).
+#[cfg(not(feature = "cache"))]
 pub fn run_check(
     root: &Utf8Path,
     config: &Config,
@@ -99,6 +130,17 @@ pub fn run_check(
 
     let repo_state = load_repo_state(root, config, changed_files)?;
 
+    run_check_inner(root, config, allow_all, repo_state, start)
+}
+
+/// Inner implementation of run_check shared between cached and non-cached versions.
+fn run_check_inner(
+    root: &Utf8Path,
+    config: &Config,
+    allow_all: bool,
+    repo_state: builddiag_repo::RepoState,
+    start: chrono::DateTime<Utc>,
+) -> Result<CheckRun> {
     // Run checks and sort findings for deterministic output
     let mut checks = run_selected_checks(&repo_state, config, allow_all)?;
     for check in &mut checks {
@@ -396,6 +438,24 @@ pub struct SensorCheckRun {
 ///
 /// This is the main entry point for Cockpit-mode integration, producing
 /// both the native builddiag report and the sensor.report.v1 format.
+#[cfg(feature = "cache")]
+pub fn run_check_with_sensor(
+    root: &Utf8Path,
+    config: &Config,
+    allow_all: bool,
+    changed_files: Option<BTreeSet<String>>,
+    cache_config: Option<&CacheConfig>,
+) -> Result<SensorCheckRun> {
+    let start = Utc::now();
+    let diff_aware_used = changed_files.is_some();
+
+    let repo_state = load_repo_state_cached(root, config, changed_files, cache_config)?;
+
+    run_check_with_sensor_inner(root, config, allow_all, repo_state, start, diff_aware_used)
+}
+
+/// Run checks and produce both builddiag and sensor format reports (without caching).
+#[cfg(not(feature = "cache"))]
 pub fn run_check_with_sensor(
     root: &Utf8Path,
     config: &Config,
@@ -407,6 +467,18 @@ pub fn run_check_with_sensor(
 
     let repo_state = load_repo_state(root, config, changed_files)?;
 
+    run_check_with_sensor_inner(root, config, allow_all, repo_state, start, diff_aware_used)
+}
+
+/// Inner implementation of run_check_with_sensor.
+fn run_check_with_sensor_inner(
+    root: &Utf8Path,
+    config: &Config,
+    allow_all: bool,
+    repo_state: builddiag_repo::RepoState,
+    start: chrono::DateTime<Utc>,
+    diff_aware_used: bool,
+) -> Result<SensorCheckRun> {
     // Determine capability states from repo
     let has_toolchain = repo_state.toolchain.is_some();
     let has_checksums = repo_state.tools_checksums.is_some();

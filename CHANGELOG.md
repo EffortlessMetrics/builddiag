@@ -7,12 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-02-05
+
 ### Added
 - Profile system for check configurations with three presets: `strict`, `team`, and `oss`.
 - `depguard` crate for dependency hygiene checks (wildcard versions, path dependencies, workspace inheritance).
 - Comprehensive documentation: architecture, design, implementation, and integration guides.
 - Markdown verdict snapshots for report rendering.
 - Fuzz testing enhancements with improved coverage.
+- Conformance testing for builddiag output validation.
 
 ### Changed
 - Report structure refactored with updated JSON schemas.
@@ -22,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Updated schemars to version 1.2.1 for compatibility.
 - Improved string handling in `load_workspace` function.
 - CI conditions for mutation and fuzz testing corrected.
+- Removed unused dependencies from depguard crate.
 
 ## [0.1.0] - 2026-01-31
 

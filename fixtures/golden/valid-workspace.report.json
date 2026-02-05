@@ -2,7 +2,7 @@
   "schema": "sensor.report.v1",
   "tool": {
     "name": "builddiag",
-    "version": "0.1.0"
+    "version": "0.2.0"
   },
   "run": {
     "started_at": "2026-02-05T14:25:07.375320200Z",

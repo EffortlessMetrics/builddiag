@@ -36,8 +36,10 @@ use builddiag_types::{
     effective_check_config,
 };
 use globset::{Glob, GlobSet, GlobSetBuilder};
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
 
 /// Documentation for a check, used by the `explain` subcommand.
@@ -224,6 +226,56 @@ pub static CHECK_DOCS: &[CheckDocumentation] = &[
             "unexpected_lockfile_for_library",
         ],
     },
+    CheckDocumentation {
+        id: "workspace.publish_ready",
+        name: "Publish Ready",
+        description: "Validates that publishable crates have required metadata for crates.io. \
+                      Required fields include description and license (or license-file). \
+                      Recommended fields include repository, documentation, and keywords.",
+        help: "Add the missing metadata fields to your Cargo.toml [package] section.",
+        url: Some("https://doc.rust-lang.org/cargo/reference/manifest.html#the-package-section"),
+        codes: &[
+            "missing_description",
+            "missing_license",
+            "missing_repository",
+            "missing_documentation",
+            "missing_readme",
+        ],
+    },
+    CheckDocumentation {
+        id: "rust.edition_deprecations",
+        name: "Edition Deprecations",
+        description: "Warns about deprecated edition features and migration opportunities. \
+                      Older editions may have deprecated syntax or missing modern features.",
+        help: "Consider migrating to a newer Rust edition using `cargo fix --edition`.",
+        url: Some("https://doc.rust-lang.org/edition-guide/"),
+        codes: &["deprecated_edition", "edition_migration_available"],
+    },
+    CheckDocumentation {
+        id: "deps.duplicate_versions",
+        name: "Duplicate Dependency Versions",
+        description: "Detects when the same dependency is specified with different versions \
+                      across workspace members. This can lead to larger binaries and \
+                      potential compatibility issues.",
+        help: "Unify dependency versions using [workspace.dependencies] inheritance.",
+        url: Some(
+            "https://doc.rust-lang.org/cargo/reference/workspaces.html#the-dependencies-table",
+        ),
+        codes: &["duplicate_dependency_version"],
+    },
+    CheckDocumentation {
+        id: "deps.security_advisory",
+        name: "Security Advisory",
+        description: "Checks dependencies against the RustSec advisory database for known \
+                      security vulnerabilities. Requires the 'security' feature to be enabled.",
+        help: "Update affected dependencies to patched versions or review advisories for mitigations.",
+        url: Some("https://rustsec.org/"),
+        codes: &[
+            "security_vulnerability",
+            "security_unmaintained",
+            "security_yanked",
+        ],
+    },
 ];
 
 /// Look up documentation for a check ID or finding code.
@@ -326,91 +378,172 @@ pub const BUILTIN_CHECKS: &[CheckDef] = &[
         default_severity: Severity::Warn,
         default_triggers: &["Cargo.lock", "Cargo.toml"],
     },
+    CheckDef {
+        id: "workspace.publish_ready",
+        default_severity: Severity::Warn,
+        default_triggers: &["Cargo.toml", "**/Cargo.toml"],
+    },
+    CheckDef {
+        id: "rust.edition_deprecations",
+        default_severity: Severity::Info,
+        default_triggers: &["Cargo.toml", "**/Cargo.toml"],
+    },
+    CheckDef {
+        id: "deps.duplicate_versions",
+        default_severity: Severity::Warn,
+        default_triggers: &["Cargo.toml", "**/Cargo.toml", "Cargo.lock"],
+    },
+    CheckDef {
+        id: "deps.security_advisory",
+        default_severity: Severity::Error,
+        default_triggers: &["Cargo.lock", "Cargo.toml"],
+    },
 ];
 
+/// Information needed to run a single check.
+struct CheckTask<'a> {
+    def: &'a CheckDef,
+    effective_severity: Severity,
+    skip_reason: Option<String>,
+}
+
+/// Prepare check tasks by evaluating which checks should run.
+fn prepare_check_tasks<'a>(
+    config: &Config,
+    changed_files: Option<&BTreeSet<String>>,
+    allow_all: bool,
+) -> Vec<CheckTask<'a>> {
+    let overrides = config.check_overrides();
+    let profile = config.profile;
+
+    BUILTIN_CHECKS
+        .iter()
+        .map(|def| {
+            let ov = overrides.get(def.id);
+            let effective = effective_check_config(config, def.id);
+
+            // Check if disabled
+            if !effective.enabled {
+                return CheckTask {
+                    def,
+                    effective_severity: effective.severity,
+                    skip_reason: Some(if ov.is_some() {
+                        "disabled by config".to_string()
+                    } else {
+                        format!("disabled by {} profile", profile)
+                    }),
+                };
+            }
+
+            // Check if triggered by changed files
+            let triggers = effective_triggers(def, ov);
+            let should_run_check = if allow_all {
+                true
+            } else {
+                should_run(changed_files, &triggers)
+            };
+
+            if !should_run_check {
+                return CheckTask {
+                    def,
+                    effective_severity: effective.severity,
+                    skip_reason: Some("diff-aware: no matching changed files".to_string()),
+                };
+            }
+
+            CheckTask {
+                def,
+                effective_severity: effective.severity,
+                skip_reason: None,
+            }
+        })
+        .collect()
+}
+
+/// Execute a single check and return its report.
+fn execute_check(task: &CheckTask, repo: &RepoState, config: &Config) -> Result<CheckReport> {
+    // If the check should be skipped, return a skip report
+    if let Some(reason) = &task.skip_reason {
+        return Ok(CheckReport {
+            id: task.def.id.to_string(),
+            status: CheckStatus::Skip,
+            findings: Vec::new(),
+            skipped_reason: Some(reason.clone()),
+        });
+    }
+
+    let severity = task.effective_severity;
+
+    let mut report = match task.def.id {
+        "rust.msrv_defined" => check_msrv_defined(repo, config, severity)?,
+        "rust.msrv_consistent" => check_msrv_consistent(repo, config, severity)?,
+        "rust.toolchain_pinning" => check_toolchain_pinning(repo, config, severity)?,
+        "rust.toolchain_msrv_relation" => check_toolchain_msrv_relation(repo, config, severity)?,
+        "tools.checksums_file_exists" => check_checksums_file_exists(repo, config, severity)?,
+        "tools.checksums_format" => check_checksums_format(repo, config, severity)?,
+        "tools.checksums_coverage" => check_checksums_coverage(repo, config, severity)?,
+        "tools.checksums_verify_local" => check_checksums_verify_local(repo, config, severity)?,
+        "workspace.resolver_v2" => check_workspace_resolver(repo, config, severity)?,
+        "deps.wildcard_version" => check_deps_wildcard(repo, config, severity)?,
+        "deps.path_missing_version" => check_deps_path_version(repo, config, severity)?,
+        "deps.workspace_inheritance" => check_deps_workspace_inheritance(repo, config, severity)?,
+        "workspace.edition_consistent" => check_edition_consistent(repo, config, severity)?,
+        "workspace.member_ordering" => check_member_ordering(repo, config, severity)?,
+        "deps.lockfile_present" => check_lockfile_present(repo, config, severity)?,
+        "workspace.publish_ready" => check_publish_ready(repo, config, severity)?,
+        "rust.edition_deprecations" => check_edition_deprecations(repo, config, severity)?,
+        "deps.duplicate_versions" => check_duplicate_versions(repo, config, severity)?,
+        "deps.security_advisory" => check_security_advisory(repo, config, severity)?,
+        _ => return Err(anyhow!("unknown check id: {}", task.def.id)),
+    };
+
+    report.status = check_status_from_findings(&report.findings);
+    Ok(report)
+}
+
+/// Run selected checks sequentially (fallback when parallel feature is disabled).
+#[cfg(not(feature = "parallel"))]
 pub fn run_selected_checks(
     repo: &RepoState,
     config: &Config,
     allow_all: bool,
 ) -> Result<Vec<CheckReport>> {
-    let overrides = config.check_overrides();
-    let profile = config.profile;
-    let mut reports = Vec::new();
+    let tasks = prepare_check_tasks(config, repo.changed_files.as_ref(), allow_all);
 
-    for def in BUILTIN_CHECKS {
-        let ov = overrides.get(def.id);
+    let mut reports: Vec<CheckReport> = tasks
+        .iter()
+        .map(|task| execute_check(task, repo, config))
+        .collect::<Result<Vec<_>>>()?;
 
-        // Get effective configuration using the centralized function
-        // This combines profile defaults with any user overrides
-        let effective = effective_check_config(config, def.id);
+    // Sort reports by check ID for deterministic output
+    reports.sort_by(|a, b| a.id.cmp(&b.id));
 
-        if !effective.enabled {
-            reports.push(CheckReport {
-                id: def.id.to_string(),
-                status: CheckStatus::Skip,
-                findings: Vec::new(),
-                skipped_reason: Some(if ov.is_some() {
-                    "disabled by config".to_string()
-                } else {
-                    format!("disabled by {} profile", profile)
-                }),
-            });
-            continue;
-        }
+    Ok(reports)
+}
 
-        let triggers = effective_triggers(def, ov);
-        let should_run = if allow_all {
-            true
-        } else {
-            should_run(repo.changed_files.as_ref(), &triggers)
-        };
+/// Run selected checks in parallel using rayon.
+///
+/// Checks are executed concurrently since they only read repo state and don't modify it.
+/// Results are sorted by check ID after execution to ensure deterministic output.
+#[cfg(feature = "parallel")]
+pub fn run_selected_checks(
+    repo: &RepoState,
+    config: &Config,
+    allow_all: bool,
+) -> Result<Vec<CheckReport>> {
+    let tasks = prepare_check_tasks(config, repo.changed_files.as_ref(), allow_all);
 
-        if !should_run {
-            reports.push(CheckReport {
-                id: def.id.to_string(),
-                status: CheckStatus::Skip,
-                findings: Vec::new(),
-                skipped_reason: Some("diff-aware: no matching changed files".to_string()),
-            });
-            continue;
-        }
+    // Execute checks in parallel
+    let results: Vec<Result<CheckReport>> = tasks
+        .par_iter()
+        .map(|task| execute_check(task, repo, config))
+        .collect();
 
-        let mut report = match def.id {
-            "rust.msrv_defined" => check_msrv_defined(repo, config, effective.severity)?,
-            "rust.msrv_consistent" => check_msrv_consistent(repo, config, effective.severity)?,
-            "rust.toolchain_pinning" => check_toolchain_pinning(repo, config, effective.severity)?,
-            "rust.toolchain_msrv_relation" => {
-                check_toolchain_msrv_relation(repo, config, effective.severity)?
-            }
-            "tools.checksums_file_exists" => {
-                check_checksums_file_exists(repo, config, effective.severity)?
-            }
-            "tools.checksums_format" => check_checksums_format(repo, config, effective.severity)?,
-            "tools.checksums_coverage" => {
-                check_checksums_coverage(repo, config, effective.severity)?
-            }
-            "tools.checksums_verify_local" => {
-                check_checksums_verify_local(repo, config, effective.severity)?
-            }
-            "workspace.resolver_v2" => check_workspace_resolver(repo, config, effective.severity)?,
-            "deps.wildcard_version" => check_deps_wildcard(repo, config, effective.severity)?,
-            "deps.path_missing_version" => {
-                check_deps_path_version(repo, config, effective.severity)?
-            }
-            "deps.workspace_inheritance" => {
-                check_deps_workspace_inheritance(repo, config, effective.severity)?
-            }
-            "workspace.edition_consistent" => {
-                check_edition_consistent(repo, config, effective.severity)?
-            }
-            "workspace.member_ordering" => check_member_ordering(repo, config, effective.severity)?,
-            "deps.lockfile_present" => check_lockfile_present(repo, config, effective.severity)?,
-            _ => return Err(anyhow!("unknown check id: {}", def.id)),
-        };
+    // Collect results, propagating any errors
+    let mut reports: Vec<CheckReport> = results.into_iter().collect::<Result<Vec<_>>>()?;
 
-        report.status = check_status_from_findings(&report.findings);
-        reports.push(report);
-    }
+    // Sort reports by check ID for deterministic output
+    reports.sort_by(|a, b| a.id.cmp(&b.id));
 
     Ok(reports)
 }
@@ -1191,16 +1324,6 @@ fn check_member_ordering(
         });
     }
 
-    // Get member patterns from workspace model if available
-    let Some(ref model) = repo.workspace_model else {
-        return Ok(CheckReport {
-            id: CHECK_ID.to_string(),
-            status: CheckStatus::Skip,
-            findings,
-            skipped_reason: Some("workspace model not available".to_string()),
-        });
-    };
-
     if !config.policy.member_ordering.require_sorted {
         return Ok(CheckReport {
             id: CHECK_ID.to_string(),
@@ -1209,6 +1332,25 @@ fn check_member_ordering(
             skipped_reason: Some("sorting not required by policy".to_string()),
         });
     }
+
+    // Get member patterns from workspace model if available, or compute on-demand
+    let model = if let Some(ref m) = repo.workspace_model {
+        Some(m.clone())
+    } else if let Some(ref cargo_root) = repo.cargo_root {
+        // Lazy compute the workspace model only when this check runs
+        builddiag_repo::discover_workspace(cargo_root).ok()
+    } else {
+        None
+    };
+
+    let Some(model) = model else {
+        return Ok(CheckReport {
+            id: CHECK_ID.to_string(),
+            status: CheckStatus::Skip,
+            findings,
+            skipped_reason: Some("workspace model not available".to_string()),
+        });
+    };
 
     let patterns = &model.member_patterns;
     if patterns.is_empty() {
@@ -1415,10 +1557,390 @@ fn check_lockfile_present(
     })
 }
 
+/// Check that publishable crates have required metadata.
+///
+/// Required fields for crates.io:
+/// - description
+/// - license or license-file
+///
+/// Recommended fields (warn):
+/// - repository
+/// - documentation
+/// - readme
+fn check_publish_ready(
+    repo: &RepoState,
+    _config: &Config,
+    default_sev: Severity,
+) -> Result<CheckReport> {
+    const CHECK_ID: &str = "workspace.publish_ready";
+    let mut findings = Vec::new();
+
+    for m in &repo.workspace.members {
+        let rel = rel_path(&repo.root, &m.manifest_path);
+        let meta = &m.publish_metadata;
+
+        // Skip crates with publish = false
+        if meta.publish_disabled {
+            continue;
+        }
+
+        // Required: description
+        if meta.description.is_none() {
+            findings.push(mk_finding(
+                default_sev,
+                CHECK_ID,
+                "missing_description",
+                format!(
+                    "{}: missing required 'description' field for publishing",
+                    m.name
+                ),
+                Some(rel.clone()),
+                None,
+            ));
+        }
+
+        // Required: license or license-file
+        if meta.license.is_none() && meta.license_file.is_none() {
+            findings.push(mk_finding(
+                default_sev,
+                CHECK_ID,
+                "missing_license",
+                format!(
+                    "{}: missing required 'license' or 'license-file' field for publishing",
+                    m.name
+                ),
+                Some(rel.clone()),
+                None,
+            ));
+        }
+
+        // Recommended: repository (Info level)
+        if meta.repository.is_none() {
+            findings.push(mk_finding(
+                Severity::Info,
+                CHECK_ID,
+                "missing_repository",
+                format!("{}: missing recommended 'repository' field", m.name),
+                Some(rel.clone()),
+                None,
+            ));
+        }
+
+        // Recommended: documentation or homepage (Info level)
+        if meta.documentation.is_none() && meta.homepage.is_none() {
+            findings.push(mk_finding(
+                Severity::Info,
+                CHECK_ID,
+                "missing_documentation",
+                format!(
+                    "{}: missing recommended 'documentation' or 'homepage' field",
+                    m.name
+                ),
+                Some(rel.clone()),
+                None,
+            ));
+        }
+
+        // Recommended: readme (Info level)
+        if meta.readme.is_none() {
+            findings.push(mk_finding(
+                Severity::Info,
+                CHECK_ID,
+                "missing_readme",
+                format!("{}: missing recommended 'readme' field", m.name),
+                Some(rel.clone()),
+                None,
+            ));
+        }
+    }
+
+    Ok(CheckReport {
+        id: CHECK_ID.to_string(),
+        status: check_status_from_findings(&findings),
+        findings,
+        skipped_reason: None,
+    })
+}
+
+/// Check for deprecated edition features and migration opportunities.
+fn check_edition_deprecations(
+    repo: &RepoState,
+    _config: &Config,
+    default_sev: Severity,
+) -> Result<CheckReport> {
+    const CHECK_ID: &str = "rust.edition_deprecations";
+    let mut findings = Vec::new();
+
+    // Current latest stable edition
+    const LATEST_EDITION: &str = "2024";
+
+    // Edition deprecation info
+    let deprecated_editions = [(
+        "2015",
+        "Edition 2015 is outdated; consider migrating to 2021 or later",
+    )];
+
+    // Get workspace edition
+    let workspace_edition = repo.workspace.workspace_edition.as_deref();
+
+    // Check workspace edition
+    if let Some(edition) = workspace_edition {
+        // Check for deprecated editions
+        for (dep_edition, msg) in &deprecated_editions {
+            if edition == *dep_edition {
+                findings.push(mk_finding(
+                    default_sev,
+                    CHECK_ID,
+                    "deprecated_edition",
+                    format!("workspace: {}", msg),
+                    repo.cargo_root.as_ref().map(|p| rel_path(&repo.root, p)),
+                    None,
+                ));
+            }
+        }
+
+        // Check for migration opportunity
+        if edition != LATEST_EDITION && edition != "2021" {
+            findings.push(mk_finding(
+                Severity::Info,
+                CHECK_ID,
+                "edition_migration_available",
+                format!(
+                    "workspace: edition {} can be migrated to {} using `cargo fix --edition`",
+                    edition, LATEST_EDITION
+                ),
+                repo.cargo_root.as_ref().map(|p| rel_path(&repo.root, p)),
+                None,
+            ));
+        }
+    }
+
+    // Check each member for edition issues
+    for m in &repo.workspace.members {
+        let rel = rel_path(&repo.root, &m.manifest_path);
+
+        // Get effective edition
+        let effective_edition = if let Some(ref ed) = m.edition {
+            Some(ed.as_str())
+        } else if m.edition_workspace {
+            workspace_edition
+        } else {
+            None
+        };
+
+        if let Some(edition) = effective_edition {
+            for (dep_edition, msg) in &deprecated_editions {
+                if edition == *dep_edition {
+                    findings.push(mk_finding(
+                        default_sev,
+                        CHECK_ID,
+                        "deprecated_edition",
+                        format!("{}: {}", m.name, msg),
+                        Some(rel.clone()),
+                        None,
+                    ));
+                }
+            }
+        }
+    }
+
+    Ok(CheckReport {
+        id: CHECK_ID.to_string(),
+        status: check_status_from_findings(&findings),
+        findings,
+        skipped_reason: None,
+    })
+}
+
+/// Check for duplicate dependency versions across workspace members.
+fn check_duplicate_versions(
+    repo: &RepoState,
+    _config: &Config,
+    default_sev: Severity,
+) -> Result<CheckReport> {
+    const CHECK_ID: &str = "deps.duplicate_versions";
+    let mut findings = Vec::new();
+
+    // Collect all dependency versions across workspace members
+    // Map: dependency name -> Map<version -> list of crates using it>
+    let mut dep_versions: BTreeMap<String, BTreeMap<String, Vec<String>>> = BTreeMap::new();
+
+    // Parse each member's Cargo.toml for dependencies
+    for m in &repo.workspace.members {
+        let manifest_txt = match fs::read_to_string(&m.manifest_path) {
+            Ok(txt) => txt,
+            Err(_) => continue,
+        };
+        let manifest: toml::Value = match toml::from_str(&manifest_txt) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        // Check all dependency sections
+        for section in ["dependencies", "dev-dependencies", "build-dependencies"] {
+            if let Some(deps) = manifest.get(section).and_then(|d| d.as_table()) {
+                for (dep_name, dep_value) in deps {
+                    // Skip workspace inherited deps
+                    if let Some(table) = dep_value.as_table()
+                        && table
+                            .get("workspace")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false)
+                    {
+                        continue;
+                    }
+
+                    // Extract version
+                    let version = match dep_value {
+                        toml::Value::String(v) => Some(v.clone()),
+                        toml::Value::Table(t) => {
+                            t.get("version").and_then(|v| v.as_str()).map(String::from)
+                        }
+                        _ => None,
+                    };
+
+                    if let Some(ver) = version {
+                        dep_versions
+                            .entry(dep_name.clone())
+                            .or_default()
+                            .entry(ver)
+                            .or_default()
+                            .push(m.name.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    // Find dependencies with multiple versions
+    for (dep_name, versions) in &dep_versions {
+        if versions.len() > 1 {
+            let version_list: Vec<String> = versions
+                .iter()
+                .map(|(ver, crates)| format!("{} (used by: {})", ver, crates.join(", ")))
+                .collect();
+
+            findings.push(mk_finding(
+                default_sev,
+                CHECK_ID,
+                "duplicate_dependency_version",
+                format!(
+                    "dependency '{}' has multiple versions: {}",
+                    dep_name,
+                    version_list.join("; ")
+                ),
+                Some("Cargo.toml".to_string()),
+                None,
+            ));
+        }
+    }
+
+    Ok(CheckReport {
+        id: CHECK_ID.to_string(),
+        status: check_status_from_findings(&findings),
+        findings,
+        skipped_reason: None,
+    })
+}
+
+/// Check dependencies against RustSec advisory database.
+///
+/// This check is a placeholder that requires the `security` feature.
+/// When enabled, it will use the rustsec crate to check for vulnerabilities.
+fn check_security_advisory(
+    repo: &RepoState,
+    _config: &Config,
+    _default_sev: Severity,
+) -> Result<CheckReport> {
+    const CHECK_ID: &str = "deps.security_advisory";
+
+    // Check if Cargo.lock exists (required for security scanning)
+    if !repo.lockfile_exists {
+        return Ok(CheckReport {
+            id: CHECK_ID.to_string(),
+            status: CheckStatus::Skip,
+            findings: Vec::new(),
+            skipped_reason: Some(
+                "Cargo.lock not found; required for security scanning".to_string(),
+            ),
+        });
+    }
+
+    // Placeholder: Security check requires the rustsec crate
+    // For now, return a skip status indicating the feature is not enabled
+    #[cfg(not(feature = "security"))]
+    {
+        Ok(CheckReport {
+            id: CHECK_ID.to_string(),
+            status: CheckStatus::Skip,
+            findings: Vec::new(),
+            skipped_reason: Some(
+                "security advisory check requires the 'security' feature to be enabled".to_string(),
+            ),
+        })
+    }
+
+    #[cfg(feature = "security")]
+    {
+        check_security_advisory_impl(repo, _config, _default_sev)
+    }
+}
+
+/// Implementation of security advisory check when the feature is enabled.
+#[cfg(feature = "security")]
+fn check_security_advisory_impl(
+    repo: &RepoState,
+    _config: &Config,
+    default_sev: Severity,
+) -> Result<CheckReport> {
+    const CHECK_ID: &str = "deps.security_advisory";
+    let mut findings = Vec::new();
+
+    use rustsec::{Database, Lockfile};
+
+    // Load the advisory database
+    let db = Database::fetch().context("failed to fetch RustSec advisory database")?;
+
+    // Load Cargo.lock
+    let lockfile_path = repo.root.join("Cargo.lock");
+    let lockfile = Lockfile::load(&lockfile_path)
+        .with_context(|| format!("failed to load {}", lockfile_path))?;
+
+    // Check for vulnerabilities
+    let vulns = db.vulnerabilities(&lockfile);
+
+    for vuln in vulns.iter() {
+        let advisory = &vuln.advisory;
+        let pkg = &vuln.package;
+
+        findings.push(mk_finding(
+            default_sev,
+            CHECK_ID,
+            "security_vulnerability",
+            format!(
+                "{} {} has security advisory {}: {}",
+                pkg.name, pkg.version, advisory.id, advisory.title
+            ),
+            Some("Cargo.lock".to_string()),
+            None,
+        ));
+    }
+
+    // Note: Unmaintained/yanked warnings are not available in rustsec 0.30 public API
+    // These would require using cargo-audit or a different approach
+
+    Ok(CheckReport {
+        id: CHECK_ID.to_string(),
+        status: check_status_from_findings(&findings),
+        findings,
+        skipped_reason: None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use builddiag_repo::{Member, RepoState, Toolchain, WorkspaceInfo};
+    use builddiag_repo::{Member, PublishMetadata, RepoState, Toolchain, WorkspaceInfo};
     use builddiag_types::{Config, MsrvSource, RelationToMsrv, Severity};
     use camino::Utf8PathBuf;
 
@@ -1488,6 +2010,7 @@ mod tests {
             edition: Some("2021".to_string()),
             edition_workspace: true,
             has_binary_target: false,
+            publish_metadata: PublishMetadata::default(),
         }
     }
 
@@ -2219,5 +2742,253 @@ mod tests {
                 );
             }
         }
+    }
+
+    // =========================================================================
+    // Tests for check_publish_ready
+    // =========================================================================
+
+    /// Helper to create a Member with publish metadata
+    fn mock_member_with_publish(
+        name: &str,
+        description: Option<&str>,
+        license: Option<&str>,
+        repository: Option<&str>,
+        publish_disabled: bool,
+    ) -> Member {
+        Member {
+            name: name.to_string(),
+            manifest_path: Utf8PathBuf::from(format!("/test/repo/crates/{}/Cargo.toml", name)),
+            rust_version: Some("1.70.0".to_string()),
+            rust_version_workspace: false,
+            edition: Some("2021".to_string()),
+            edition_workspace: true,
+            has_binary_target: false,
+            publish_metadata: PublishMetadata {
+                publish_disabled,
+                description: description.map(|s| s.to_string()),
+                license: license.map(|s| s.to_string()),
+                license_file: None,
+                repository: repository.map(|s| s.to_string()),
+                homepage: None,
+                documentation: None,
+                readme: None,
+                keywords: Vec::new(),
+                categories: Vec::new(),
+            },
+        }
+    }
+
+    #[test]
+    fn publish_ready_passes_when_all_required_fields_present() {
+        let members = vec![mock_member_with_publish(
+            "my-crate",
+            Some("A test crate"),
+            Some("MIT"),
+            Some("https://github.com/test/test"),
+            false,
+        )];
+        let repo = mock_repo_with_members(Some("1.70.0"), members);
+        let config = Config::default();
+
+        let report = check_publish_ready(&repo, &config, Severity::Warn).unwrap();
+
+        // Should pass (no errors), but may have info-level recommendations
+        assert!(
+            !report
+                .findings
+                .iter()
+                .any(|f| f.code == "missing_description")
+        );
+        assert!(!report.findings.iter().any(|f| f.code == "missing_license"));
+    }
+
+    #[test]
+    fn publish_ready_fails_when_missing_description() {
+        let members = vec![mock_member_with_publish(
+            "my-crate",
+            None, // missing description
+            Some("MIT"),
+            Some("https://github.com/test/test"),
+            false,
+        )];
+        let repo = mock_repo_with_members(Some("1.70.0"), members);
+        let config = Config::default();
+
+        let report = check_publish_ready(&repo, &config, Severity::Warn).unwrap();
+
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|f| f.code == "missing_description")
+        );
+    }
+
+    #[test]
+    fn publish_ready_fails_when_missing_license() {
+        let members = vec![mock_member_with_publish(
+            "my-crate",
+            Some("A test crate"),
+            None, // missing license
+            Some("https://github.com/test/test"),
+            false,
+        )];
+        let repo = mock_repo_with_members(Some("1.70.0"), members);
+        let config = Config::default();
+
+        let report = check_publish_ready(&repo, &config, Severity::Warn).unwrap();
+
+        assert!(report.findings.iter().any(|f| f.code == "missing_license"));
+    }
+
+    #[test]
+    fn publish_ready_skips_when_publish_disabled() {
+        let members = vec![mock_member_with_publish(
+            "my-crate", None, // missing description
+            None, // missing license
+            None, true, // publish = false
+        )];
+        let repo = mock_repo_with_members(Some("1.70.0"), members);
+        let config = Config::default();
+
+        let report = check_publish_ready(&repo, &config, Severity::Warn).unwrap();
+
+        // Should not have any findings since publish is disabled
+        assert!(report.findings.is_empty());
+    }
+
+    #[test]
+    fn publish_ready_warns_for_missing_repository() {
+        let members = vec![mock_member_with_publish(
+            "my-crate",
+            Some("A test crate"),
+            Some("MIT"),
+            None, // missing repository
+            false,
+        )];
+        let repo = mock_repo_with_members(Some("1.70.0"), members);
+        let config = Config::default();
+
+        let report = check_publish_ready(&repo, &config, Severity::Warn).unwrap();
+
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|f| f.code == "missing_repository")
+        );
+        // The missing_repository should be Info level
+        let finding = report
+            .findings
+            .iter()
+            .find(|f| f.code == "missing_repository")
+            .unwrap();
+        assert_eq!(finding.severity, Severity::Info);
+    }
+
+    // =========================================================================
+    // Tests for check_edition_deprecations
+    // =========================================================================
+
+    #[test]
+    fn edition_deprecations_warns_for_edition_2015() {
+        let mut repo = mock_repo_state();
+        repo.workspace.workspace_edition = Some("2015".to_string());
+        let config = Config::default();
+
+        let report = check_edition_deprecations(&repo, &config, Severity::Warn).unwrap();
+
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|f| f.code == "deprecated_edition")
+        );
+    }
+
+    #[test]
+    fn edition_deprecations_passes_for_edition_2021() {
+        let mut repo = mock_repo_state();
+        repo.workspace.workspace_edition = Some("2021".to_string());
+        let config = Config::default();
+
+        let report = check_edition_deprecations(&repo, &config, Severity::Warn).unwrap();
+
+        // 2021 is not deprecated and not ancient enough for migration warning
+        assert!(
+            !report
+                .findings
+                .iter()
+                .any(|f| f.code == "deprecated_edition")
+        );
+    }
+
+    #[test]
+    fn edition_deprecations_suggests_migration_for_2018() {
+        let mut repo = mock_repo_state();
+        repo.workspace.workspace_edition = Some("2018".to_string());
+        let config = Config::default();
+
+        let report = check_edition_deprecations(&repo, &config, Severity::Warn).unwrap();
+
+        // 2018 is not deprecated but migration is available
+        assert!(
+            !report
+                .findings
+                .iter()
+                .any(|f| f.code == "deprecated_edition")
+        );
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|f| f.code == "edition_migration_available")
+        );
+    }
+
+    // =========================================================================
+    // Tests for check_duplicate_versions
+    // =========================================================================
+
+    #[test]
+    fn duplicate_versions_passes_when_no_workspace() {
+        let repo = mock_repo_state();
+        let config = Config::default();
+
+        let report = check_duplicate_versions(&repo, &config, Severity::Warn).unwrap();
+
+        // No members means no duplicates
+        assert_eq!(report.status, CheckStatus::Pass);
+        assert!(report.findings.is_empty());
+    }
+
+    // =========================================================================
+    // Tests for check_security_advisory
+    // =========================================================================
+
+    #[test]
+    fn security_advisory_skips_when_no_lockfile() {
+        let mut repo = mock_repo_state();
+        repo.lockfile_exists = false;
+        let config = Config::default();
+
+        let report = check_security_advisory(&repo, &config, Severity::Error).unwrap();
+
+        assert_eq!(report.status, CheckStatus::Skip);
+        assert!(report.skipped_reason.is_some());
+        assert!(report.skipped_reason.unwrap().contains("Cargo.lock"));
+    }
+
+    #[test]
+    fn security_advisory_skips_without_feature() {
+        let repo = mock_repo_state();
+        let config = Config::default();
+
+        let report = check_security_advisory(&repo, &config, Severity::Error).unwrap();
+
+        // Without the 'security' feature, check should skip
+        assert_eq!(report.status, CheckStatus::Skip);
+        assert!(report.skipped_reason.is_some());
     }
 }

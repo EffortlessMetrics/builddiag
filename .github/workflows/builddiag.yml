@@ -1,0 +1,182 @@
+# Reusable workflow for running builddiag on Rust repositories
+#
+# Usage in your repository:
+#
+#   jobs:
+#     builddiag:
+#       uses: EffortlessMetrics/builddiag/.github/workflows/builddiag.yml@main
+#       with:
+#         profile: oss
+#         fail_on: error
+#
+# For PR comments, ensure the workflow has write permissions:
+#
+#   permissions:
+#     pull-requests: write
+#
+name: builddiag
+
+on:
+  workflow_call:
+    inputs:
+      root:
+        description: "Repository root path to analyze"
+        required: false
+        default: "."
+        type: string
+      config:
+        description: "Path to builddiag config file (TOML)"
+        required: false
+        type: string
+      profile:
+        description: "Profile preset: oss, team, or strict"
+        required: false
+        default: "oss"
+        type: string
+      fail_on:
+        description: "Exit code threshold: error (default), warn, or never"
+        required: false
+        default: "error"
+        type: string
+      post_comment:
+        description: "Post PR comment with findings (requires pull-requests: write)"
+        required: false
+        default: true
+        type: boolean
+      builddiag_version:
+        description: "Version of builddiag to install (default: latest)"
+        required: false
+        default: "latest"
+        type: string
+    outputs:
+      verdict:
+        description: "Overall verdict: pass, warn, fail, or error"
+        value: ${{ jobs.check.outputs.verdict }}
+      report_path:
+        description: "Path to the JSON report artifact"
+        value: ${{ jobs.check.outputs.report_path }}
+
+jobs:
+  check:
+    name: builddiag check
+    runs-on: ubuntu-latest
+    outputs:
+      verdict: ${{ steps.run.outputs.verdict }}
+      report_path: ${{ steps.run.outputs.report_path }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install builddiag
+        uses: taiki-e/install-action@v2
+        with:
+          tool: builddiag@${{ inputs.builddiag_version }}
+
+      - name: Run builddiag check
+        id: run
+        shell: bash
+        run: |
+          set +e
+
+          # Build command arguments
+          ARGS="check --root ${{ inputs.root }}"
+          ARGS="$ARGS --profile ${{ inputs.profile }}"
+          ARGS="$ARGS --out artifacts/builddiag/report.json"
+          ARGS="$ARGS --md artifacts/builddiag/comment.md"
+          ARGS="$ARGS --annotations github"
+
+          # Add config if specified
+          if [ -n "${{ inputs.config }}" ]; then
+            ARGS="$ARGS --config ${{ inputs.config }}"
+          fi
+
+          # Run builddiag
+          builddiag $ARGS
+          EXIT_CODE=$?
+
+          # Extract verdict from report
+          if [ -f "artifacts/builddiag/report.json" ]; then
+            VERDICT=$(jq -r '.verdict' artifacts/builddiag/report.json)
+          else
+            VERDICT="error"
+          fi
+
+          echo "verdict=$VERDICT" >> "$GITHUB_OUTPUT"
+          echo "report_path=artifacts/builddiag/report.json" >> "$GITHUB_OUTPUT"
+
+          # Determine exit based on fail_on setting
+          FAIL_ON="${{ inputs.fail_on }}"
+
+          if [ "$FAIL_ON" = "never" ]; then
+            exit 0
+          elif [ "$FAIL_ON" = "warn" ]; then
+            if [ "$VERDICT" = "fail" ] || [ "$VERDICT" = "warn" ]; then
+              exit 2
+            fi
+          else
+            # default: fail_on=error
+            if [ "$VERDICT" = "fail" ]; then
+              exit 2
+            fi
+          fi
+
+          exit 0
+
+      - name: Upload report artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: builddiag-report
+          path: |
+            artifacts/builddiag/report.json
+            artifacts/builddiag/comment.md
+          retention-days: 30
+
+      - name: Post PR comment
+        if: inputs.post_comment && github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = 'artifacts/builddiag/comment.md';
+
+            if (!fs.existsSync(path)) {
+              console.log('No comment.md found, skipping PR comment');
+              return;
+            }
+
+            const body = fs.readFileSync(path, 'utf8');
+            const marker = '<!-- builddiag-comment -->';
+            const commentBody = `${marker}\n${body}`;
+
+            // Find existing comment
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const existing = comments.find(c => c.body.includes(marker));
+
+            if (existing) {
+              // Update existing comment
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body: commentBody,
+              });
+              console.log('Updated existing builddiag comment');
+            } else {
+              // Create new comment
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: commentBody,
+              });
+              console.log('Created new builddiag comment');
+            }

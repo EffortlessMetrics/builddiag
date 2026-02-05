@@ -108,6 +108,8 @@ fn build_crate_toml(name: &str, msrv: &Option<MsrvConfig>) -> String {
         r#"[package]
 name = "{}"
 version = "0.1.0"
+description = "Test crate for builddiag"
+license = "MIT"
 "#,
         name
     );

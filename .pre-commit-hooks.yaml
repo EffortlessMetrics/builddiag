@@ -1,0 +1,44 @@
+# Pre-commit hooks for builddiag
+#
+# Usage in your .pre-commit-config.yaml:
+#
+#   repos:
+#     - repo: https://github.com/EffortlessMetrics/builddiag
+#       rev: main  # or a specific version tag
+#       hooks:
+#         - id: builddiag
+#
+# For configuration options, see the hook definitions below.
+
+- id: builddiag
+  name: builddiag
+  description: Check Rust repository build contract (MSRV, toolchain, workspace)
+  entry: builddiag check
+  language: rust
+  types: [toml]
+  files: (Cargo\.toml|rust-toolchain\.toml|builddiag\.toml)$
+  pass_filenames: false
+  stages: [pre-commit, pre-push, manual]
+  require_serial: true
+
+- id: builddiag-strict
+  name: builddiag (strict)
+  description: Check Rust repository build contract with strict profile
+  entry: builddiag check --profile strict
+  language: rust
+  types: [toml]
+  files: (Cargo\.toml|rust-toolchain\.toml|builddiag\.toml)$
+  pass_filenames: false
+  stages: [pre-commit, pre-push, manual]
+  require_serial: true
+
+- id: builddiag-team
+  name: builddiag (team)
+  description: Check Rust repository build contract with team profile
+  entry: builddiag check --profile team
+  language: rust
+  types: [toml]
+  files: (Cargo\.toml|rust-toolchain\.toml|builddiag\.toml)$
+  pass_filenames: false
+  stages: [pre-commit, pre-push, manual]
+  require_serial: true

@@ -9,9 +9,16 @@ description = "Internal repo loading for builddiag (not intended for direct use)
 keywords = ["rust", "build", "validation"]
 categories = ["development-tools"]
 
+[features]
+default = ["cache"]
+cache = ["dep:serde_json", "dep:sha2", "dep:hex"]
+
 [dependencies]
 anyhow.workspace = true
 serde.workspace = true
+serde_json = { workspace = true, optional = true }
+sha2 = { workspace = true, optional = true }
+hex = { workspace = true, optional = true }
 toml.workspace = true
 cargo_metadata.workspace = true
 camino.workspace = true

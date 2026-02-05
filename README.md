@@ -46,6 +46,24 @@ builddiag check \
 
 ### CI Usage (GitHub Actions)
 
+#### Reusable Workflow (Recommended)
+
+The easiest way to integrate builddiag into your CI is using the reusable workflow:
+
+```yaml
+jobs:
+  builddiag:
+    uses: EffortlessMetrics/builddiag/.github/workflows/builddiag.yml@main
+    with:
+      profile: oss        # oss, team, or strict
+      fail_on: error      # error, warn, or never
+      post_comment: true  # Post PR comment with findings
+    permissions:
+      pull-requests: write  # Required for PR comments
+```
+
+#### Manual Setup
+
 ```yaml
 - name: Install builddiag
   uses: taiki-e/install-action@v2
@@ -57,6 +75,75 @@ builddiag check \
       --out artifacts/builddiag/report.json \
       --md artifacts/builddiag/comment.md \
       --annotations github
+```
+
+### Pre-commit Hook
+
+builddiag can be used as a pre-commit hook to validate your build contract before commits:
+
+```yaml
+# .pre-commit-config.yaml
+repos:
+  - repo: https://github.com/EffortlessMetrics/builddiag
+    rev: main  # or a specific version tag
+    hooks:
+      - id: builddiag
+```
+
+Available hook variants:
+
+| Hook ID | Profile | Description |
+|---------|---------|-------------|
+| `builddiag` | oss | Default open-source profile (warn-heavy) |
+| `builddiag-team` | team | Team profile with stronger gating |
+| `builddiag-strict` | strict | Strict profile with maximum enforcement |
+
+The hook triggers on changes to `Cargo.toml`, `rust-toolchain.toml`, or `builddiag.toml`.
+
+Install pre-commit and set up the hooks:
+
+```bash
+pip install pre-commit
+pre-commit install
+```
+
+### IDE Integration
+
+builddiag can output diagnostics in a format compatible with VS Code and other editors:
+
+```bash
+builddiag check --format diagnostics
+```
+
+This outputs findings in JSON Lines format compatible with VS Code's problem matcher. You can configure a VS Code task to run builddiag and display findings in the Problems panel.
+
+Example `.vscode/tasks.json`:
+
+```json
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "builddiag",
+      "type": "shell",
+      "command": "builddiag",
+      "args": ["check", "--format", "diagnostics"],
+      "problemMatcher": {
+        "owner": "builddiag",
+        "fileLocation": ["relative", "${workspaceFolder}"],
+        "pattern": {
+          "regexp": "^(.*):(\\d+):(\\d+):\\s+(error|warning|info):\\s+\\[(.+)\\]\\s+(.*)$",
+          "file": 1,
+          "line": 2,
+          "column": 3,
+          "severity": 4,
+          "code": 5,
+          "message": 6
+        }
+      }
+    }
+  ]
+}
 ```
 
 ## Config

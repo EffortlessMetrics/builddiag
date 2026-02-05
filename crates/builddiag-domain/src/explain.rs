@@ -352,6 +352,157 @@ pub static EXPLAIN_REGISTRY: &[ExplainEntry] = &[
                      used by your project are properly documented and checksummed.",
         links: &[],
     },
+    // ==========================================================================
+    // workspace.publish_ready
+    // ==========================================================================
+    ExplainEntry {
+        check_id: "workspace.publish_ready",
+        code: "missing_description",
+        name: "Missing Description",
+        what_it_means: "The crate is missing a description field which is required for \
+                        publishing to crates.io.",
+        why_it_matters: "crates.io requires a description field. Without it, users cannot \
+                         understand what your crate does from the registry listing.",
+        how_to_fix: "Add `description = \"A brief description of your crate\"` to your \
+                     Cargo.toml [package] section.",
+        links: &["https://doc.rust-lang.org/cargo/reference/manifest.html#the-description-field"],
+    },
+    ExplainEntry {
+        check_id: "workspace.publish_ready",
+        code: "missing_license",
+        name: "Missing License",
+        what_it_means: "The crate is missing both license and license-file fields, which \
+                        is required for publishing to crates.io.",
+        why_it_matters: "crates.io requires license information. Without it, users cannot \
+                         determine if they can legally use your crate.",
+        how_to_fix: "Add `license = \"MIT OR Apache-2.0\"` (or your chosen license) to your \
+                     Cargo.toml [package] section. Use SPDX identifiers.",
+        links: &[
+            "https://doc.rust-lang.org/cargo/reference/manifest.html#the-license-and-license-file-fields",
+        ],
+    },
+    ExplainEntry {
+        check_id: "workspace.publish_ready",
+        code: "missing_repository",
+        name: "Missing Repository",
+        what_it_means: "The crate is missing a repository field. While not required for \
+                        publishing, it is recommended.",
+        why_it_matters: "The repository field helps users find your source code, report \
+                         issues, and contribute. It improves discoverability and trust.",
+        how_to_fix: "Add `repository = \"https://github.com/user/repo\"` to your \
+                     Cargo.toml [package] section.",
+        links: &["https://doc.rust-lang.org/cargo/reference/manifest.html#the-repository-field"],
+    },
+    ExplainEntry {
+        check_id: "workspace.publish_ready",
+        code: "missing_documentation",
+        name: "Missing Documentation Link",
+        what_it_means: "The crate is missing both documentation and homepage fields. \
+                        While not required, at least one is recommended.",
+        why_it_matters: "Documentation links help users find API docs and learn how to \
+                         use your crate. docs.rs is automatically generated but a custom \
+                         link can point to tutorials or guides.",
+        how_to_fix: "Add `documentation = \"https://docs.rs/your-crate\"` or \
+                     `homepage = \"https://your-project.dev\"` to your Cargo.toml.",
+        links: &["https://doc.rust-lang.org/cargo/reference/manifest.html#the-documentation-field"],
+    },
+    ExplainEntry {
+        check_id: "workspace.publish_ready",
+        code: "missing_readme",
+        name: "Missing Readme",
+        what_it_means: "The crate is missing a readme field. While not required, it is \
+                        recommended for better crates.io presentation.",
+        why_it_matters: "The readme is displayed on crates.io and helps users understand \
+                         your crate at a glance. It typically includes usage examples.",
+        how_to_fix: "Add `readme = \"README.md\"` to your Cargo.toml [package] section \
+                     and ensure the file exists.",
+        links: &["https://doc.rust-lang.org/cargo/reference/manifest.html#the-readme-field"],
+    },
+    // ==========================================================================
+    // rust.edition_deprecations
+    // ==========================================================================
+    ExplainEntry {
+        check_id: "rust.edition_deprecations",
+        code: "deprecated_edition",
+        name: "Deprecated Edition",
+        what_it_means: "The crate is using an outdated Rust edition that may have deprecated \
+                        features or syntax.",
+        why_it_matters: "Older editions miss out on ergonomic improvements and may have \
+                         deprecated patterns that will eventually require migration anyway. \
+                         Edition 2015 in particular lacks many modern conveniences.",
+        how_to_fix: "Update your edition field and run `cargo fix --edition` to migrate. \
+                     Consider moving to edition 2021 or later for the best experience.",
+        links: &["https://doc.rust-lang.org/edition-guide/"],
+    },
+    ExplainEntry {
+        check_id: "rust.edition_deprecations",
+        code: "edition_migration_available",
+        name: "Edition Migration Available",
+        what_it_means: "A newer Rust edition is available that your crate could migrate to.",
+        why_it_matters: "Newer editions include ergonomic improvements, new features, and \
+                         better defaults. Staying current reduces future migration burden.",
+        how_to_fix: "Run `cargo fix --edition` to automatically migrate, then update the \
+                     edition field in Cargo.toml.",
+        links: &[
+            "https://doc.rust-lang.org/edition-guide/editions/transitioning-an-existing-project-to-a-new-edition.html",
+        ],
+    },
+    // ==========================================================================
+    // deps.duplicate_versions
+    // ==========================================================================
+    ExplainEntry {
+        check_id: "deps.duplicate_versions",
+        code: "duplicate_dependency_version",
+        name: "Duplicate Dependency Versions",
+        what_it_means: "The same dependency is specified with different versions across \
+                        workspace members.",
+        why_it_matters: "Multiple versions of the same dependency increase binary size, \
+                         compile time, and can cause subtle bugs if types from different \
+                         versions are accidentally mixed.",
+        how_to_fix: "Unify versions by defining the dependency in [workspace.dependencies] \
+                     and using `dep.workspace = true` in member crates. This ensures all \
+                     crates use the same version.",
+        links: &[
+            "https://doc.rust-lang.org/cargo/reference/workspaces.html#the-dependencies-table",
+        ],
+    },
+    // ==========================================================================
+    // deps.security_advisory
+    // ==========================================================================
+    ExplainEntry {
+        check_id: "deps.security_advisory",
+        code: "security_vulnerability",
+        name: "Security Vulnerability",
+        what_it_means: "A dependency has a known security vulnerability listed in the \
+                        RustSec advisory database.",
+        why_it_matters: "Security vulnerabilities can expose your application to attacks. \
+                         Even if your code doesn't trigger the vulnerability, it's best \
+                         practice to update to patched versions.",
+        how_to_fix: "Update the affected dependency to a patched version. Check the \
+                     advisory for specific version requirements and any workarounds.",
+        links: &["https://rustsec.org/"],
+    },
+    ExplainEntry {
+        check_id: "deps.security_advisory",
+        code: "security_unmaintained",
+        name: "Unmaintained Dependency",
+        what_it_means: "A dependency is marked as unmaintained in the RustSec database.",
+        why_it_matters: "Unmaintained crates won't receive security fixes or updates. \
+                         Consider finding an alternative or forking if necessary.",
+        how_to_fix: "Look for maintained alternatives or consider if the dependency is \
+                     still necessary. The advisory may suggest replacements.",
+        links: &["https://rustsec.org/"],
+    },
+    ExplainEntry {
+        check_id: "deps.security_advisory",
+        code: "security_yanked",
+        name: "Yanked Dependency",
+        what_it_means: "A dependency version has been yanked from crates.io.",
+        why_it_matters: "Yanked versions typically have bugs or security issues. While \
+                         existing Cargo.lock files continue to work, new builds may fail.",
+        how_to_fix: "Update to a non-yanked version of the dependency.",
+        links: &["https://doc.rust-lang.org/cargo/commands/cargo-yank.html"],
+    },
 ];
 
 /// Look up an explanation by check ID or finding code.

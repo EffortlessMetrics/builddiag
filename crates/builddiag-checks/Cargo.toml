@@ -9,6 +9,11 @@ description = "Internal checks for builddiag (not intended for direct use)"
 keywords = ["rust", "build", "validation", "lint"]
 categories = ["development-tools"]
 
+[features]
+default = ["parallel"]
+parallel = ["dep:rayon"]
+security = ["dep:rustsec"]
+
 [dependencies]
 anyhow.workspace = true
 globset.workspace = true
@@ -19,6 +24,9 @@ builddiag-domain = { path = "../builddiag-domain" }
 builddiag-repo = { path = "../builddiag-repo" }
 depguard = { path = "../depguard" }
 camino.workspace = true
+rayon = { workspace = true, optional = true }
+rustsec = { workspace = true, optional = true }
+toml.workspace = true
 
 [dev-dependencies]
 proptest = "1.4"

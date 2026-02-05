@@ -14,7 +14,9 @@
 
 use builddiag_checks::run_selected_checks;
 use builddiag_domain::parse_rust_version;
-use builddiag_repo::{Member, RepoState, Toolchain, WorkspaceInfo, maybe_parse_numeric_version};
+use builddiag_repo::{
+    Member, PublishMetadata, RepoState, Toolchain, WorkspaceInfo, maybe_parse_numeric_version,
+};
 use builddiag_types::{CheckStatus, Config, RelationToMsrv, Severity};
 use camino::{Utf8Path, Utf8PathBuf};
 use proptest::prelude::*;
@@ -657,6 +659,7 @@ proptest! {
             edition: Some("2021".to_string()),
             edition_workspace: true,
             has_binary_target: false,
+            publish_metadata: PublishMetadata::default(),
         };
 
         write_file(temp.root(), "crates/test-crate/Cargo.toml", "[package]\nname = \"test-crate\"\nversion = \"0.1.0\"\nedition = \"2021\"\n");
