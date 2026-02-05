@@ -6,7 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
-- No changes yet.
+
+### Added
+- Profile system for check configurations with three presets: `strict`, `team`, and `oss`.
+- `depguard` crate for dependency hygiene checks (wildcard versions, path dependencies, workspace inheritance).
+- Comprehensive documentation: architecture, design, implementation, and integration guides.
+- Markdown verdict snapshots for report rendering.
+- Fuzz testing enhancements with improved coverage.
+
+### Changed
+- Report structure refactored with updated JSON schemas.
+- Test metadata validation now recognizes workspace inheritance patterns.
+
+### Fixed
+- Updated schemars to version 1.2.1 for compatibility.
+- Improved string handling in `load_workspace` function.
+- CI conditions for mutation and fuzz testing corrected.
 
 ## [0.1.0] - 2026-01-31
 

@@ -158,9 +158,13 @@ impl TempRepo {
         let root = Utf8PathBuf::try_from(dir.path().to_path_buf())
             .expect("failed to create utf8 path for temp directory");
 
-        write_file(&root, "Cargo.toml", r#"[workspace]
+        write_file(
+            &root,
+            "Cargo.toml",
+            r#"[workspace]
 resolver = "2"
-"#);
+"#,
+        );
 
         Self { _dir: dir, root }
     }

@@ -192,7 +192,8 @@ fn when_run_check_with_bool_flag(world: &mut BuilddiagWorld, flag: String) {
 fn then_exit_code(world: &mut BuilddiagWorld, expected: i32) {
     let actual = world.exit_code();
     assert_eq!(
-        actual, expected,
+        actual,
+        expected,
         "Expected exit code {} but got {}.\nstdout: {}\nstderr: {}",
         expected,
         actual,
@@ -205,7 +206,8 @@ fn then_exit_code(world: &mut BuilddiagWorld, expected: i32) {
 fn then_check_passes(world: &mut BuilddiagWorld) {
     let code = world.exit_code();
     assert_eq!(
-        code, 0,
+        code,
+        0,
         "Expected check to pass (exit 0) but got exit code {}.\nstdout: {}\nstderr: {}",
         code,
         world.stdout(),
@@ -217,7 +219,8 @@ fn then_check_passes(world: &mut BuilddiagWorld) {
 fn then_check_fails(world: &mut BuilddiagWorld) {
     let code = world.exit_code();
     assert_eq!(
-        code, 2,
+        code,
+        2,
         "Expected check to fail (exit 2) but got exit code {}.\nstdout: {}\nstderr: {}",
         code,
         world.stdout(),
@@ -307,7 +310,9 @@ fn then_report_verdict_is(world: &mut BuilddiagWorld, expected_verdict: String) 
 #[then(expr = "the report should have verdict {string}")]
 fn then_report_verdict(world: &mut BuilddiagWorld, expected_verdict: String) {
     let report = read_report(world);
-    let verdict = report["verdict"].as_str().expect("verdict not found in report");
+    let verdict = report["verdict"]
+        .as_str()
+        .expect("verdict not found in report");
     assert_eq!(
         verdict, expected_verdict,
         "Expected verdict '{}' but got '{}'",
@@ -334,9 +339,7 @@ fn then_report_includes_finding(
     assert!(
         found,
         "Expected finding ({}, {}, {}) not found in report",
-        check_id,
-        code,
-        severity
+        check_id, code, severity
     );
 }
 

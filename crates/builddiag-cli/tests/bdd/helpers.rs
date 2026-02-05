@@ -3,9 +3,9 @@
 //! These helpers are extracted from patterns used in cli_check.rs
 //! to provide reusable workspace creation and file writing utilities.
 
+use assert_cmd::cargo::cargo_bin_cmd;
 use std::fs;
 use std::path::Path;
-use assert_cmd::cargo::cargo_bin_cmd;
 use tempfile::TempDir;
 
 use super::world::{BuilddiagWorld, MsrvConfig, MsrvLocation};
@@ -41,17 +41,17 @@ members = ["crates/a""#,
     workspace_toml.push_str("]\n");
 
     // Add workspace.package if we have workspace-level MSRV
-    if let Some(ref msrv) = world.msrv {
-        if matches!(msrv.location, MsrvLocation::WorkspacePackage) {
-            workspace_toml.push_str(&format!(
-                r#"
+    if let Some(ref msrv) = world.msrv
+        && matches!(msrv.location, MsrvLocation::WorkspacePackage)
+    {
+        workspace_toml.push_str(&format!(
+            r#"
 [workspace.package]
 rust-version = "{}"
 edition = "2021"
 "#,
-                msrv.version
-            ));
-        }
+            msrv.version
+        ));
     }
 
     write_file(dir, "Cargo.toml", &workspace_toml);
@@ -64,7 +64,11 @@ edition = "2021"
     // Create additional crates
     for crate_name in &world.additional_crates {
         let crate_toml = build_crate_toml(crate_name, &world.msrv);
-        write_file(dir, &format!("crates/{}/Cargo.toml", crate_name), &crate_toml);
+        write_file(
+            dir,
+            &format!("crates/{}/Cargo.toml", crate_name),
+            &crate_toml,
+        );
         write_file(dir, &format!("crates/{}/src/lib.rs", crate_name), "");
     }
 
