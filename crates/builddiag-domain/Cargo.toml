@@ -12,6 +12,8 @@ categories = ["development-tools"]
 [dependencies]
 anyhow.workspace = true
 semver.workspace = true
+sha2.workspace = true
+hex.workspace = true
 builddiag-types = { path = "../builddiag-types" }
 
 [dev-dependencies]

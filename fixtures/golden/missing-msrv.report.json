@@ -1,0 +1,92 @@
+{
+  "schema": "sensor.report.v1",
+  "tool": {
+    "name": "builddiag",
+    "version": "0.1.0"
+  },
+  "run": {
+    "started_at": "2026-02-05T14:25:56.212507700Z",
+    "ended_at": "2026-02-05T14:25:56.234952900Z",
+    "duration_ms": 22,
+    "host": {
+      "os": "windows",
+      "arch": "x86_64"
+    },
+    "git": {
+      "commit": "fdc71b35d6652bb7d842719c57517d4be7d4b31b",
+      "branch": "main",
+      "dirty": true
+    },
+    "capabilities": {
+      "checksums": {
+        "status": "unavailable",
+        "reason": "checksums file not found"
+      },
+      "config": {
+        "status": "available"
+      },
+      "diff_aware": {
+        "status": "skipped",
+        "reason": "diff-aware mode not enabled"
+      },
+      "git": {
+        "status": "available"
+      },
+      "toolchain": {
+        "status": "unavailable",
+        "reason": "rust-toolchain.toml not found"
+      }
+    }
+  },
+  "verdict": {
+    "status": "fail",
+    "counts": {
+      "info": 0,
+      "warn": 0,
+      "error": 4,
+      "suppressed": 0
+    },
+    "reasons": [
+      "checks failed: rust.msrv_defined, rust.toolchain_pinning, tools.checksums_file_exists, workspace.resolver_v2"
+    ]
+  },
+  "findings": [
+    {
+      "check_id": "rust.msrv_defined",
+      "code": "missing_msrv",
+      "severity": "error",
+      "message": "Missing workspace/package rust-version (MSRV) in Cargo.toml",
+      "fingerprint": "ea040cee1b551c19",
+      "location": {
+        "path": "Cargo.toml"
+      }
+    },
+    {
+      "check_id": "rust.toolchain_pinning",
+      "code": "missing_toolchain",
+      "severity": "error",
+      "message": "Missing rust-toolchain.toml (or rust-toolchain) at repo root",
+      "fingerprint": "9b1ec2c17a88333b"
+    },
+    {
+      "check_id": "tools.checksums_file_exists",
+      "code": "missing_checksums",
+      "severity": "error",
+      "message": "Missing scripts/tools.sha256",
+      "fingerprint": "06f011a68db1776a",
+      "location": {
+        "path": "scripts/tools.sha256"
+      }
+    },
+    {
+      "check_id": "workspace.resolver_v2",
+      "code": "resolver_not_v2",
+      "severity": "error",
+      "message": "workspace.resolver is None; expected '2'",
+      "fingerprint": "16f2f1fa8152d969",
+      "location": {
+        "path": "Cargo.toml"
+      }
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+[package]
+name = "missing-msrv-fixture"
+version = "0.1.0"
+edition = "2024"
+# No rust-version specified - should trigger rust.msrv_defined error
+
+[dependencies]
+
+[workspace]
+# Empty workspace to prevent inclusion in parent workspace

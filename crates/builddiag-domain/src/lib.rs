@@ -493,6 +493,264 @@ fn compare_location_line(
     }
 }
 
+// =============================================================================
+// Sensor Report Support (sensor.report.v1)
+// =============================================================================
+
+use builddiag_types::{SensorFinding, SensorVerdict, VerdictCounts, VerdictStatus};
+use sha2::{Digest, Sha256};
+
+/// Compute a stable fingerprint for a finding.
+///
+/// The fingerprint is a truncated SHA-256 hash of the finding's identifying fields:
+/// `check_id + code + path + line`. This provides a stable identifier for deduplication
+/// across runs and baselines.
+///
+/// # Stability Guarantees
+///
+/// - Same input always produces the same output
+/// - Fingerprint is deterministic and portable across platforms
+/// - Uses null byte separator to avoid ambiguous concatenation
+///
+/// # Format
+///
+/// Returns a 16-character hex string (first 8 bytes of SHA-256).
+///
+/// # Examples
+///
+/// ```
+/// use builddiag_domain::compute_fingerprint;
+/// use builddiag_types::{Finding, Severity, Location};
+///
+/// let finding = Finding {
+///     check_id: "rust.msrv_defined".to_string(),
+///     code: "missing_msrv".to_string(),
+///     severity: Severity::Error,
+///     message: "Missing rust-version".to_string(),
+///     location: Some(Location {
+///         path: "Cargo.toml".to_string(),
+///         line: Some(1),
+///         col: None,
+///     }),
+/// };
+///
+/// let fp1 = compute_fingerprint(&finding);
+/// let fp2 = compute_fingerprint(&finding);
+/// assert_eq!(fp1, fp2); // Stable
+/// assert_eq!(fp1.len(), 16); // 16 hex chars
+/// ```
+pub fn compute_fingerprint(finding: &Finding) -> String {
+    let path = finding
+        .location
+        .as_ref()
+        .map(|l| l.path.as_str())
+        .unwrap_or("");
+    let line = finding.location.as_ref().and_then(|l| l.line).unwrap_or(0);
+
+    // Use null byte separator to prevent ambiguous concatenation
+    let input = format!("{}\0{}\0{}\0{}", finding.check_id, finding.code, path, line);
+
+    let hash = Sha256::digest(input.as_bytes());
+    // Return first 8 bytes as 16-char hex string
+    hex::encode(&hash[..8])
+}
+
+/// Convert a base Finding to a SensorFinding with computed fingerprint.
+///
+/// This converts the builddiag Finding format to the sensor.report.v1 format,
+/// computing the fingerprint and optionally adding help text and documentation URL.
+///
+/// # Arguments
+///
+/// * `finding` - The base finding to convert
+/// * `help` - Optional help text explaining how to fix the issue
+/// * `url` - Optional URL to detailed documentation
+///
+/// # Examples
+///
+/// ```
+/// use builddiag_domain::finding_to_sensor;
+/// use builddiag_types::{Finding, Severity};
+///
+/// let finding = Finding {
+///     check_id: "rust.msrv_defined".to_string(),
+///     code: "missing_msrv".to_string(),
+///     severity: Severity::Error,
+///     message: "Missing rust-version".to_string(),
+///     location: None,
+/// };
+///
+/// let sensor = finding_to_sensor(&finding, None, None);
+/// assert_eq!(sensor.check_id, "rust.msrv_defined");
+/// assert!(!sensor.fingerprint.is_empty());
+/// ```
+pub fn finding_to_sensor(
+    finding: &Finding,
+    help: Option<String>,
+    url: Option<String>,
+) -> SensorFinding {
+    SensorFinding {
+        check_id: finding.check_id.clone(),
+        code: finding.code.clone(),
+        severity: finding.severity,
+        message: finding.message.clone(),
+        fingerprint: compute_fingerprint(finding),
+        location: finding.location.clone(),
+        help,
+        url,
+        data: None,
+    }
+}
+
+/// Build verdict counts from a slice of findings.
+///
+/// Counts findings by severity level. The `suppressed` count is always 0
+/// as filtering happens at a higher level.
+///
+/// # Examples
+///
+/// ```
+/// use builddiag_domain::build_verdict_counts;
+/// use builddiag_types::{Finding, Severity};
+///
+/// let findings = vec![
+///     Finding {
+///         check_id: "check".to_string(),
+///         code: "code".to_string(),
+///         severity: Severity::Error,
+///         message: "Error".to_string(),
+///         location: None,
+///     },
+///     Finding {
+///         check_id: "check".to_string(),
+///         code: "code".to_string(),
+///         severity: Severity::Warn,
+///         message: "Warning".to_string(),
+///         location: None,
+///     },
+/// ];
+///
+/// let counts = build_verdict_counts(&findings);
+/// assert_eq!(counts.error, 1);
+/// assert_eq!(counts.warn, 1);
+/// assert_eq!(counts.info, 0);
+/// ```
+pub fn build_verdict_counts(findings: &[Finding]) -> VerdictCounts {
+    let mut counts = VerdictCounts::default();
+    for f in findings {
+        match f.severity {
+            Severity::Info => counts.info += 1,
+            Severity::Warn => counts.warn += 1,
+            Severity::Error => counts.error += 1,
+        }
+    }
+    counts
+}
+
+/// Build verdict reasons from check reports.
+///
+/// Returns a list of human-readable reasons explaining why the verdict
+/// is not Pass. Includes check IDs that failed or warned.
+///
+/// # Examples
+///
+/// ```
+/// use builddiag_domain::build_verdict_reasons;
+/// use builddiag_types::{CheckReport, CheckStatus, Verdict};
+///
+/// let checks = vec![
+///     CheckReport {
+///         id: "rust.msrv_defined".to_string(),
+///         status: CheckStatus::Fail,
+///         findings: vec![],
+///         skipped_reason: None,
+///     },
+/// ];
+///
+/// let reasons = build_verdict_reasons(Verdict::Fail, &checks);
+/// assert!(reasons.iter().any(|r| r.contains("rust.msrv_defined")));
+/// ```
+pub fn build_verdict_reasons(verdict: Verdict, checks: &[CheckReport]) -> Vec<String> {
+    let mut reasons = Vec::new();
+
+    match verdict {
+        Verdict::Pass => {}
+        Verdict::Skip => {
+            reasons.push("all checks were skipped".to_string());
+        }
+        Verdict::Error => {
+            reasons.push("internal error occurred".to_string());
+        }
+        Verdict::Warn | Verdict::Fail => {
+            let failed: Vec<_> = checks
+                .iter()
+                .filter(|c| c.status == CheckStatus::Fail)
+                .map(|c| c.id.as_str())
+                .collect();
+            let warned: Vec<_> = checks
+                .iter()
+                .filter(|c| c.status == CheckStatus::Warn)
+                .map(|c| c.id.as_str())
+                .collect();
+
+            if !failed.is_empty() {
+                reasons.push(format!("checks failed: {}", failed.join(", ")));
+            }
+            if !warned.is_empty() {
+                reasons.push(format!("checks warned: {}", warned.join(", ")));
+            }
+        }
+    }
+
+    reasons
+}
+
+/// Build a complete SensorVerdict from a Verdict and check reports.
+///
+/// Combines the verdict status, finding counts, and reasons into the
+/// sensor.report.v1 verdict structure.
+///
+/// # Examples
+///
+/// ```
+/// use builddiag_domain::build_sensor_verdict;
+/// use builddiag_types::{CheckReport, CheckStatus, Finding, Severity, Verdict, VerdictStatus};
+///
+/// let checks = vec![
+///     CheckReport {
+///         id: "rust.msrv_defined".to_string(),
+///         status: CheckStatus::Fail,
+///         findings: vec![Finding {
+///             check_id: "rust.msrv_defined".to_string(),
+///             code: "missing_msrv".to_string(),
+///             severity: Severity::Error,
+///             message: "Missing MSRV".to_string(),
+///             location: None,
+///         }],
+///         skipped_reason: None,
+///     },
+/// ];
+///
+/// let verdict = build_sensor_verdict(Verdict::Fail, &checks);
+/// assert_eq!(verdict.status, VerdictStatus::Fail);
+/// assert_eq!(verdict.counts.error, 1);
+/// assert!(!verdict.reasons.is_empty());
+/// ```
+pub fn build_sensor_verdict(verdict: Verdict, checks: &[CheckReport]) -> SensorVerdict {
+    // Collect all findings from checks
+    let all_findings: Vec<&Finding> = checks.iter().flat_map(|c| c.findings.iter()).collect();
+
+    // Build counts from findings (need to convert refs to owned for count function)
+    let findings_owned: Vec<Finding> = all_findings.into_iter().cloned().collect();
+    let counts = build_verdict_counts(&findings_owned);
+
+    SensorVerdict {
+        status: VerdictStatus::from(verdict),
+        counts,
+        reasons: build_verdict_reasons(verdict, checks),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -709,5 +967,211 @@ mod tests {
 
         sort_findings_canonical(&mut findings);
         assert_eq!(findings, after_first_sort);
+    }
+
+    // ==========================================================================
+    // Sensor report support tests
+    // ==========================================================================
+
+    #[test]
+    fn test_compute_fingerprint_stability() {
+        let finding = make_finding(
+            Severity::Error,
+            "rust.msrv_defined",
+            "missing_msrv",
+            "Missing rust-version",
+            Some("Cargo.toml"),
+            Some(1),
+        );
+
+        let fp1 = compute_fingerprint(&finding);
+        let fp2 = compute_fingerprint(&finding);
+
+        assert_eq!(fp1, fp2, "Fingerprint should be stable");
+        assert_eq!(fp1.len(), 16, "Fingerprint should be 16 hex chars");
+    }
+
+    #[test]
+    fn test_compute_fingerprint_different_findings() {
+        let finding1 = make_finding(
+            Severity::Error,
+            "rust.msrv_defined",
+            "missing_msrv",
+            "Missing rust-version",
+            Some("Cargo.toml"),
+            Some(1),
+        );
+
+        let finding2 = make_finding(
+            Severity::Error,
+            "rust.msrv_defined",
+            "missing_msrv",
+            "Missing rust-version",
+            Some("Cargo.toml"),
+            Some(2), // Different line
+        );
+
+        let fp1 = compute_fingerprint(&finding1);
+        let fp2 = compute_fingerprint(&finding2);
+
+        assert_ne!(
+            fp1, fp2,
+            "Different findings should have different fingerprints"
+        );
+    }
+
+    #[test]
+    fn test_compute_fingerprint_ignores_message() {
+        let finding1 = make_finding(
+            Severity::Error,
+            "check",
+            "code",
+            "Message 1",
+            Some("file.rs"),
+            Some(10),
+        );
+
+        let finding2 = make_finding(
+            Severity::Error,
+            "check",
+            "code",
+            "Message 2", // Different message
+            Some("file.rs"),
+            Some(10),
+        );
+
+        let fp1 = compute_fingerprint(&finding1);
+        let fp2 = compute_fingerprint(&finding2);
+
+        assert_eq!(fp1, fp2, "Message should not affect fingerprint");
+    }
+
+    #[test]
+    fn test_compute_fingerprint_no_location() {
+        let finding = make_finding(Severity::Warn, "check", "code", "msg", None, None);
+
+        let fp = compute_fingerprint(&finding);
+        assert_eq!(fp.len(), 16);
+    }
+
+    #[test]
+    fn test_finding_to_sensor() {
+        let finding = make_finding(
+            Severity::Error,
+            "rust.msrv_defined",
+            "missing_msrv",
+            "Missing rust-version",
+            Some("Cargo.toml"),
+            Some(1),
+        );
+
+        let sensor = finding_to_sensor(
+            &finding,
+            Some("Add rust-version to [package]".to_string()),
+            Some("https://docs.example.com/msrv".to_string()),
+        );
+
+        assert_eq!(sensor.check_id, "rust.msrv_defined");
+        assert_eq!(sensor.code, "missing_msrv");
+        assert_eq!(sensor.severity, Severity::Error);
+        assert!(!sensor.fingerprint.is_empty());
+        assert_eq!(
+            sensor.help,
+            Some("Add rust-version to [package]".to_string())
+        );
+        assert_eq!(
+            sensor.url,
+            Some("https://docs.example.com/msrv".to_string())
+        );
+    }
+
+    #[test]
+    fn test_build_verdict_counts_empty() {
+        let counts = build_verdict_counts(&[]);
+        assert_eq!(counts.info, 0);
+        assert_eq!(counts.warn, 0);
+        assert_eq!(counts.error, 0);
+        assert_eq!(counts.suppressed, 0);
+    }
+
+    #[test]
+    fn test_build_verdict_counts_mixed() {
+        let findings = vec![
+            make_finding(Severity::Info, "c", "x", "m", None, None),
+            make_finding(Severity::Warn, "c", "x", "m", None, None),
+            make_finding(Severity::Warn, "c", "x", "m", None, None),
+            make_finding(Severity::Error, "c", "x", "m", None, None),
+            make_finding(Severity::Error, "c", "x", "m", None, None),
+            make_finding(Severity::Error, "c", "x", "m", None, None),
+        ];
+
+        let counts = build_verdict_counts(&findings);
+        assert_eq!(counts.info, 1);
+        assert_eq!(counts.warn, 2);
+        assert_eq!(counts.error, 3);
+    }
+
+    #[test]
+    fn test_build_verdict_reasons_pass() {
+        let checks = vec![CheckReport {
+            id: "check".to_string(),
+            status: CheckStatus::Pass,
+            findings: vec![],
+            skipped_reason: None,
+        }];
+
+        let reasons = build_verdict_reasons(Verdict::Pass, &checks);
+        assert!(reasons.is_empty());
+    }
+
+    #[test]
+    fn test_build_verdict_reasons_fail() {
+        let checks = vec![
+            CheckReport {
+                id: "rust.msrv_defined".to_string(),
+                status: CheckStatus::Fail,
+                findings: vec![],
+                skipped_reason: None,
+            },
+            CheckReport {
+                id: "rust.toolchain".to_string(),
+                status: CheckStatus::Warn,
+                findings: vec![],
+                skipped_reason: None,
+            },
+        ];
+
+        let reasons = build_verdict_reasons(Verdict::Fail, &checks);
+        assert!(reasons.iter().any(|r| r.contains("rust.msrv_defined")));
+        assert!(reasons.iter().any(|r| r.contains("rust.toolchain")));
+    }
+
+    #[test]
+    fn test_build_verdict_reasons_skip() {
+        let checks = vec![];
+        let reasons = build_verdict_reasons(Verdict::Skip, &checks);
+        assert!(reasons.iter().any(|r| r.contains("skipped")));
+    }
+
+    #[test]
+    fn test_build_sensor_verdict() {
+        let checks = vec![CheckReport {
+            id: "rust.msrv_defined".to_string(),
+            status: CheckStatus::Fail,
+            findings: vec![make_finding(
+                Severity::Error,
+                "rust.msrv_defined",
+                "missing_msrv",
+                "Missing",
+                None,
+                None,
+            )],
+            skipped_reason: None,
+        }];
+
+        let verdict = build_sensor_verdict(Verdict::Fail, &checks);
+        assert_eq!(verdict.status, VerdictStatus::Fail);
+        assert_eq!(verdict.counts.error, 1);
+        assert!(!verdict.reasons.is_empty());
     }
 }

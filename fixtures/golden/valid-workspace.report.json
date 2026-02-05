@@ -1,0 +1,50 @@
+{
+  "schema": "sensor.report.v1",
+  "tool": {
+    "name": "builddiag",
+    "version": "0.1.0"
+  },
+  "run": {
+    "started_at": "2026-02-05T14:25:07.375320200Z",
+    "ended_at": "2026-02-05T14:25:07.398170800Z",
+    "duration_ms": 22,
+    "host": {
+      "os": "windows",
+      "arch": "x86_64"
+    },
+    "git": {
+      "commit": "fdc71b35d6652bb7d842719c57517d4be7d4b31b",
+      "branch": "main",
+      "dirty": true
+    },
+    "capabilities": {
+      "checksums": {
+        "status": "unavailable",
+        "reason": "checksums file not found"
+      },
+      "config": {
+        "status": "available"
+      },
+      "diff_aware": {
+        "status": "skipped",
+        "reason": "diff-aware mode not enabled"
+      },
+      "git": {
+        "status": "available"
+      },
+      "toolchain": {
+        "status": "available"
+      }
+    }
+  },
+  "verdict": {
+    "status": "pass",
+    "counts": {
+      "info": 0,
+      "warn": 0,
+      "error": 0,
+      "suppressed": 0
+    }
+  },
+  "findings": []
+}

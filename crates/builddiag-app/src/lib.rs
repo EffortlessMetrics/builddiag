@@ -21,13 +21,19 @@
 
 use anyhow::{Context, Result, anyhow};
 use builddiag_checks::run_selected_checks;
-use builddiag_domain::{determine_verdict, exit_code_for, sort_findings_canonical, summarize};
+use builddiag_domain::{
+    build_sensor_verdict, determine_verdict, exit_code_for, finding_to_sensor,
+    sort_findings_canonical, summarize,
+};
 use builddiag_render::{render_github_annotations, render_markdown};
 use builddiag_repo::load_repo_state;
-use builddiag_types::{Config, GitInfo, HostInfo, Report, RunInfo, ToolInfo};
+use builddiag_types::{
+    Artifact, Capability, CheckReport, Config, Finding, GitInfo, HostInfo, Report, RunInfo,
+    SENSOR_REPORT_SCHEMA_V1, SensorReport, SensorRunInfo, Severity, ToolInfo, Verdict,
+};
 use camino::Utf8Path;
-use chrono::Utc;
-use std::collections::BTreeSet;
+use chrono::{DateTime, Utc};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::process::Command;
 
@@ -217,6 +223,261 @@ fn get_git_info(root: &Utf8Path) -> Option<GitInfo> {
         commit,
         branch,
         dirty,
+    })
+}
+
+// =============================================================================
+// Sensor Report Support (sensor.report.v1) - Cockpit CI Governance
+// =============================================================================
+
+/// Build capabilities map based on repository state and configuration.
+///
+/// Tracks "No Green By Omission" - explicitly recording what features
+/// were or weren't available during the run.
+///
+/// # Capability Keys
+///
+/// - `git`: Whether git information was available
+/// - `config`: Whether configuration file was loaded
+/// - `toolchain`: Whether rust-toolchain.toml was found
+/// - `checksums`: Whether checksums file was found
+/// - `diff_aware`: Whether diff-aware mode was used
+pub fn build_capabilities(
+    config: &Config,
+    git_info: Option<&GitInfo>,
+    has_toolchain: bool,
+    has_checksums: bool,
+    diff_aware_used: bool,
+) -> BTreeMap<String, Capability> {
+    let mut caps = BTreeMap::new();
+
+    // Git capability
+    if git_info.is_some() {
+        caps.insert("git".to_string(), Capability::available());
+    } else {
+        caps.insert(
+            "git".to_string(),
+            Capability::unavailable("git repository not detected"),
+        );
+    }
+
+    // Config capability (always available since we have defaults)
+    caps.insert("config".to_string(), Capability::available());
+
+    // Toolchain capability
+    if has_toolchain {
+        caps.insert("toolchain".to_string(), Capability::available());
+    } else {
+        caps.insert(
+            "toolchain".to_string(),
+            Capability::unavailable("rust-toolchain.toml not found"),
+        );
+    }
+
+    // Checksums capability
+    if has_checksums {
+        caps.insert("checksums".to_string(), Capability::available());
+    } else if !config.policy.checksums.require_file {
+        caps.insert(
+            "checksums".to_string(),
+            Capability::skipped("checksums not required by config"),
+        );
+    } else {
+        caps.insert(
+            "checksums".to_string(),
+            Capability::unavailable("checksums file not found"),
+        );
+    }
+
+    // Diff-aware capability
+    if diff_aware_used {
+        caps.insert("diff_aware".to_string(), Capability::available());
+    } else if config.defaults.diff_aware {
+        caps.insert(
+            "diff_aware".to_string(),
+            Capability::unavailable("could not compute git diff"),
+        );
+    } else {
+        caps.insert(
+            "diff_aware".to_string(),
+            Capability::skipped("diff-aware mode not enabled"),
+        );
+    }
+
+    caps
+}
+
+/// Convert a builddiag Report to a SensorReport.
+///
+/// Transforms the builddiag-native report format to the sensor.report.v1
+/// format compatible with Cockpit CI governance ecosystem.
+pub fn report_to_sensor(
+    report: &Report,
+    checks: &[CheckReport],
+    capabilities: BTreeMap<String, Capability>,
+    artifacts: Vec<Artifact>,
+) -> SensorReport {
+    // Convert findings to sensor findings with fingerprints
+    let sensor_findings = report
+        .findings
+        .iter()
+        .map(|f| finding_to_sensor(f, None, None))
+        .collect();
+
+    // Build sensor run info with capabilities
+    let sensor_run = report.run.as_ref().map(|run| SensorRunInfo {
+        started_at: run.started_at,
+        ended_at: run.ended_at,
+        duration_ms: run.duration_ms,
+        host: run.host.clone(),
+        git: run.git.clone(),
+        capabilities,
+    });
+
+    SensorReport {
+        schema: SENSOR_REPORT_SCHEMA_V1.to_string(),
+        tool: report.tool.clone(),
+        run: sensor_run,
+        verdict: build_sensor_verdict(report.verdict, checks),
+        findings: sensor_findings,
+        artifacts,
+        data: report.data.clone(),
+    }
+}
+
+/// Create an error receipt when an internal error occurs.
+///
+/// In Cockpit mode, we need to produce a valid report even when the tool
+/// fails internally. This creates a minimal report with the error information.
+pub fn create_error_receipt(started_at: DateTime<Utc>, error: &anyhow::Error) -> Report {
+    let end = Utc::now();
+    let duration_ms = (end - started_at).num_milliseconds().max(0) as u64;
+
+    Report {
+        schema: REPORT_SCHEMA_V1.to_string(),
+        tool: Some(ToolInfo {
+            name: "builddiag".to_string(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+        }),
+        run: Some(RunInfo {
+            started_at,
+            ended_at: Some(end),
+            duration_ms,
+            host: HostInfo {
+                os: std::env::consts::OS.to_string(),
+                arch: std::env::consts::ARCH.to_string(),
+            },
+            git: None,
+        }),
+        verdict: Verdict::Error,
+        findings: vec![Finding {
+            check_id: "builddiag.internal".to_string(),
+            code: "tool_error".to_string(),
+            severity: Severity::Error,
+            message: format!("Internal error: {error:#}"),
+            location: None,
+        }],
+        summary: None,
+        data: None,
+    }
+}
+
+/// Extended check run result that includes sensor format data.
+pub struct SensorCheckRun {
+    /// Standard check run result
+    pub check_run: CheckRun,
+    /// Sensor format report
+    pub sensor_report: SensorReport,
+    /// Check reports for verdict building
+    pub checks: Vec<CheckReport>,
+}
+
+/// Run checks and produce both builddiag and sensor format reports.
+///
+/// This is the main entry point for Cockpit-mode integration, producing
+/// both the native builddiag report and the sensor.report.v1 format.
+pub fn run_check_with_sensor(
+    root: &Utf8Path,
+    config: &Config,
+    allow_all: bool,
+    changed_files: Option<BTreeSet<String>>,
+) -> Result<SensorCheckRun> {
+    let start = Utc::now();
+    let diff_aware_used = changed_files.is_some();
+
+    let repo_state = load_repo_state(root, config, changed_files)?;
+
+    // Determine capability states from repo
+    let has_toolchain = repo_state.toolchain.is_some();
+    let has_checksums = repo_state.tools_checksums.is_some();
+
+    // Run checks and sort findings for deterministic output
+    let mut checks = run_selected_checks(&repo_state, config, allow_all)?;
+    for check in &mut checks {
+        sort_findings_canonical(&mut check.findings);
+    }
+
+    // Flatten findings from all check reports
+    let mut findings = Vec::new();
+    for check in &checks {
+        findings.extend(check.findings.clone());
+    }
+    sort_findings_canonical(&mut findings);
+
+    let summary = summarize(&checks);
+    let verdict = determine_verdict(&checks);
+    let end = Utc::now();
+    let duration_ms = (end - start).num_milliseconds().max(0) as u64;
+
+    // Get git info if available
+    let git_info = get_git_info(root);
+
+    let report = Report {
+        schema: REPORT_SCHEMA_V1.to_string(),
+        tool: Some(ToolInfo {
+            name: "builddiag".to_string(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+        }),
+        run: Some(RunInfo {
+            started_at: start,
+            ended_at: Some(end),
+            duration_ms,
+            host: HostInfo {
+                os: std::env::consts::OS.to_string(),
+                arch: std::env::consts::ARCH.to_string(),
+            },
+            git: git_info.clone(),
+        }),
+        verdict,
+        findings,
+        summary: Some(summary),
+        data: None,
+    };
+
+    let markdown = render_markdown(&report);
+    let annotations = render_github_annotations(&report);
+    let exit_code = exit_code_for(verdict, config.defaults.fail_on);
+
+    // Build capabilities and sensor report
+    let capabilities = build_capabilities(
+        config,
+        git_info.as_ref(),
+        has_toolchain,
+        has_checksums,
+        diff_aware_used,
+    );
+
+    let sensor_report = report_to_sensor(&report, &checks, capabilities, vec![]);
+
+    Ok(SensorCheckRun {
+        check_run: CheckRun {
+            report,
+            markdown,
+            annotations,
+            exit_code,
+        },
+        sensor_report,
+        checks,
     })
 }
 
@@ -636,6 +897,193 @@ diff_aware = "yes"
                 read_content, content,
                 "unicode content should match exactly"
             );
+        }
+    }
+
+    /// Tests for sensor report support functions
+    mod sensor_support_tests {
+        use super::*;
+        use builddiag_types::{CapabilityStatus, CheckStatus, Location, Summary, VerdictStatus};
+        use std::collections::BTreeMap;
+
+        #[test]
+        fn build_capabilities_with_all_available() {
+            let config = Config::default();
+            let git = GitInfo {
+                commit: "abc123".to_string(),
+                branch: Some("main".to_string()),
+                dirty: false,
+            };
+
+            let caps = build_capabilities(&config, Some(&git), true, true, true);
+
+            assert_eq!(caps.get("git").unwrap().status, CapabilityStatus::Available);
+            assert_eq!(
+                caps.get("config").unwrap().status,
+                CapabilityStatus::Available
+            );
+            assert_eq!(
+                caps.get("toolchain").unwrap().status,
+                CapabilityStatus::Available
+            );
+            assert_eq!(
+                caps.get("checksums").unwrap().status,
+                CapabilityStatus::Available
+            );
+            assert_eq!(
+                caps.get("diff_aware").unwrap().status,
+                CapabilityStatus::Available
+            );
+        }
+
+        #[test]
+        fn build_capabilities_with_none_available() {
+            let mut config = Config::default();
+            config.policy.checksums.require_file = true;
+            config.defaults.diff_aware = true;
+
+            let caps = build_capabilities(&config, None, false, false, false);
+
+            assert_eq!(
+                caps.get("git").unwrap().status,
+                CapabilityStatus::Unavailable
+            );
+            assert!(caps.get("git").unwrap().reason.is_some());
+
+            assert_eq!(
+                caps.get("toolchain").unwrap().status,
+                CapabilityStatus::Unavailable
+            );
+            assert_eq!(
+                caps.get("checksums").unwrap().status,
+                CapabilityStatus::Unavailable
+            );
+            assert_eq!(
+                caps.get("diff_aware").unwrap().status,
+                CapabilityStatus::Unavailable
+            );
+        }
+
+        #[test]
+        fn build_capabilities_with_skipped() {
+            let mut config = Config::default();
+            config.policy.checksums.require_file = false;
+            config.defaults.diff_aware = false;
+
+            let caps = build_capabilities(&config, None, false, false, false);
+
+            assert_eq!(
+                caps.get("checksums").unwrap().status,
+                CapabilityStatus::Skipped
+            );
+            assert_eq!(
+                caps.get("diff_aware").unwrap().status,
+                CapabilityStatus::Skipped
+            );
+        }
+
+        #[test]
+        fn create_error_receipt_creates_valid_report() {
+            let start = Utc::now();
+            let error = anyhow!("Test error message");
+
+            let receipt = create_error_receipt(start, &error);
+
+            assert_eq!(receipt.schema, REPORT_SCHEMA_V1);
+            assert_eq!(receipt.verdict, Verdict::Error);
+            assert_eq!(receipt.findings.len(), 1);
+            assert_eq!(receipt.findings[0].check_id, "builddiag.internal");
+            assert_eq!(receipt.findings[0].code, "tool_error");
+            assert_eq!(receipt.findings[0].severity, Severity::Error);
+            assert!(receipt.findings[0].message.contains("Test error message"));
+            assert!(receipt.tool.is_some());
+            assert!(receipt.run.is_some());
+        }
+
+        #[test]
+        fn report_to_sensor_converts_correctly() {
+            let report = Report {
+                schema: REPORT_SCHEMA_V1.to_string(),
+                tool: Some(ToolInfo {
+                    name: "builddiag".to_string(),
+                    version: "0.1.0".to_string(),
+                }),
+                run: Some(RunInfo {
+                    started_at: Utc::now(),
+                    ended_at: Some(Utc::now()),
+                    duration_ms: 100,
+                    host: HostInfo {
+                        os: "linux".to_string(),
+                        arch: "x86_64".to_string(),
+                    },
+                    git: Some(GitInfo {
+                        commit: "abc123".to_string(),
+                        branch: Some("main".to_string()),
+                        dirty: false,
+                    }),
+                }),
+                verdict: Verdict::Warn,
+                findings: vec![Finding {
+                    check_id: "test.check".to_string(),
+                    code: "test_code".to_string(),
+                    severity: Severity::Warn,
+                    message: "Test warning".to_string(),
+                    location: Some(Location {
+                        path: "file.rs".to_string(),
+                        line: Some(10),
+                        col: None,
+                    }),
+                }],
+                summary: Some(Summary {
+                    total_findings: 1,
+                    by_severity: BTreeMap::new(),
+                    by_check: BTreeMap::new(),
+                }),
+                data: None,
+            };
+
+            let checks = vec![CheckReport {
+                id: "test.check".to_string(),
+                status: CheckStatus::Warn,
+                findings: report.findings.clone(),
+                skipped_reason: None,
+            }];
+
+            let mut caps = BTreeMap::new();
+            caps.insert("git".to_string(), Capability::available());
+
+            let sensor = report_to_sensor(&report, &checks, caps, vec![]);
+
+            assert_eq!(sensor.schema, SENSOR_REPORT_SCHEMA_V1);
+            assert_eq!(sensor.verdict.status, VerdictStatus::Warn);
+            assert_eq!(sensor.findings.len(), 1);
+            assert!(!sensor.findings[0].fingerprint.is_empty());
+            assert!(sensor.run.is_some());
+            assert!(!sensor.run.as_ref().unwrap().capabilities.is_empty());
+        }
+
+        #[test]
+        fn report_to_sensor_includes_artifacts() {
+            let report = Report {
+                schema: REPORT_SCHEMA_V1.to_string(),
+                tool: None,
+                run: None,
+                verdict: Verdict::Pass,
+                findings: vec![],
+                summary: None,
+                data: None,
+            };
+
+            let artifacts = vec![Artifact {
+                name: "markdown".to_string(),
+                path: "comment.md".to_string(),
+                mime_type: Some("text/markdown".to_string()),
+            }];
+
+            let sensor = report_to_sensor(&report, &[], BTreeMap::new(), artifacts);
+
+            assert_eq!(sensor.artifacts.len(), 1);
+            assert_eq!(sensor.artifacts[0].name, "markdown");
         }
     }
 }

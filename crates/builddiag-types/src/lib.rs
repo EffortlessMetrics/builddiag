@@ -9,6 +9,16 @@
 //! - [`Severity`] - Finding severity levels (Info, Warn, Error)
 //! - [`Verdict`] - Overall verdict (Pass, Warn, Fail, Error)
 //!
+//! # Sensor Report Schema (sensor.report.v1)
+//!
+//! The [`SensorReport`] type provides the Cockpit CI governance envelope format:
+//! - [`SensorReport`] - Cockpit-compatible report with capabilities and structured verdict
+//! - [`SensorVerdict`] - Structured verdict with status, counts, and reasons
+//! - [`VerdictStatus`] - 4-value status: Pass, Warn, Fail, Skip
+//! - [`VerdictCounts`] - Counts by severity including suppressed
+//! - [`Capability`] - Capability status for "No Green By Omission"
+//! - [`SensorFinding`] - Extended finding with fingerprint, help, and url
+//!
 //! # Report Structure (builddiag.report.v1)
 //!
 //! The [`Report`] type is the primary output of builddiag. It contains:
@@ -359,6 +369,246 @@ pub struct Report {
 impl Report {
     /// The schema identifier for builddiag.report.v1.
     pub const SCHEMA_V1: &'static str = "builddiag.report.v1";
+}
+
+// =============================================================================
+// Sensor Report Schema Types (sensor.report.v1) - Cockpit CI Governance
+// =============================================================================
+
+/// The schema identifier for sensor.report.v1.
+pub const SENSOR_REPORT_SCHEMA_V1: &str = "sensor.report.v1";
+
+/// Status of a capability for "No Green By Omission" tracking.
+///
+/// Capabilities track whether features like git integration, config loading,
+/// or toolchain detection were available during the run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum CapabilityStatus {
+    /// Capability was available and used.
+    Available,
+    /// Capability was not available (e.g., git not found).
+    Unavailable,
+    /// Capability was available but skipped (e.g., by config).
+    Skipped,
+}
+
+/// A capability status with optional reason for non-availability.
+///
+/// Used to track "No Green By Omission" - ensuring the report explicitly
+/// states what features were or weren't available during the run.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Capability {
+    /// Status of this capability.
+    pub status: CapabilityStatus,
+    /// Reason for unavailability or skip, if applicable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+impl Capability {
+    /// Create an available capability.
+    pub fn available() -> Self {
+        Self {
+            status: CapabilityStatus::Available,
+            reason: None,
+        }
+    }
+
+    /// Create an unavailable capability with a reason.
+    pub fn unavailable(reason: impl Into<String>) -> Self {
+        Self {
+            status: CapabilityStatus::Unavailable,
+            reason: Some(reason.into()),
+        }
+    }
+
+    /// Create a skipped capability with a reason.
+    pub fn skipped(reason: impl Into<String>) -> Self {
+        Self {
+            status: CapabilityStatus::Skipped,
+            reason: Some(reason.into()),
+        }
+    }
+}
+
+/// Counts of findings by severity for the sensor verdict.
+///
+/// Includes suppressed count for findings that were filtered out
+/// by configuration or baseline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+pub struct VerdictCounts {
+    /// Number of informational findings.
+    pub info: usize,
+    /// Number of warning findings.
+    pub warn: usize,
+    /// Number of error findings.
+    pub error: usize,
+    /// Number of suppressed findings (filtered by config/baseline).
+    pub suppressed: usize,
+}
+
+/// Verdict status for sensor reports (4 values).
+///
+/// Maps the 5-value Verdict to 4 values by collapsing Error into Fail.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum VerdictStatus {
+    /// All checks passed with no findings affecting the verdict.
+    Pass,
+    /// Some checks produced warnings.
+    Warn,
+    /// One or more checks failed (includes internal errors).
+    Fail,
+    /// All checks were skipped (no meaningful result).
+    Skip,
+}
+
+impl From<Verdict> for VerdictStatus {
+    fn from(verdict: Verdict) -> Self {
+        match verdict {
+            Verdict::Pass => VerdictStatus::Pass,
+            Verdict::Warn => VerdictStatus::Warn,
+            Verdict::Fail | Verdict::Error => VerdictStatus::Fail,
+            Verdict::Skip => VerdictStatus::Skip,
+        }
+    }
+}
+
+/// Structured verdict for sensor reports.
+///
+/// Provides more detail than a simple status enum:
+/// - `status`: The overall verdict (Pass/Warn/Fail/Skip)
+/// - `counts`: Breakdown of findings by severity
+/// - `reasons`: Human-readable reasons for non-pass verdicts
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SensorVerdict {
+    /// Overall verdict status.
+    pub status: VerdictStatus,
+    /// Counts of findings by severity.
+    pub counts: VerdictCounts,
+    /// Reasons explaining the verdict (for non-pass statuses).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reasons: Vec<String>,
+}
+
+impl Default for SensorVerdict {
+    fn default() -> Self {
+        Self {
+            status: VerdictStatus::Pass,
+            counts: VerdictCounts::default(),
+            reasons: Vec::new(),
+        }
+    }
+}
+
+/// Extended finding with fingerprint for deduplication.
+///
+/// Extends the base Finding with:
+/// - `fingerprint`: Stable hash for deduplication across runs
+/// - `help`: Optional help text from check documentation
+/// - `url`: Optional URL to detailed documentation
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SensorFinding {
+    /// Identifier of the check that produced this finding.
+    pub check_id: String,
+    /// Machine-readable code identifying the type of finding.
+    pub code: String,
+    /// Severity level of this finding.
+    pub severity: Severity,
+    /// Human-readable description of the finding.
+    pub message: String,
+    /// Stable fingerprint for deduplication (sha256 of check_id+code+path+line).
+    pub fingerprint: String,
+    /// File location where the finding was detected, if applicable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub location: Option<Location>,
+    /// Help text explaining how to fix the issue.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub help: Option<String>,
+    /// URL to detailed documentation for this finding type.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// Optional structured data for this finding.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<serde_json::Value>,
+}
+
+/// Run information for sensor reports with capabilities.
+///
+/// Extends RunInfo with a capabilities map for "No Green By Omission" tracking.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SensorRunInfo {
+    /// Timestamp when the run started (ISO 8601 format).
+    pub started_at: DateTime<Utc>,
+    /// Timestamp when the run completed, if finished (ISO 8601 format).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ended_at: Option<DateTime<Utc>>,
+    /// Duration of the run in milliseconds.
+    pub duration_ms: u64,
+    /// Information about the host machine.
+    pub host: HostInfo,
+    /// Git repository information, if available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git: Option<GitInfo>,
+    /// Capabilities map tracking feature availability.
+    /// Keys: git, config, toolchain, checksums, diff_aware
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub capabilities: BTreeMap<String, Capability>,
+}
+
+/// Artifact reference for sensor reports.
+///
+/// References additional output files produced by the sensor.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Artifact {
+    /// Name/type of the artifact (e.g., "markdown", "sarif").
+    pub name: String,
+    /// Path to the artifact file (relative to report).
+    pub path: String,
+    /// MIME type of the artifact.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+}
+
+/// The main sensor report output following sensor.report.v1 schema.
+///
+/// This format is compatible with the Cockpit CI governance ecosystem.
+/// It extends the builddiag report format with:
+/// - Structured verdict with counts and reasons
+/// - Capabilities for "No Green By Omission"
+/// - Fingerprinted findings for deduplication
+/// - Artifact references
+///
+/// # Schema Version
+///
+/// This report follows the `sensor.report.v1` schema.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SensorReport {
+    /// Schema identifier for this report format.
+    /// Always "sensor.report.v1" for this version.
+    pub schema: String,
+    /// Information about the tool that generated this report.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool: Option<ToolInfo>,
+    /// Information about this execution run, including capabilities.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run: Option<SensorRunInfo>,
+    /// Structured verdict with status, counts, and reasons.
+    pub verdict: SensorVerdict,
+    /// All findings with fingerprints for deduplication.
+    pub findings: Vec<SensorFinding>,
+    /// References to additional artifacts produced.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub artifacts: Vec<Artifact>,
+    /// Optional arbitrary report-level metadata for downstream tooling.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<serde_json::Value>,
+}
+
+impl SensorReport {
+    /// The schema identifier for sensor.report.v1.
+    pub const SCHEMA_V1: &'static str = SENSOR_REPORT_SCHEMA_V1;
 }
 
 // -----------------
@@ -2189,6 +2439,160 @@ mod tests {
             let effective = effective_check_config(&config, "rust.msrv_defined");
             assert!(effective.enabled);
             assert_eq!(effective.severity, Severity::Warn); // Profile default
+        }
+    }
+
+    /// Tests for sensor.report.v1 types
+    /// _Requirements: Cockpit CI governance integration_
+    mod sensor_report_tests {
+        use super::*;
+
+        #[test]
+        fn capability_available() {
+            let cap = Capability::available();
+            assert_eq!(cap.status, CapabilityStatus::Available);
+            assert!(cap.reason.is_none());
+        }
+
+        #[test]
+        fn capability_unavailable() {
+            let cap = Capability::unavailable("git not found");
+            assert_eq!(cap.status, CapabilityStatus::Unavailable);
+            assert_eq!(cap.reason, Some("git not found".to_string()));
+        }
+
+        #[test]
+        fn capability_skipped() {
+            let cap = Capability::skipped("disabled by config");
+            assert_eq!(cap.status, CapabilityStatus::Skipped);
+            assert_eq!(cap.reason, Some("disabled by config".to_string()));
+        }
+
+        #[test]
+        fn verdict_counts_default() {
+            let counts = VerdictCounts::default();
+            assert_eq!(counts.info, 0);
+            assert_eq!(counts.warn, 0);
+            assert_eq!(counts.error, 0);
+            assert_eq!(counts.suppressed, 0);
+        }
+
+        #[test]
+        fn verdict_status_from_verdict() {
+            assert_eq!(VerdictStatus::from(Verdict::Pass), VerdictStatus::Pass);
+            assert_eq!(VerdictStatus::from(Verdict::Warn), VerdictStatus::Warn);
+            assert_eq!(VerdictStatus::from(Verdict::Fail), VerdictStatus::Fail);
+            assert_eq!(VerdictStatus::from(Verdict::Error), VerdictStatus::Fail);
+            assert_eq!(VerdictStatus::from(Verdict::Skip), VerdictStatus::Skip);
+        }
+
+        #[test]
+        fn sensor_verdict_default() {
+            let verdict = SensorVerdict::default();
+            assert_eq!(verdict.status, VerdictStatus::Pass);
+            assert_eq!(verdict.counts, VerdictCounts::default());
+            assert!(verdict.reasons.is_empty());
+        }
+
+        #[test]
+        fn sensor_finding_construction() {
+            let finding = SensorFinding {
+                check_id: "rust.msrv_defined".to_string(),
+                code: "missing_msrv".to_string(),
+                severity: Severity::Error,
+                message: "Missing rust-version".to_string(),
+                fingerprint: "abc123".to_string(),
+                location: Some(Location {
+                    path: "Cargo.toml".to_string(),
+                    line: Some(1),
+                    col: None,
+                }),
+                help: Some("Add rust-version to [package]".to_string()),
+                url: Some("https://docs.example.com/msrv".to_string()),
+                data: None,
+            };
+
+            assert_eq!(finding.check_id, "rust.msrv_defined");
+            assert_eq!(finding.fingerprint, "abc123");
+            assert!(finding.help.is_some());
+            assert!(finding.url.is_some());
+        }
+
+        #[test]
+        fn sensor_report_schema_constant() {
+            assert_eq!(SensorReport::SCHEMA_V1, "sensor.report.v1");
+            assert_eq!(SENSOR_REPORT_SCHEMA_V1, "sensor.report.v1");
+        }
+
+        #[test]
+        fn artifact_construction() {
+            let artifact = Artifact {
+                name: "markdown".to_string(),
+                path: "comment.md".to_string(),
+                mime_type: Some("text/markdown".to_string()),
+            };
+
+            assert_eq!(artifact.name, "markdown");
+            assert_eq!(artifact.path, "comment.md");
+            assert_eq!(artifact.mime_type, Some("text/markdown".to_string()));
+        }
+
+        #[test]
+        fn sensor_report_minimal() {
+            let report = SensorReport {
+                schema: SensorReport::SCHEMA_V1.to_string(),
+                tool: None,
+                run: None,
+                verdict: SensorVerdict::default(),
+                findings: vec![],
+                artifacts: vec![],
+                data: None,
+            };
+
+            assert_eq!(report.schema, "sensor.report.v1");
+            assert!(report.findings.is_empty());
+        }
+
+        #[test]
+        fn sensor_report_serialization_roundtrip() {
+            let report = SensorReport {
+                schema: SensorReport::SCHEMA_V1.to_string(),
+                tool: Some(ToolInfo {
+                    name: "builddiag".to_string(),
+                    version: "0.1.0".to_string(),
+                }),
+                run: None,
+                verdict: SensorVerdict {
+                    status: VerdictStatus::Warn,
+                    counts: VerdictCounts {
+                        info: 1,
+                        warn: 2,
+                        error: 0,
+                        suppressed: 0,
+                    },
+                    reasons: vec!["2 warnings found".to_string()],
+                },
+                findings: vec![SensorFinding {
+                    check_id: "test".to_string(),
+                    code: "test_code".to_string(),
+                    severity: Severity::Warn,
+                    message: "Test warning".to_string(),
+                    fingerprint: "fingerprint123".to_string(),
+                    location: None,
+                    help: None,
+                    url: None,
+                    data: None,
+                }],
+                artifacts: vec![],
+                data: None,
+            };
+
+            let json = serde_json::to_string(&report).unwrap();
+            let parsed: SensorReport = serde_json::from_str(&json).unwrap();
+
+            assert_eq!(parsed.schema, report.schema);
+            assert_eq!(parsed.verdict.status, VerdictStatus::Warn);
+            assert_eq!(parsed.findings.len(), 1);
         }
     }
 }

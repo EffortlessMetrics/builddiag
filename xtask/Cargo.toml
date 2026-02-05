@@ -12,8 +12,10 @@ schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 camino.workspace = true
+tempfile.workspace = true
 builddiag-types = { path = "../crates/builddiag-types" }
 toml.workspace = true
+jsonschema = "0.27"
 
 [dev-dependencies]
 proptest.workspace = true

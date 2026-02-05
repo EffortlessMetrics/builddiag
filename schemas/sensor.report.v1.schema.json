@@ -1,0 +1,438 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SensorReport",
+  "description": "The main sensor report output following sensor.report.v1 schema.\n\nThis format is compatible with the Cockpit CI governance ecosystem.\nIt extends the builddiag report format with:\n- Structured verdict with counts and reasons\n- Capabilities for \"No Green By Omission\"\n- Fingerprinted findings for deduplication\n- Artifact references\n\n# Schema Version\n\nThis report follows the `sensor.report.v1` schema.",
+  "type": "object",
+  "properties": {
+    "artifacts": {
+      "description": "References to additional artifacts produced.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Artifact"
+      }
+    },
+    "data": {
+      "description": "Optional arbitrary report-level metadata for downstream tooling."
+    },
+    "findings": {
+      "description": "All findings with fingerprints for deduplication.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SensorFinding"
+      }
+    },
+    "run": {
+      "description": "Information about this execution run, including capabilities.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SensorRunInfo"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "schema": {
+      "description": "Schema identifier for this report format.\nAlways \"sensor.report.v1\" for this version.",
+      "type": "string"
+    },
+    "tool": {
+      "description": "Information about the tool that generated this report.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ToolInfo"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "verdict": {
+      "description": "Structured verdict with status, counts, and reasons.",
+      "$ref": "#/$defs/SensorVerdict"
+    }
+  },
+  "required": [
+    "schema",
+    "verdict",
+    "findings"
+  ],
+  "$defs": {
+    "Artifact": {
+      "description": "Artifact reference for sensor reports.\n\nReferences additional output files produced by the sensor.",
+      "type": "object",
+      "properties": {
+        "mime_type": {
+          "description": "MIME type of the artifact.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "Name/type of the artifact (e.g., \"markdown\", \"sarif\").",
+          "type": "string"
+        },
+        "path": {
+          "description": "Path to the artifact file (relative to report).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "path"
+      ]
+    },
+    "Capability": {
+      "description": "A capability status with optional reason for non-availability.\n\nUsed to track \"No Green By Omission\" - ensuring the report explicitly\nstates what features were or weren't available during the run.",
+      "type": "object",
+      "properties": {
+        "reason": {
+          "description": "Reason for unavailability or skip, if applicable.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "description": "Status of this capability.",
+          "$ref": "#/$defs/CapabilityStatus"
+        }
+      },
+      "required": [
+        "status"
+      ]
+    },
+    "CapabilityStatus": {
+      "description": "Status of a capability for \"No Green By Omission\" tracking.\n\nCapabilities track whether features like git integration, config loading,\nor toolchain detection were available during the run.",
+      "oneOf": [
+        {
+          "description": "Capability was available and used.",
+          "type": "string",
+          "const": "available"
+        },
+        {
+          "description": "Capability was not available (e.g., git not found).",
+          "type": "string",
+          "const": "unavailable"
+        },
+        {
+          "description": "Capability was available but skipped (e.g., by config).",
+          "type": "string",
+          "const": "skipped"
+        }
+      ]
+    },
+    "GitInfo": {
+      "description": "Git repository information at the time of the run.",
+      "type": "object",
+      "properties": {
+        "branch": {
+          "description": "Current branch name, if on a branch.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "commit": {
+          "description": "Current commit SHA.",
+          "type": "string"
+        },
+        "dirty": {
+          "description": "Whether the working directory has uncommitted changes.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "commit",
+        "dirty"
+      ]
+    },
+    "HostInfo": {
+      "description": "Information about the host machine where builddiag was executed.",
+      "type": "object",
+      "properties": {
+        "arch": {
+          "description": "CPU architecture (e.g., \"x86_64\", \"aarch64\").",
+          "type": "string"
+        },
+        "os": {
+          "description": "Operating system name (e.g., \"linux\", \"macos\", \"windows\").",
+          "type": "string"
+        }
+      },
+      "required": [
+        "os",
+        "arch"
+      ]
+    },
+    "Location": {
+      "description": "File location information for a finding.\n\nPaths are repo-relative and use forward slashes on all platforms.",
+      "type": "object",
+      "properties": {
+        "col": {
+          "description": "Column number in the file (1-indexed), if applicable.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "line": {
+          "description": "Line number in the file (1-indexed), if applicable.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "path": {
+          "description": "Repository-relative file path (always uses forward slashes).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ]
+    },
+    "SensorFinding": {
+      "description": "Extended finding with fingerprint for deduplication.\n\nExtends the base Finding with:\n- `fingerprint`: Stable hash for deduplication across runs\n- `help`: Optional help text from check documentation\n- `url`: Optional URL to detailed documentation",
+      "type": "object",
+      "properties": {
+        "check_id": {
+          "description": "Identifier of the check that produced this finding.",
+          "type": "string"
+        },
+        "code": {
+          "description": "Machine-readable code identifying the type of finding.",
+          "type": "string"
+        },
+        "data": {
+          "description": "Optional structured data for this finding."
+        },
+        "fingerprint": {
+          "description": "Stable fingerprint for deduplication (sha256 of check_id+code+path+line).",
+          "type": "string"
+        },
+        "help": {
+          "description": "Help text explaining how to fix the issue.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "location": {
+          "description": "File location where the finding was detected, if applicable.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Location"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "message": {
+          "description": "Human-readable description of the finding.",
+          "type": "string"
+        },
+        "severity": {
+          "description": "Severity level of this finding.",
+          "$ref": "#/$defs/Severity"
+        },
+        "url": {
+          "description": "URL to detailed documentation for this finding type.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "check_id",
+        "code",
+        "severity",
+        "message",
+        "fingerprint"
+      ]
+    },
+    "SensorRunInfo": {
+      "description": "Run information for sensor reports with capabilities.\n\nExtends RunInfo with a capabilities map for \"No Green By Omission\" tracking.",
+      "type": "object",
+      "properties": {
+        "capabilities": {
+          "description": "Capabilities map tracking feature availability.\nKeys: git, config, toolchain, checksums, diff_aware",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/Capability"
+          }
+        },
+        "duration_ms": {
+          "description": "Duration of the run in milliseconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "ended_at": {
+          "description": "Timestamp when the run completed, if finished (ISO 8601 format).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "git": {
+          "description": "Git repository information, if available.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GitInfo"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "host": {
+          "description": "Information about the host machine.",
+          "$ref": "#/$defs/HostInfo"
+        },
+        "started_at": {
+          "description": "Timestamp when the run started (ISO 8601 format).",
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "started_at",
+        "duration_ms",
+        "host"
+      ]
+    },
+    "SensorVerdict": {
+      "description": "Structured verdict for sensor reports.\n\nProvides more detail than a simple status enum:\n- `status`: The overall verdict (Pass/Warn/Fail/Skip)\n- `counts`: Breakdown of findings by severity\n- `reasons`: Human-readable reasons for non-pass verdicts",
+      "type": "object",
+      "properties": {
+        "counts": {
+          "description": "Counts of findings by severity.",
+          "$ref": "#/$defs/VerdictCounts"
+        },
+        "reasons": {
+          "description": "Reasons explaining the verdict (for non-pass statuses).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "status": {
+          "description": "Overall verdict status.",
+          "$ref": "#/$defs/VerdictStatus"
+        }
+      },
+      "required": [
+        "status",
+        "counts"
+      ]
+    },
+    "Severity": {
+      "description": "Severity level of a finding.\n\nSeverity determines how a finding affects the overall verdict:\n- `Info` - Informational, does not affect verdict\n- `Warn` - Warning, may affect verdict depending on `fail_on` setting\n- `Error` - Error, causes failure unless `fail_on` is set to `Never`",
+      "oneOf": [
+        {
+          "description": "Informational finding that does not indicate a problem.",
+          "type": "string",
+          "const": "info"
+        },
+        {
+          "description": "Warning that may indicate a potential issue.",
+          "type": "string",
+          "const": "warn"
+        },
+        {
+          "description": "Error that indicates a definite problem.",
+          "type": "string",
+          "const": "error"
+        }
+      ]
+    },
+    "ToolInfo": {
+      "description": "Information about the builddiag tool that generated the report.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Name of the tool (e.g., \"builddiag\").",
+          "type": "string"
+        },
+        "version": {
+          "description": "Version of the tool (e.g., \"0.1.0\").",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ]
+    },
+    "VerdictCounts": {
+      "description": "Counts of findings by severity for the sensor verdict.\n\nIncludes suppressed count for findings that were filtered out\nby configuration or baseline.",
+      "type": "object",
+      "properties": {
+        "error": {
+          "description": "Number of error findings.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "info": {
+          "description": "Number of informational findings.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "suppressed": {
+          "description": "Number of suppressed findings (filtered by config/baseline).",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "warn": {
+          "description": "Number of warning findings.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "info",
+        "warn",
+        "error",
+        "suppressed"
+      ]
+    },
+    "VerdictStatus": {
+      "description": "Verdict status for sensor reports (4 values).\n\nMaps the 5-value Verdict to 4 values by collapsing Error into Fail.",
+      "oneOf": [
+        {
+          "description": "All checks passed with no findings affecting the verdict.",
+          "type": "string",
+          "const": "pass"
+        },
+        {
+          "description": "Some checks produced warnings.",
+          "type": "string",
+          "const": "warn"
+        },
+        {
+          "description": "One or more checks failed (includes internal errors).",
+          "type": "string",
+          "const": "fail"
+        },
+        {
+          "description": "All checks were skipped (no meaningful result).",
+          "type": "string",
+          "const": "skip"
+        }
+      ]
+    }
+  }
+}

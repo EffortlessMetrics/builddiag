@@ -1,10 +1,14 @@
 use anyhow::{Context, Result};
-use builddiag_app::{compute_changed_files, load_config, run_check, write_outputs};
+use builddiag_app::{
+    compute_changed_files, create_error_receipt, load_config, run_check, run_check_with_sensor,
+    write_atomic, write_outputs,
+};
 use builddiag_checks::{BUILTIN_CHECKS, CHECK_DOCS, explain_check};
 use builddiag_domain::explain::{all_check_ids, explain, explain_check_all_codes};
 use builddiag_render::{render_github_annotations, render_markdown};
 use builddiag_types::{Config, Profile, ProfileCheckState};
 use camino::{Utf8Path, Utf8PathBuf};
+use chrono::Utc;
 use clap::{Parser, Subcommand, ValueEnum};
 use std::process;
 
@@ -27,6 +31,31 @@ enum AnnotationFormat {
     /// No annotation output.
     #[default]
     None,
+}
+
+/// Output format for the JSON report.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Default)]
+enum OutputFormat {
+    /// Native builddiag.report.v1 format (default).
+    #[default]
+    Builddiag,
+    /// Cockpit-compatible sensor.report.v1 format.
+    Sensor,
+}
+
+/// Exit code mode for the check command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Default)]
+enum Mode {
+    /// Standard mode: exit 0/1/2 based on verdict.
+    /// - 0: Pass or Warn (when fail_on=error)
+    /// - 1: Runtime error
+    /// - 2: Policy violation
+    #[default]
+    Standard,
+    /// Cockpit CI mode: exit 0 if report written successfully.
+    /// - 0: Report written (regardless of verdict)
+    /// - 1: Catastrophic failure (could not write report)
+    Cockpit,
 }
 
 impl From<ProfileArg> for Profile {
@@ -77,6 +106,14 @@ enum Command {
         /// Annotation output format (github or none).
         #[arg(long, value_enum, default_value = "none")]
         annotations: AnnotationFormat,
+
+        /// Output format for the JSON report.
+        #[arg(long, value_enum, default_value = "builddiag")]
+        format: OutputFormat,
+
+        /// Exit code mode.
+        #[arg(long, value_enum, default_value = "standard")]
+        mode: Mode,
 
         /// Enable diff-aware skipping (only run checks triggered by changed files).
         #[arg(long, default_value_t = false)]
@@ -156,45 +193,90 @@ fn try_main() -> Result<()> {
             out,
             md,
             annotations,
+            format,
+            mode,
             diff_aware,
             base,
             head,
             always,
         } => {
-            let cfg_path = config.as_deref();
-            let mut cfg: Config = load_config(cfg_path)?;
+            let start = Utc::now();
 
-            // CLI --profile overrides config file profile
-            if let Some(profile_arg) = profile {
-                cfg.profile = profile_arg.into();
-            }
+            // In cockpit mode, wrap everything including config loading in error handling
+            let result = run_check_command(
+                &root,
+                config.as_deref(),
+                profile,
+                out.as_deref(),
+                md.as_deref(),
+                annotations,
+                format,
+                diff_aware,
+                base.as_deref(),
+                head.as_deref(),
+                always,
+            );
 
-            if diff_aware {
-                cfg.defaults.diff_aware = true;
-            }
+            match (result, mode) {
+                (Ok(cmd_result), Mode::Standard) => {
+                    // Write outputs
+                    finish_check_output(
+                        &cmd_result.run,
+                        cmd_result.sensor_report.as_ref(),
+                        &cmd_result.out_json,
+                        cmd_result.out_md.as_deref(),
+                        annotations,
+                        format,
+                    )?;
+                    process::exit(cmd_result.run.exit_code);
+                }
+                (Ok(cmd_result), Mode::Cockpit) => {
+                    // Write outputs
+                    finish_check_output(
+                        &cmd_result.run,
+                        cmd_result.sensor_report.as_ref(),
+                        &cmd_result.out_json,
+                        cmd_result.out_md.as_deref(),
+                        annotations,
+                        format,
+                    )?;
+                    process::exit(0); // Report written successfully
+                }
+                (Err(e), Mode::Standard) => {
+                    return Err(e);
+                }
+                (Err(e), Mode::Cockpit) => {
+                    // Create error receipt and try to write it
+                    // Use default output path if we couldn't load config
+                    let out_json =
+                        out.unwrap_or_else(|| root.join("artifacts/builddiag/report.json"));
 
-            let base = base.unwrap_or_else(|| cfg.defaults.base.clone());
-            let head = head.unwrap_or_else(|| cfg.defaults.head.clone());
+                    let receipt = create_error_receipt(start, &e);
+                    let json = serde_json::to_vec_pretty(&receipt)?;
 
-            let changed = if cfg.defaults.diff_aware {
-                compute_changed_files(&root, &base, &head)?
-            } else {
-                None
-            };
+                    // Ensure parent directory exists
+                    if let Some(parent) = out_json.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
 
-            let run = run_check(&root, &cfg, always, changed)?;
-
-            let out_json = out.unwrap_or_else(|| default_report_path(&cfg, &root));
-            let out_md = md.or_else(|| Some(default_md_path(&cfg, &root)));
-            write_outputs(&out_json, out_md.as_deref(), &run)?;
-
-            if annotations == AnnotationFormat::Github {
-                for line in &run.annotations {
-                    println!("{line}");
+                    match write_atomic(&out_json, &json) {
+                        Ok(()) => {
+                            eprintln!(
+                                "builddiag: internal error occurred, error receipt written to {}",
+                                out_json
+                            );
+                            eprintln!("  Error: {e:#}");
+                            process::exit(0); // Report written (even if error)
+                        }
+                        Err(write_err) => {
+                            eprintln!("builddiag: catastrophic failure");
+                            eprintln!("  Original error: {e:#}");
+                            eprintln!("  Could not write error receipt: {write_err:#}");
+                            process::exit(1);
+                        }
+                    }
                 }
             }
-
-            process::exit(run.exit_code);
         }
         Command::Md { report, out } => {
             let bytes = std::fs::read(&report).with_context(|| format!("read {report}"))?;
@@ -462,4 +544,113 @@ fn default_report_path(cfg: &Config, root: &Utf8Path) -> Utf8PathBuf {
 
 fn default_md_path(cfg: &Config, root: &Utf8Path) -> Utf8PathBuf {
     root.join(&cfg.defaults.out_dir).join("comment.md")
+}
+
+/// Result from running the check command, including output paths.
+struct CheckCommandResult {
+    run: builddiag_app::CheckRun,
+    out_json: Utf8PathBuf,
+    out_md: Option<Utf8PathBuf>,
+    sensor_report: Option<builddiag_types::SensorReport>,
+}
+
+/// Run the check command and return the result.
+/// This is separated out to allow error handling in cockpit mode.
+#[allow(clippy::too_many_arguments)]
+fn run_check_command(
+    root: &Utf8Path,
+    config: Option<&Utf8Path>,
+    profile: Option<ProfileArg>,
+    out: Option<&Utf8Path>,
+    md: Option<&Utf8Path>,
+    _annotations: AnnotationFormat,
+    format: OutputFormat,
+    diff_aware: bool,
+    base: Option<&str>,
+    head: Option<&str>,
+    always: bool,
+) -> Result<CheckCommandResult> {
+    let mut cfg: Config = load_config(config)?;
+
+    // CLI --profile overrides config file profile
+    if let Some(profile_arg) = profile {
+        cfg.profile = profile_arg.into();
+    }
+
+    if diff_aware {
+        cfg.defaults.diff_aware = true;
+    }
+
+    let base = base
+        .map(String::from)
+        .unwrap_or_else(|| cfg.defaults.base.clone());
+    let head = head
+        .map(String::from)
+        .unwrap_or_else(|| cfg.defaults.head.clone());
+
+    let changed = if cfg.defaults.diff_aware {
+        compute_changed_files(root, &base, &head)?
+    } else {
+        None
+    };
+
+    let out_json = out
+        .map(Utf8PathBuf::from)
+        .unwrap_or_else(|| default_report_path(&cfg, root));
+    let out_md = md
+        .map(Utf8PathBuf::from)
+        .or_else(|| Some(default_md_path(&cfg, root)));
+
+    match format {
+        OutputFormat::Builddiag => {
+            let run = run_check(root, &cfg, always, changed)?;
+            Ok(CheckCommandResult {
+                run,
+                out_json,
+                out_md,
+                sensor_report: None,
+            })
+        }
+        OutputFormat::Sensor => {
+            let sr = run_check_with_sensor(root, &cfg, always, changed)?;
+            Ok(CheckCommandResult {
+                run: sr.check_run,
+                out_json,
+                out_md,
+                sensor_report: Some(sr.sensor_report),
+            })
+        }
+    }
+}
+
+/// Write the outputs and print annotations.
+fn finish_check_output(
+    run: &builddiag_app::CheckRun,
+    sensor_report: Option<&builddiag_types::SensorReport>,
+    out_json: &Utf8Path,
+    md: Option<&Utf8Path>,
+    annotations: AnnotationFormat,
+    format: OutputFormat,
+) -> Result<()> {
+    match format {
+        OutputFormat::Builddiag => {
+            write_outputs(out_json, md, run)?;
+        }
+        OutputFormat::Sensor => {
+            let sensor = sensor_report.expect("sensor report should exist");
+            let json = serde_json::to_vec_pretty(&sensor)?;
+            write_atomic(out_json, &json)?;
+            if let Some(md_path) = md {
+                write_atomic(md_path, run.markdown.as_bytes())?;
+            }
+        }
+    }
+
+    if annotations == AnnotationFormat::Github {
+        for line in &run.annotations {
+            println!("{line}");
+        }
+    }
+
+    Ok(())
 }
