@@ -5,16 +5,10 @@
 
 use std::fs;
 use std::path::Path;
-use std::process::Command;
+use assert_cmd::cargo::cargo_bin_cmd;
 use tempfile::TempDir;
 
 use super::world::{BuilddiagWorld, MsrvConfig, MsrvLocation};
-
-/// Get the path to the builddiag binary.
-#[allow(deprecated)]
-pub fn get_builddiag_bin() -> std::path::PathBuf {
-    assert_cmd::cargo::cargo_bin("builddiag")
-}
 
 /// Write a file to the given directory.
 pub fn write_file(dir: &Path, rel: &str, contents: &str) {
@@ -142,11 +136,11 @@ rust-version = "{}"
 
 /// Run the builddiag check command with the given world configuration.
 pub fn run_builddiag_check(world: &mut BuilddiagWorld) {
-    let bin = get_builddiag_bin();
     let dir = world.workspace_path();
 
-    let mut cmd = Command::new(&bin);
+    let mut cmd = cargo_bin_cmd!("builddiag");
     cmd.arg("check").arg("--root").arg(&dir).arg("--always");
+    cmd.current_dir(&dir);
 
     // Add profile if specified
     if let Some(ref profile) = world.profile {
@@ -171,9 +165,7 @@ pub fn run_builddiag_check(world: &mut BuilddiagWorld) {
 /// Run builddiag with custom arguments (unused but kept for potential future use).
 #[allow(dead_code)]
 pub fn run_builddiag_with_args(world: &mut BuilddiagWorld, args: &[&str]) {
-    let bin = get_builddiag_bin();
-
-    let mut cmd = Command::new(&bin);
+    let mut cmd = cargo_bin_cmd!("builddiag");
     for arg in args {
         cmd.arg(arg);
     }

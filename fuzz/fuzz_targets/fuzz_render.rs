@@ -92,7 +92,6 @@ impl From<FuzzFinding> for Finding {
             severity: f.severity.into(),
             message: f.message,
             location: f.location.map(|l| l.into()),
-            data: None,
         }
     }
 }
@@ -140,11 +139,11 @@ fuzz_target!(|input: FuzzInput| {
 
     let report = Report {
         schema: Report::SCHEMA_V1.to_string(),
-        tool: ToolInfo {
+        tool: Some(ToolInfo {
             name: "builddiag".to_string(),
             version: "0.1.0".to_string(),
-        },
-        run: RunInfo {
+        }),
+        run: Some(RunInfo {
             started_at: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
             ended_at: None,
             duration_ms: 100,
@@ -153,7 +152,7 @@ fuzz_target!(|input: FuzzInput| {
                 arch: "x86_64".to_string(),
             },
             git: None,
-        },
+        }),
         verdict: input.verdict.into(),
         findings,
         summary: Some(Summary {
@@ -161,6 +160,7 @@ fuzz_target!(|input: FuzzInput| {
             by_severity,
             by_check,
         }),
+        data: None,
     };
 
     let options: RenderOptions = input.options.into();

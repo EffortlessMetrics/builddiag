@@ -33,7 +33,30 @@ Artifacts default to `artifacts/builddiag/`:
 To emit GitHub annotations:
 
 ```bash
-builddiag check --github-annotations
+builddiag check --annotations github
+```
+
+### Local Usage (Copy/Paste)
+
+```bash
+builddiag check \
+  --out artifacts/builddiag/report.json \
+  --md artifacts/builddiag/comment.md
+```
+
+### CI Usage (GitHub Actions)
+
+```yaml
+- name: Install builddiag
+  uses: taiki-e/install-action@v2
+  with:
+    tool: builddiag
+- name: builddiag (repo truth)
+  run: |
+    builddiag check \
+      --out artifacts/builddiag/report.json \
+      --md artifacts/builddiag/comment.md \
+      --annotations github
 ```
 
 ## Config

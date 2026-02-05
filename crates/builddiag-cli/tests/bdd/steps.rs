@@ -3,6 +3,8 @@
 //! This module implements Given/When/Then steps for BDD scenarios.
 
 use cucumber::{given, then, when};
+use serde_json::Value;
+use std::path::PathBuf;
 
 use super::helpers::{materialize_workspace, run_builddiag_check};
 use super::world::{BuilddiagWorld, MsrvConfig, MsrvLocation, ToolchainConfig};
@@ -129,6 +131,7 @@ out_dir = "{}"
 "#,
         value
     ));
+    world.out_dir_override = Some(value);
 }
 
 #[given(expr = "the config file is named {string}")]
@@ -165,6 +168,9 @@ fn when_run_check_with_profile(world: &mut BuilddiagWorld, profile: String) {
 
 #[when(expr = "I run builddiag check with --{word} {string}")]
 fn when_run_check_with_flag(world: &mut BuilddiagWorld, flag: String, value: String) {
+    if flag == "out" {
+        world.explicit_out = Some(value.clone());
+    }
     world.extra_args.push(format!("--{}", flag));
     world.extra_args.push(value);
     materialize_workspace(world);
@@ -275,14 +281,20 @@ fn then_file_not_exists(world: &mut BuilddiagWorld, path: String) {
     );
 }
 
-#[then(expr = "the report should have verdict {string}")]
-fn then_report_verdict(world: &mut BuilddiagWorld, expected_verdict: String) {
-    let report_path = world.workspace_path().join("artifacts/builddiag/report.json");
-    let content = std::fs::read_to_string(&report_path).expect("failed to read report.json");
-    let report: serde_json::Value =
-        serde_json::from_str(&content).expect("failed to parse report.json");
+#[then("the report should exist at the canonical path")]
+fn then_report_exists_at_canonical_path(world: &mut BuilddiagWorld) {
+    let report_path = canonical_report_path(world);
+    assert!(
+        report_path.exists(),
+        "Expected report to exist at canonical path {:?}",
+        report_path
+    );
+}
 
-    let verdict = report["summary"]["verdict"]
+#[then(expr = "the report verdict should be {string}")]
+fn then_report_verdict_is(world: &mut BuilddiagWorld, expected_verdict: String) {
+    let report = read_report(world);
+    let verdict = report["verdict"]
         .as_str()
         .expect("verdict not found in report");
     assert_eq!(
@@ -290,4 +302,80 @@ fn then_report_verdict(world: &mut BuilddiagWorld, expected_verdict: String) {
         "Expected verdict '{}' but got '{}'",
         expected_verdict, verdict
     );
+}
+
+#[then(expr = "the report should have verdict {string}")]
+fn then_report_verdict(world: &mut BuilddiagWorld, expected_verdict: String) {
+    let report = read_report(world);
+    let verdict = report["verdict"].as_str().expect("verdict not found in report");
+    assert_eq!(
+        verdict, expected_verdict,
+        "Expected verdict '{}' but got '{}'",
+        expected_verdict, verdict
+    );
+}
+
+#[then(expr = "the report should include finding {string} {string} {string}")]
+fn then_report_includes_finding(
+    world: &mut BuilddiagWorld,
+    check_id: String,
+    code: String,
+    severity: String,
+) {
+    let report = read_report(world);
+    let findings = report["findings"]
+        .as_array()
+        .expect("findings not found in report");
+    let found = findings.iter().any(|f| {
+        f["check_id"].as_str() == Some(check_id.as_str())
+            && f["code"].as_str() == Some(code.as_str())
+            && f["severity"].as_str() == Some(severity.as_str())
+    });
+    assert!(
+        found,
+        "Expected finding ({}, {}, {}) not found in report",
+        check_id,
+        code,
+        severity
+    );
+}
+
+#[then(expr = "the report should not include any {string} findings")]
+fn then_report_has_no_findings_with_severity(world: &mut BuilddiagWorld, severity: String) {
+    let report = read_report(world);
+    let findings = report["findings"]
+        .as_array()
+        .expect("findings not found in report");
+    let found = findings
+        .iter()
+        .any(|f| f["severity"].as_str() == Some(severity.as_str()));
+    assert!(
+        !found,
+        "Expected no '{}' findings but found at least one",
+        severity
+    );
+}
+
+fn canonical_report_path(world: &BuilddiagWorld) -> PathBuf {
+    if let Some(ref out) = world.explicit_out {
+        let out_path = PathBuf::from(out);
+        if out_path.is_absolute() {
+            return out_path;
+        }
+        return world.workspace_path().join(out_path);
+    }
+
+    let out_dir = world
+        .out_dir_override
+        .as_deref()
+        .unwrap_or("artifacts/builddiag");
+    world.workspace_path().join(out_dir).join("report.json")
+}
+
+fn read_report(world: &BuilddiagWorld) -> Value {
+    let report_path = canonical_report_path(world);
+    let content = std::fs::read_to_string(&report_path)
+        .unwrap_or_else(|_| panic!("failed to read report.json at {:?}", report_path));
+    serde_json::from_str(&content)
+        .unwrap_or_else(|_| panic!("failed to parse report.json at {:?}", report_path))
 }

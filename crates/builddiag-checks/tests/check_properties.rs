@@ -16,8 +16,9 @@ use builddiag_checks::run_selected_checks;
 use builddiag_domain::parse_rust_version;
 use builddiag_repo::{Member, RepoState, Toolchain, WorkspaceInfo, maybe_parse_numeric_version};
 use builddiag_types::{CheckStatus, Config, RelationToMsrv, Severity};
-use camino::Utf8PathBuf;
+use camino::{Utf8Path, Utf8PathBuf};
 use proptest::prelude::*;
+use tempfile::TempDir;
 
 // =============================================================================
 // Generators for test data
@@ -146,11 +147,42 @@ fn arb_invalid_toolchain_channel() -> impl Strategy<Value = String> {
 // Helper functions to create RepoState variants
 // =============================================================================
 
+struct TempRepo {
+    _dir: TempDir,
+    root: Utf8PathBuf,
+}
+
+impl TempRepo {
+    fn new() -> Self {
+        let dir = TempDir::new().expect("failed to create temp directory");
+        let root = Utf8PathBuf::try_from(dir.path().to_path_buf())
+            .expect("failed to create utf8 path for temp directory");
+
+        write_file(&root, "Cargo.toml", r#"[workspace]
+resolver = "2"
+"#);
+
+        Self { _dir: dir, root }
+    }
+
+    fn root(&self) -> &Utf8Path {
+        &self.root
+    }
+}
+
+fn write_file(root: &Utf8Path, rel: &str, contents: &str) {
+    let path = root.join(rel);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).unwrap();
+    }
+    std::fs::write(path, contents).unwrap();
+}
+
 /// Create a minimal RepoState for testing
-fn mock_repo_state() -> RepoState {
+fn mock_repo_state(root: &Utf8Path) -> RepoState {
     RepoState {
-        root: Utf8PathBuf::from("/test/repo"),
-        cargo_root: Some(Utf8PathBuf::from("/test/repo/Cargo.toml")),
+        root: root.to_path_buf(),
+        cargo_root: Some(root.join("Cargo.toml")),
         toolchain: None,
         workspace: WorkspaceInfo {
             is_workspace: true,
@@ -168,43 +200,47 @@ fn mock_repo_state() -> RepoState {
 }
 
 /// Create a RepoState with workspace MSRV set
-fn mock_repo_with_msrv(msrv: &str) -> RepoState {
-    let mut repo = mock_repo_state();
+fn mock_repo_with_msrv(root: &Utf8Path, msrv: &str) -> RepoState {
+    let mut repo = mock_repo_state(root);
     repo.workspace.workspace_msrv = Some(msrv.to_string());
     repo
 }
 
 /// Create a RepoState with toolchain
-fn mock_repo_with_toolchain(channel: &str) -> RepoState {
-    let mut repo = mock_repo_state();
+fn mock_repo_with_toolchain(root: &Utf8Path, channel: &str) -> RepoState {
+    let mut repo = mock_repo_state(root);
     repo.toolchain = Some(Toolchain {
-        path: Utf8PathBuf::from("/test/repo/rust-toolchain.toml"),
+        path: root.join("rust-toolchain.toml"),
         channel: channel.to_string(),
     });
     repo
 }
 
 /// Create a RepoState with both MSRV and toolchain
-fn mock_repo_with_msrv_and_toolchain(msrv: &str, channel: &str) -> RepoState {
-    let mut repo = mock_repo_with_msrv(msrv);
+fn mock_repo_with_msrv_and_toolchain(root: &Utf8Path, msrv: &str, channel: &str) -> RepoState {
+    let mut repo = mock_repo_with_msrv(root, msrv);
     repo.toolchain = Some(Toolchain {
-        path: Utf8PathBuf::from("/test/repo/rust-toolchain.toml"),
+        path: root.join("rust-toolchain.toml"),
         channel: channel.to_string(),
     });
     repo
 }
 
 /// Create a RepoState with workspace members
-fn mock_repo_with_members(workspace_msrv: Option<&str>, members: Vec<Member>) -> RepoState {
-    let mut repo = mock_repo_state();
+fn mock_repo_with_members(
+    root: &Utf8Path,
+    workspace_msrv: Option<&str>,
+    members: Vec<Member>,
+) -> RepoState {
+    let mut repo = mock_repo_state(root);
     repo.workspace.workspace_msrv = workspace_msrv.map(|s| s.to_string());
     repo.workspace.members = members;
     repo
 }
 
 /// Create a RepoState with resolver setting
-fn mock_repo_with_resolver(resolver: Option<&str>) -> RepoState {
-    let mut repo = mock_repo_state();
+fn mock_repo_with_resolver(root: &Utf8Path, resolver: Option<&str>) -> RepoState {
+    let mut repo = mock_repo_state(root);
     repo.workspace.workspace_resolver = resolver.map(|s| s.to_string());
     repo
 }
@@ -306,7 +342,8 @@ proptest! {
     /// **Validates: Requirements 5.1**
     #[test]
     fn prop_msrv_defined_pass_has_no_error_findings(msrv in arb_rust_version()) {
-        let repo = mock_repo_with_msrv(&msrv);
+        let temp = TempRepo::new();
+        let repo = mock_repo_with_msrv(temp.root(), &msrv);
         let config = Config::default();
 
         let reports = run_selected_checks(&repo, &config, true).unwrap();
@@ -328,7 +365,8 @@ proptest! {
     /// **Validates: Requirements 5.1**
     #[test]
     fn prop_toolchain_pinning_pass_has_no_error_findings(channel in arb_pinned_channel()) {
-        let repo = mock_repo_with_toolchain(&channel);
+        let temp = TempRepo::new();
+        let repo = mock_repo_with_toolchain(temp.root(), &channel);
         let config = Config::default();
 
         let reports = run_selected_checks(&repo, &config, true).unwrap();
@@ -351,7 +389,8 @@ proptest! {
     #[test]
     fn prop_toolchain_msrv_relation_pass_has_no_error_findings(version in arb_semver()) {
         // Use same version for both MSRV and toolchain to ensure pass
-        let repo = mock_repo_with_msrv_and_toolchain(&version, &version);
+        let temp = TempRepo::new();
+        let repo = mock_repo_with_msrv_and_toolchain(temp.root(), &version, &version);
         let config = Config::default();
 
         let reports = run_selected_checks(&repo, &config, true).unwrap();
@@ -373,7 +412,8 @@ proptest! {
     /// **Validates: Requirements 5.1**
     #[test]
     fn prop_workspace_resolver_pass_has_no_error_findings(_dummy in Just(())) {
-        let repo = mock_repo_with_resolver(Some("2"));
+        let temp = TempRepo::new();
+        let repo = mock_repo_with_resolver(temp.root(), Some("2"));
         let config = Config::default();
 
         let reports = run_selected_checks(&repo, &config, true).unwrap();
@@ -399,7 +439,8 @@ proptest! {
         toolchain in arb_pinned_channel(),
     ) {
         // Create a valid repo state that should pass most checks
-        let mut repo = mock_repo_with_msrv_and_toolchain(&msrv, &toolchain);
+        let temp = TempRepo::new();
+        let mut repo = mock_repo_with_msrv_and_toolchain(temp.root(), &msrv, &toolchain);
         repo.workspace.workspace_resolver = Some("2".to_string());
 
         // Disable checksums requirement since we don't have checksums files
@@ -437,7 +478,8 @@ proptest! {
     #[test]
     fn prop_msrv_defined_fail_has_nonempty_messages(_dummy in Just(())) {
         // Create repo without MSRV
-        let repo = mock_repo_state();
+        let temp = TempRepo::new();
+        let repo = mock_repo_state(temp.root());
         let config = Config::default(); // require_defined = true by default
 
         let reports = run_selected_checks(&repo, &config, true).unwrap();
@@ -462,7 +504,8 @@ proptest! {
     /// **Validates: Requirements 5.2**
     #[test]
     fn prop_toolchain_pinning_fail_has_nonempty_messages(channel in arb_unpinned_channel()) {
-        let repo = mock_repo_with_toolchain(&channel);
+        let temp = TempRepo::new();
+        let repo = mock_repo_with_toolchain(temp.root(), &channel);
         let mut config = Config::default();
         // Allow nightly to avoid nightly_disallowed finding interfering
         config.policy.toolchain.allow_nightly = true;
@@ -495,7 +538,8 @@ proptest! {
         // Ensure toolchain > MSRV to trigger mismatch with Equals policy
         let msrv = format!("1.{}.0", msrv_minor);
         let toolchain = format!("1.{}.0", toolchain_minor);
-        let repo = mock_repo_with_msrv_and_toolchain(&msrv, &toolchain);
+        let temp = TempRepo::new();
+        let repo = mock_repo_with_msrv_and_toolchain(temp.root(), &msrv, &toolchain);
         let config = Config::default(); // relation_to_msrv = Equals by default
 
         let reports = run_selected_checks(&repo, &config, true).unwrap();
@@ -520,7 +564,8 @@ proptest! {
     /// **Validates: Requirements 5.2**
     #[test]
     fn prop_workspace_resolver_fail_has_nonempty_messages(resolver in prop_oneof![Just(Some("1")), Just(None)]) {
-        let repo = mock_repo_with_resolver(resolver);
+        let temp = TempRepo::new();
+        let repo = mock_repo_with_resolver(temp.root(), resolver);
         let config = Config::default();
 
         let reports = run_selected_checks(&repo, &config, true).unwrap();
@@ -551,7 +596,8 @@ proptest! {
         resolver in arb_resolver(),
     ) {
         // Create a repo state that may fail various checks
-        let mut repo = mock_repo_state();
+        let temp = TempRepo::new();
+        let mut repo = mock_repo_state(temp.root());
 
         if has_msrv {
             repo.workspace.workspace_msrv = Some("1.70.0".to_string());
@@ -559,7 +605,7 @@ proptest! {
 
         if has_toolchain {
             repo.toolchain = Some(Toolchain {
-                path: Utf8PathBuf::from("/test/repo/rust-toolchain.toml"),
+                path: temp.root().join("rust-toolchain.toml"),
                 channel: "stable".to_string(), // unpinned to trigger failure
             });
         }
@@ -598,9 +644,10 @@ proptest! {
         let workspace_msrv = format!("1.{}.0", workspace_minor);
         let member_msrv = format!("1.{}.0", member_minor);
 
+        let temp = TempRepo::new();
         let member = Member {
             name: "test-crate".to_string(),
-            manifest_path: Utf8PathBuf::from("/test/repo/crates/test-crate/Cargo.toml"),
+            manifest_path: temp.root().join("crates/test-crate/Cargo.toml"),
             rust_version: Some(member_msrv),
             rust_version_workspace: false,
             edition: Some("2021".to_string()),
@@ -608,7 +655,8 @@ proptest! {
             has_binary_target: false,
         };
 
-        let repo = mock_repo_with_members(Some(&workspace_msrv), vec![member]);
+        write_file(temp.root(), "crates/test-crate/Cargo.toml", "[package]\nname = \"test-crate\"\nversion = \"0.1.0\"\nedition = \"2021\"\n");
+        let repo = mock_repo_with_members(temp.root(), Some(&workspace_msrv), vec![member]);
         let config = Config::default();
 
         let reports = run_selected_checks(&repo, &config, true).unwrap();

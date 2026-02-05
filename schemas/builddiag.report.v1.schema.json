@@ -1,9 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Report",
-  "description": "The main report output from builddiag.\n\nA report contains all information about a validation run, including\nmetadata, findings, and summary statistics.\n\n# Schema Version\n\nThis report follows the `builddiag.report.v1` schema. The `schema` field\nis always set to \"builddiag.report.v1\" for this version.\n\n# Structure\n\n- `schema` - Schema version identifier (const \"builddiag.report.v1\")\n- `tool` - Information about the builddiag version\n- `run` - Execution metadata (timestamps, duration, host, git)\n- `verdict` - Overall verdict (Pass, Warn, Fail, Error)\n- `findings` - Flattened list of all findings from all checks\n- `summary` - Optional aggregated statistics",
+  "description": "The main report output from builddiag.\n\nA report contains all information about a validation run, including\nmetadata, findings, and summary statistics.\n\n# Schema Version\n\nThis report follows the `builddiag.report.v1` schema. The `schema` field\nis always set to \"builddiag.report.v1\" for this version.\n\n# Structure\n\n- `schema` - Schema version identifier (const \"builddiag.report.v1\")\n- `tool` - Information about the builddiag version (optional)\n- `run` - Execution metadata (timestamps, duration, host, git) (optional)\n- `verdict` - Overall verdict (Pass, Warn, Fail, Error)\n- `findings` - Flattened list of all findings from all checks\n- `summary` - Optional aggregated statistics\n- `data` - Optional report-level data for downstream tooling",
   "type": "object",
   "properties": {
+    "data": {
+      "description": "Optional arbitrary report-level metadata for downstream tooling."
+    },
     "findings": {
       "description": "All findings from all checks, flattened into a single list.",
       "type": "array",
@@ -13,7 +16,14 @@
     },
     "run": {
       "description": "Information about this execution run.",
-      "$ref": "#/$defs/RunInfo"
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RunInfo"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "schema": {
       "description": "Schema identifier for this report format.\nAlways \"builddiag.report.v1\" for this version.",
@@ -32,7 +42,14 @@
     },
     "tool": {
       "description": "Information about the tool that generated this report.",
-      "$ref": "#/$defs/ToolInfo"
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ToolInfo"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "verdict": {
       "description": "Overall verdict based on all findings.",
@@ -41,14 +58,12 @@
   },
   "required": [
     "schema",
-    "tool",
-    "run",
     "verdict",
     "findings"
   ],
   "$defs": {
     "Finding": {
-      "description": "A single validation finding from a check.\n\nFindings represent individual issues or observations discovered during\nvalidation. Each finding has a severity, a code for programmatic handling,\nand a human-readable message.\n\n# Examples\n\n```\nuse builddiag_types::{Finding, Severity, Location};\n\nlet finding = Finding {\n    check_id: \"rust.msrv_defined\".to_string(),\n    code: \"missing_msrv\".to_string(),\n    severity: Severity::Error,\n    message: \"Missing rust-version in Cargo.toml\".to_string(),\n    location: Some(Location {\n        path: \"Cargo.toml\".to_string(),\n        line: Some(1),\n        col: None,\n    }),\n    data: None,\n};\n```",
+      "description": "A single validation finding from a check.\n\nFindings represent individual issues or observations discovered during\nvalidation. Each finding has a severity, a code for programmatic handling,\nand a human-readable message.\n\n# Examples\n\n```\nuse builddiag_types::{Finding, Severity, Location};\n\nlet finding = Finding {\n    check_id: \"rust.msrv_defined\".to_string(),\n    code: \"missing_msrv\".to_string(),\n    severity: Severity::Error,\n    message: \"Missing rust-version in Cargo.toml\".to_string(),\n    location: Some(Location {\n        path: \"Cargo.toml\".to_string(),\n        line: Some(1),\n        col: None,\n    }),\n\n};\n```",
       "type": "object",
       "properties": {
         "check_id": {
@@ -58,9 +73,6 @@
         "code": {
           "description": "Machine-readable code identifying the type of finding.",
           "type": "string"
-        },
-        "data": {
-          "description": "Additional structured data associated with this finding."
         },
         "location": {
           "description": "File location where the finding was detected, if applicable.",

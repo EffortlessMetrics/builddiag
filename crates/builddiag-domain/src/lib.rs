@@ -30,7 +30,6 @@
 //!     severity: Severity::Warn,
 //!     message: "Example warning".into(),
 //!     location: None,
-//!     data: None,
 //! }];
 //! let status = check_status_from_findings(&findings);
 //! assert_eq!(status, builddiag_types::CheckStatus::Warn);
@@ -134,7 +133,6 @@ pub fn parse_rust_version(input: &str) -> Result<Version> {
 ///     severity: Severity::Warn,
 ///     message: "A warning".into(),
 ///     location: None,
-///     data: None,
 /// }];
 /// assert_eq!(check_status_from_findings(&findings), CheckStatus::Warn);
 ///
@@ -146,7 +144,6 @@ pub fn parse_rust_version(input: &str) -> Result<Version> {
 ///         severity: Severity::Warn,
 ///         message: "A warning".into(),
 ///         location: None,
-///         data: None,
 ///     },
 ///     Finding {
 ///         check_id: "example.check".into(),
@@ -154,7 +151,6 @@ pub fn parse_rust_version(input: &str) -> Result<Version> {
 ///         severity: Severity::Error,
 ///         message: "An error".into(),
 ///         location: None,
-///         data: None,
 ///     },
 /// ];
 /// assert_eq!(check_status_from_findings(&findings), CheckStatus::Fail);
@@ -236,7 +232,6 @@ pub fn check_status_from_findings(findings: &[Finding]) -> CheckStatus {
 ///                 line: None,
 ///                 col: None,
 ///             }),
-///             data: None,
 ///         }],
 ///         skipped_reason: None,
 ///     },
@@ -412,7 +407,6 @@ pub fn exit_code_for(verdict: Verdict, fail_on: FailOn) -> i32 {
 ///             line: Some(10),
 ///             col: None,
 ///         }),
-///         data: None,
 ///     },
 ///     Finding {
 ///         check_id: "rust.msrv".into(),
@@ -424,7 +418,6 @@ pub fn exit_code_for(verdict: Verdict, fail_on: FailOn) -> i32 {
 ///             line: Some(5),
 ///             col: None,
 ///         }),
-///         data: None,
 ///     },
 /// ];
 ///
@@ -524,7 +517,6 @@ mod tests {
                 line,
                 col: None,
             }),
-            data: None,
         }
     }
 

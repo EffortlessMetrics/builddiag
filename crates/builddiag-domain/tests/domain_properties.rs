@@ -90,7 +90,6 @@ fn arb_finding() -> impl Strategy<Value = Finding> {
             severity,
             message,
             location,
-            data: None,
         })
 }
 
@@ -144,7 +143,6 @@ fn arb_finding_with_severity(severity: Severity) -> impl Strategy<Value = Findin
             severity,
             message,
             location,
-            data: None,
         })
 }
 

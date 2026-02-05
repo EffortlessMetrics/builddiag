@@ -24,11 +24,11 @@ fn fixed_timestamp() -> chrono::DateTime<Utc> {
 fn base_report() -> Report {
     Report {
         schema: Report::SCHEMA_V1.to_string(),
-        tool: ToolInfo {
+        tool: Some(ToolInfo {
             name: "builddiag".to_string(),
             version: "0.1.0".to_string(),
-        },
-        run: RunInfo {
+        }),
+        run: Some(RunInfo {
             started_at: fixed_timestamp(),
             ended_at: Some(fixed_timestamp()),
             duration_ms: 150,
@@ -37,10 +37,11 @@ fn base_report() -> Report {
                 arch: "x86_64".to_string(),
             },
             git: None,
-        },
+        }),
         verdict: Verdict::Pass,
         findings: vec![],
         summary: None,
+        data: None,
     }
 }
 
@@ -84,7 +85,6 @@ fn report_with_mixed_findings() -> Report {
                 line: Some(1),
                 col: None,
             }),
-            data: None,
         },
         Finding {
             check_id: "rust.toolchain_pinning".to_string(),
@@ -96,7 +96,6 @@ fn report_with_mixed_findings() -> Report {
                 line: Some(2),
                 col: Some(10),
             }),
-            data: None,
         },
         Finding {
             check_id: "rust.toolchain_pinning".to_string(),
@@ -108,7 +107,6 @@ fn report_with_mixed_findings() -> Report {
                 line: Some(1),
                 col: None,
             }),
-            data: None,
         },
         Finding {
             check_id: "workspace.resolver_v2".to_string(),
@@ -120,7 +118,6 @@ fn report_with_mixed_findings() -> Report {
                 line: Some(5),
                 col: None,
             }),
-            data: None,
         },
     ];
 
@@ -208,7 +205,6 @@ fn report_with_many_findings() -> Report {
                     None
                 },
             }),
-            data: None,
         });
     }
 
@@ -272,7 +268,6 @@ fn test_golden_markdown_special_characters() {
                 line: Some(1),
                 col: None,
             }),
-            data: None,
         },
         Finding {
             check_id: "test.special_chars".to_string(),
@@ -284,7 +279,6 @@ fn test_golden_markdown_special_characters() {
                 line: Some(10),
                 col: None,
             }),
-            data: None,
         },
     ];
 
@@ -310,7 +304,6 @@ fn test_golden_annotations_special_characters() {
             line: Some(1),
             col: None,
         }),
-        data: None,
     }];
 
     let options = RenderOptions::default();
@@ -330,7 +323,6 @@ fn test_golden_markdown_no_location() {
             severity: Severity::Error,
             message: "A finding without any location information".to_string(),
             location: None,
-            data: None,
         },
         Finding {
             check_id: "test.no_location".to_string(),
@@ -342,7 +334,6 @@ fn test_golden_markdown_no_location() {
                 line: None,
                 col: None,
             }),
-            data: None,
         },
     ];
 

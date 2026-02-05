@@ -13,11 +13,12 @@
 //!
 //! The [`Report`] type is the primary output of builddiag. It contains:
 //! - Schema identifier for versioning
-//! - Tool information (name, version)
-//! - Run metadata (timestamps, duration, host, git info)
+//! - Tool information (name, version) (optional)
+//! - Run metadata (timestamps, duration, host, git info) (optional)
 //! - Overall verdict
 //! - Flattened list of findings from all checks
 //! - Optional summary with counts by severity and check
+//! - Optional report-level data for downstream tooling
 //!
 //! # Configuration
 //!
@@ -42,7 +43,6 @@
 //!         line: Some(1),
 //!         col: None,
 //!     }),
-//!     data: None,
 //! };
 //! ```
 
@@ -252,7 +252,7 @@ pub enum Verdict {
 ///         line: Some(1),
 ///         col: None,
 ///     }),
-///     data: None,
+///
 /// };
 /// ```
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -268,9 +268,6 @@ pub struct Finding {
     /// File location where the finding was detected, if applicable.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub location: Option<Location>,
-    /// Additional structured data associated with this finding.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub data: Option<serde_json::Value>,
 }
 
 /// Results from executing a single check.
@@ -330,20 +327,23 @@ pub struct Summary {
 /// # Structure
 ///
 /// - `schema` - Schema version identifier (const "builddiag.report.v1")
-/// - `tool` - Information about the builddiag version
-/// - `run` - Execution metadata (timestamps, duration, host, git)
+/// - `tool` - Information about the builddiag version (optional)
+/// - `run` - Execution metadata (timestamps, duration, host, git) (optional)
 /// - `verdict` - Overall verdict (Pass, Warn, Fail, Error)
 /// - `findings` - Flattened list of all findings from all checks
 /// - `summary` - Optional aggregated statistics
+/// - `data` - Optional report-level data for downstream tooling
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Report {
     /// Schema identifier for this report format.
     /// Always "builddiag.report.v1" for this version.
     pub schema: String,
     /// Information about the tool that generated this report.
-    pub tool: ToolInfo,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool: Option<ToolInfo>,
     /// Information about this execution run.
-    pub run: RunInfo,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run: Option<RunInfo>,
     /// Overall verdict based on all findings.
     pub verdict: Verdict,
     /// All findings from all checks, flattened into a single list.
@@ -351,6 +351,9 @@ pub struct Report {
     /// Summary statistics, if available.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<Summary>,
+    /// Optional arbitrary report-level metadata for downstream tooling.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<serde_json::Value>,
 }
 
 impl Report {
@@ -1265,7 +1268,6 @@ mod tests {
                     line: Some(1),
                     col: Some(5),
                 }),
-                data: None,
             };
 
             assert_eq!(finding.check_id, "rust.msrv_defined");
@@ -1291,7 +1293,6 @@ mod tests {
                     line: None,
                     col: None,
                 }),
-                data: None,
             };
 
             assert_eq!(finding.severity, Severity::Warn);
@@ -1311,7 +1312,6 @@ mod tests {
                 severity: Severity::Info,
                 message: "Workspace with 5 members detected".to_string(),
                 location: None,
-                data: None,
             };
 
             assert_eq!(finding.severity, Severity::Info);
@@ -1327,30 +1327,9 @@ mod tests {
                 severity: Severity::Error,
                 message: "A general error occurred".to_string(),
                 location: None,
-                data: None,
             };
 
             assert!(finding.location.is_none());
-            assert!(finding.data.is_none());
-        }
-
-        #[test]
-        fn finding_with_data() {
-            let finding = Finding {
-                check_id: "rust.msrv_consistent".to_string(),
-                code: "msrv_mismatch".to_string(),
-                severity: Severity::Error,
-                message: "MSRV mismatch".to_string(),
-                location: None,
-                data: Some(serde_json::json!({
-                    "expected": "1.75.0",
-                    "actual": "1.70.0"
-                })),
-            };
-
-            assert!(finding.data.is_some());
-            let data = finding.data.unwrap();
-            assert_eq!(data["expected"], "1.75.0");
         }
 
         #[test]
@@ -1373,7 +1352,6 @@ mod tests {
                     line: Some(10),
                     col: Some(5),
                 }),
-                data: None,
             };
 
             let finding2 = Finding {
@@ -1386,7 +1364,6 @@ mod tests {
                     line: Some(10),
                     col: Some(5),
                 }),
-                data: None,
             };
 
             assert_eq!(finding1, finding2);
@@ -1404,7 +1381,6 @@ mod tests {
                     line: Some(42),
                     col: None,
                 }),
-                data: None,
             };
 
             let cloned = finding.clone();
@@ -1448,7 +1424,6 @@ mod tests {
                 severity,
                 message: format!("Test finding: {}", code),
                 location: None,
-                data: None,
             }
         }
 
@@ -1679,11 +1654,11 @@ mod tests {
 
             Report {
                 schema: Report::SCHEMA_V1.to_string(),
-                tool: ToolInfo {
+                tool: Some(ToolInfo {
                     name: "builddiag".to_string(),
                     version: "0.1.0".to_string(),
-                },
-                run: RunInfo {
+                }),
+                run: Some(RunInfo {
                     started_at: started,
                     ended_at: Some(ended),
                     duration_ms: 5000,
@@ -1696,7 +1671,7 @@ mod tests {
                         branch: Some("main".to_string()),
                         dirty: false,
                     }),
-                },
+                }),
                 verdict: Verdict::Warn,
                 findings: vec![Finding {
                     check_id: "rust.toolchain_msrv_relation".to_string(),
@@ -1708,13 +1683,13 @@ mod tests {
                         line: None,
                         col: None,
                     }),
-                    data: None,
                 }],
                 summary: Some(Summary {
                     total_findings: 1,
                     by_severity,
                     by_check,
                 }),
+                data: None,
             }
         }
 
@@ -1723,15 +1698,18 @@ mod tests {
             let report = create_test_report();
 
             assert_eq!(report.schema, Report::SCHEMA_V1);
-            assert_eq!(report.tool.name, "builddiag");
-            assert_eq!(report.tool.version, "0.1.0");
-            assert_eq!(report.run.duration_ms, 5000);
-            assert!(report.run.ended_at.is_some());
-            assert_eq!(report.run.host.os, "linux");
-            assert!(report.run.git.is_some());
+            let tool = report.tool.as_ref().expect("tool info should be present");
+            assert_eq!(tool.name, "builddiag");
+            assert_eq!(tool.version, "0.1.0");
+            let run = report.run.as_ref().expect("run info should be present");
+            assert_eq!(run.duration_ms, 5000);
+            assert!(run.ended_at.is_some());
+            assert_eq!(run.host.os, "linux");
+            assert!(run.git.is_some());
             assert_eq!(report.verdict, Verdict::Warn);
             assert_eq!(report.findings.len(), 1);
             assert!(report.summary.is_some());
+            assert!(report.data.is_none());
         }
 
         #[test]
@@ -1830,11 +1808,11 @@ mod tests {
 
             let report = Report {
                 schema: Report::SCHEMA_V1.to_string(),
-                tool: ToolInfo {
+                tool: Some(ToolInfo {
                     name: "builddiag".to_string(),
                     version: "0.1.0".to_string(),
-                },
-                run: RunInfo {
+                }),
+                run: Some(RunInfo {
                     started_at: started,
                     ended_at: Some(Utc::now()),
                     duration_ms: 100,
@@ -1843,10 +1821,11 @@ mod tests {
                         arch: "x86_64".to_string(),
                     },
                     git: None,
-                },
+                }),
                 verdict: Verdict::Pass,
                 findings: vec![],
                 summary: None,
+                data: None,
             };
 
             assert!(report.findings.is_empty());

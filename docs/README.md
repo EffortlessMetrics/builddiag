@@ -15,6 +15,7 @@ builddiag is the **repo-truth workspace contract sensor** for Rust repositories.
 | [config.md](config.md) | Configuration schema and profile mappings |
 | [testing.md](testing.md) | Testing strategy and organization |
 | [implementation.md](implementation.md) | Implementation phases and status |
+| [integration.md](integration.md) | CI, local hooks, and pre-commit integration |
 
 ## Crate Documentation
 

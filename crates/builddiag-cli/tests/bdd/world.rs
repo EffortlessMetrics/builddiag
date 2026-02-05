@@ -32,6 +32,12 @@ pub struct BuilddiagWorld {
     /// Custom config file content.
     pub config_content: Option<String>,
 
+    /// Override for defaults.out_dir from config.
+    pub out_dir_override: Option<String>,
+
+    /// Explicit --out path if provided.
+    pub explicit_out: Option<String>,
+
     /// Profile to use for the check command.
     pub profile: Option<String>,
 

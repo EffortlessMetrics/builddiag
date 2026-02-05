@@ -14,9 +14,15 @@ Feature: Checksums File Validation
     Given the workspace has no checksums file
     When I run builddiag check with profile "strict"
     Then the exit code should be 2
+    And the report should exist at the canonical path
+    And the report verdict should be "fail"
+    And the report should include finding "tools.checksums_file_exists" "missing_checksums" "error"
 
   Scenario: Missing checksums file passes when not required
     Given the workspace has no checksums file
     And the config has checksums require_file "false"
     When I run builddiag check
     Then the exit code should be 0
+    And the report should exist at the canonical path
+    And the report verdict should be "pass"
+    And the report should not include any "error" findings

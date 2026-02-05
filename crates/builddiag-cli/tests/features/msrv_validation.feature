@@ -12,6 +12,9 @@ Feature: MSRV Validation
     Given the workspace has no MSRV defined
     When I run builddiag check with profile "strict"
     Then the exit code should be 2
+    And the report should exist at the canonical path
+    And the report verdict should be "fail"
+    And the report should include finding "rust.msrv_defined" "missing_msrv" "error"
 
   Scenario: MSRV in workspace package passes
     Given the workspace has MSRV "1.75.0" in workspace package
@@ -19,12 +22,18 @@ Feature: MSRV Validation
     And the workspace has a checksums file
     When I run builddiag check
     Then the exit code should be 0
+    And the report should exist at the canonical path
+    And the report verdict should be "pass"
+    And the report should not include any "error" findings
 
   @strict
   Scenario: MSRV only in crate fails with strict profile
     Given the workspace has MSRV "1.75.0" only in crate
     When I run builddiag check with profile "strict"
     Then the exit code should be 2
+    And the report should exist at the canonical path
+    And the report verdict should be "fail"
+    And the report should include finding "rust.msrv_defined" "missing_msrv" "error"
 
   Scenario: MSRV in crate passes with source any policy
     Given the workspace has MSRV "1.75.0" only in crate
@@ -33,6 +42,9 @@ Feature: MSRV Validation
     And the config has msrv source "any"
     When I run builddiag check
     Then the exit code should be 0
+    And the report should exist at the canonical path
+    And the report verdict should be "pass"
+    And the report should not include any "error" findings
 
   Scenario: Multi-crate workspace with consistent MSRV passes
     Given the workspace has MSRV "1.75.0" in workspace package
@@ -41,6 +53,9 @@ Feature: MSRV Validation
     And the workspace has a checksums file
     When I run builddiag check
     Then the exit code should be 0
+    And the report should exist at the canonical path
+    And the report verdict should be "pass"
+    And the report should not include any "error" findings
 
   Scenario: MSRV with matching toolchain passes
     Given the workspace has MSRV "1.76.0" in workspace package
@@ -48,9 +63,15 @@ Feature: MSRV Validation
     And the workspace has a checksums file
     When I run builddiag check
     Then the exit code should be 0
+    And the report should exist at the canonical path
+    And the report verdict should be "pass"
+    And the report should not include any "error" findings
 
   Scenario: Report contains MSRV findings when missing
     Given the workspace has no MSRV defined
     When I run builddiag check with profile "strict"
     Then the exit code should be 2
+    And the report should exist at the canonical path
+    And the report verdict should be "fail"
+    And the report should include finding "rust.msrv_defined" "missing_msrv" "error"
     And the file "artifacts/builddiag/report.json" should exist

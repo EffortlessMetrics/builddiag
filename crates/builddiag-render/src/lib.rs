@@ -29,17 +29,18 @@
 //!
 //! # let report = Report {
 //! #     schema: Report::SCHEMA_V1.to_string(),
-//! #     tool: ToolInfo { name: "builddiag".into(), version: "0.1.0".into() },
-//! #     run: RunInfo {
+//! #     tool: Some(ToolInfo { name: "builddiag".into(), version: "0.1.0".into() }),
+//! #     run: Some(RunInfo {
 //! #         started_at: Utc::now(),
 //! #         ended_at: None,
 //! #         duration_ms: 100,
 //! #         host: HostInfo { os: "linux".into(), arch: "x86_64".into() },
 //! #         git: None,
-//! #     },
+//! #     }),
 //! #     verdict: Verdict::Pass,
 //! #     findings: vec![],
 //! #     summary: None,
+//! #     data: None,
 //! # };
 //! // Use default options
 //! let md = render_markdown(&report);
@@ -124,17 +125,18 @@ pub fn render_markdown(report: &Report) -> String {
 ///
 /// # let report = Report {
 /// #     schema: Report::SCHEMA_V1.to_string(),
-/// #     tool: ToolInfo { name: "builddiag".into(), version: "0.1.0".into() },
-/// #     run: RunInfo {
+/// #     tool: Some(ToolInfo { name: "builddiag".into(), version: "0.1.0".into() }),
+/// #     run: Some(RunInfo {
 /// #         started_at: Utc::now(),
 /// #         ended_at: None,
 /// #         duration_ms: 100,
 /// #         host: HostInfo { os: "linux".into(), arch: "x86_64".into() },
 /// #         git: None,
-/// #     },
+/// #     }),
 /// #     verdict: Verdict::Pass,
 /// #     findings: vec![],
 /// #     summary: None,
+/// #     data: None,
 /// # };
 /// let options = RenderOptions {
 ///     max_findings: 25,
@@ -399,11 +401,11 @@ mod tests {
     fn create_test_report_empty() -> Report {
         Report {
             schema: Report::SCHEMA_V1.to_string(),
-            tool: ToolInfo {
+            tool: Some(ToolInfo {
                 name: "builddiag".into(),
                 version: "0.1.0".into(),
-            },
-            run: RunInfo {
+            }),
+            run: Some(RunInfo {
                 started_at: Utc::now(),
                 ended_at: None,
                 duration_ms: 100,
@@ -412,10 +414,11 @@ mod tests {
                     arch: "x86_64".into(),
                 },
                 git: None,
-            },
+            }),
             verdict: Verdict::Pass,
             findings: vec![],
             summary: None,
+            data: None,
         }
     }
 
@@ -432,7 +435,6 @@ mod tests {
                     line: Some(1),
                     col: None,
                 }),
-                data: None,
             },
             Finding {
                 check_id: "rust.toolchain_pinning".into(),
@@ -444,7 +446,6 @@ mod tests {
                     line: Some(2),
                     col: Some(5),
                 }),
-                data: None,
             },
             Finding {
                 check_id: "rust.toolchain_pinning".into(),
@@ -456,7 +457,6 @@ mod tests {
                     line: Some(1),
                     col: None,
                 }),
-                data: None,
             },
         ];
         report.verdict = Verdict::Fail;
@@ -483,7 +483,6 @@ mod tests {
                     line: Some((i + 1) as u32),
                     col: None,
                 }),
-                data: None,
             });
         }
         report.findings = findings;
@@ -613,7 +612,6 @@ mod tests {
                 line: Some(1),
                 col: None,
             }),
-            data: None,
         }];
         report.verdict = Verdict::Fail;
 
@@ -701,7 +699,6 @@ mod tests {
                 severity: Severity::Error,
                 message: "Finding without location".into(),
                 location: None,
-                data: None,
             },
             Finding {
                 check_id: "test.check".into(),
@@ -713,7 +710,6 @@ mod tests {
                     line: None,
                     col: None,
                 }),
-                data: None,
             },
             Finding {
                 check_id: "test.check".into(),
@@ -725,7 +721,6 @@ mod tests {
                     line: Some(10),
                     col: None,
                 }),
-                data: None,
             },
         ];
 
@@ -786,7 +781,6 @@ mod tests {
                 line: Some(10),
                 col: None,
             }),
-            data: None,
         };
         assert_eq!(format_location(&f1), "file.rs:10");
 
@@ -800,7 +794,6 @@ mod tests {
                 line: None,
                 col: None,
             }),
-            data: None,
         };
         assert_eq!(format_location(&f2), "file.rs");
 
@@ -810,7 +803,6 @@ mod tests {
             severity: Severity::Error,
             message: "test".into(),
             location: None,
-            data: None,
         };
         assert_eq!(format_location(&f3), "");
     }
@@ -833,11 +825,11 @@ mod tests {
     fn markdown_smoke() {
         let report = Report {
             schema: Report::SCHEMA_V1.to_string(),
-            tool: ToolInfo {
+            tool: Some(ToolInfo {
                 name: "builddiag".into(),
                 version: "0.1.0".into(),
-            },
-            run: RunInfo {
+            }),
+            run: Some(RunInfo {
                 started_at: Utc::now(),
                 ended_at: None,
                 duration_ms: 100,
@@ -846,7 +838,7 @@ mod tests {
                     arch: "x86_64".into(),
                 },
                 git: None,
-            },
+            }),
             verdict: Verdict::Fail,
             findings: vec![Finding {
                 check_id: "rust.msrv_defined".into(),
@@ -858,9 +850,9 @@ mod tests {
                     line: Some(1),
                     col: None,
                 }),
-                data: None,
             }],
             summary: None,
+            data: None,
         };
         let md = render_markdown(&report);
         assert!(md.contains("Missing MSRV"));

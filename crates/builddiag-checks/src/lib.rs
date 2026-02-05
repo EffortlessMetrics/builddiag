@@ -471,7 +471,6 @@ fn mk_finding(
         severity,
         message: message.into(),
         location: mk_location(path, line),
-        data: None,
     }
 }
 

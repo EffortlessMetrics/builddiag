@@ -52,7 +52,7 @@ builddiag-types    Shared types, config schema, report schema, profiles
 Each crate has its own `CLAUDE.md` with detailed documentation.
 
 **Publishing posture:**
-- Publish the CLI crate; keep internal crates `publish=false` unless you intentionally support embedding.
+- Publish the CLI crate and its dependency crates; document internal crates as implementation detail.
 
 **Crate purposes:**
 | Crate | Responsibility |
@@ -82,11 +82,14 @@ Each crate has its own `CLAUDE.md` with detailed documentation.
 
 **Top-level:**
 - `schema` - Schema version identifier ("builddiag.report.v1")
-- `tool` - Tool info (name, version)
-- `run` - Execution metadata (timestamps, duration, host, git)
 - `verdict` - Overall verdict (pass, warn, fail, skip, error)
 - `findings[]` - Flattened list of all findings
+- `tool` - Tool info (name, version) (optional)
+- `run` - Execution metadata (timestamps, duration, host, git) (optional)
 - `summary` - Optional aggregated statistics
+- `data` - Optional report-level data for downstream tooling
+
+Required fields are `schema`, `verdict`, and `findings`.
 
 **Finding identity:**
 - `check_id`: stable producer id (`rust.msrv_defined`, `workspace.resolver_v2`, …)
@@ -97,7 +100,6 @@ Each crate has its own `CLAUDE.md` with detailed documentation.
 - `line/col` optional
 
 **Extension points:**
-- `finding.data` (optional structured hints)
 - Report-level `data` (optional tool-specific payload)
 
 Director/cockpit treats these as opaque.

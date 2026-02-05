@@ -50,6 +50,9 @@ MAY emit when requested:
 ## Receipt Contract
 
 - Schema id: `builddiag.report.v1`
+- Required fields: `schema`, `verdict`, `findings`
+- Optional fields: `tool`, `run`, `summary`, `data`
+- Single extension point: report-level `data`
 - Findings are flat (not nested "checks[]"), identified by:
   - `check_id` (producer)
   - `code` (classification)

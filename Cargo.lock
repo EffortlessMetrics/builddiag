@@ -190,6 +190,7 @@ dependencies = [
  "hex",
  "proptest",
  "sha2",
+ "tempfile",
 ]
 
 [[package]]

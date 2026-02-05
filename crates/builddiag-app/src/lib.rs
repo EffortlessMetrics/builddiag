@@ -116,11 +116,11 @@ pub fn run_check(
 
     let report = Report {
         schema: REPORT_SCHEMA_V1.to_string(),
-        tool: ToolInfo {
+        tool: Some(ToolInfo {
             name: "builddiag".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
-        },
-        run: RunInfo {
+        }),
+        run: Some(RunInfo {
             started_at: start,
             ended_at: Some(end),
             duration_ms,
@@ -129,10 +129,11 @@ pub fn run_check(
                 arch: std::env::consts::ARCH.to_string(),
             },
             git: git_info,
-        },
+        }),
         verdict,
         findings,
         summary: Some(summary),
+        data: None,
     };
 
     let markdown = render_markdown(&report);

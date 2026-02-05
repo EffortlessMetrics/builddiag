@@ -101,7 +101,6 @@ fn arb_finding() -> impl Strategy<Value = Finding> {
             severity,
             message,
             location,
-            data: None,
         })
 }
 
@@ -127,7 +126,6 @@ fn arb_finding_with_location() -> impl Strategy<Value = Finding> {
                     line: Some(line),
                     col,
                 }),
-                data: None,
             },
         )
 }
@@ -187,8 +185,8 @@ fn arb_run_info() -> impl Strategy<Value = RunInfo> {
 /// Generate arbitrary Report instances.
 fn arb_report() -> impl Strategy<Value = Report> {
     (
-        arb_tool_info(),
-        arb_run_info(),
+        proptest::option::of(arb_tool_info()),
+        proptest::option::of(arb_run_info()),
         arb_verdict(),
         proptest::collection::vec(arb_finding(), 0..20),
     )
@@ -199,6 +197,7 @@ fn arb_report() -> impl Strategy<Value = Report> {
             verdict,
             findings,
             summary: None,
+            data: None,
         })
 }
 
@@ -206,8 +205,8 @@ fn arb_report() -> impl Strategy<Value = Report> {
 /// These have at least one non-info finding.
 fn arb_report_with_findings() -> impl Strategy<Value = Report> {
     (
-        arb_tool_info(),
-        arb_run_info(),
+        proptest::option::of(arb_tool_info()),
+        proptest::option::of(arb_run_info()),
         arb_verdict(),
         proptest::collection::vec(arb_finding(), 1..10),
     )
@@ -218,6 +217,7 @@ fn arb_report_with_findings() -> impl Strategy<Value = Report> {
             verdict,
             findings,
             summary: None,
+            data: None,
         })
 }
 
@@ -225,8 +225,8 @@ fn arb_report_with_findings() -> impl Strategy<Value = Report> {
 /// These have findings with path and line information.
 fn arb_report_with_located_findings() -> impl Strategy<Value = Report> {
     (
-        arb_tool_info(),
-        arb_run_info(),
+        proptest::option::of(arb_tool_info()),
+        proptest::option::of(arb_run_info()),
         arb_verdict(),
         proptest::collection::vec(arb_finding_with_location(), 1..10),
     )
@@ -237,6 +237,7 @@ fn arb_report_with_located_findings() -> impl Strategy<Value = Report> {
             verdict,
             findings,
             summary: None,
+            data: None,
         })
 }
 

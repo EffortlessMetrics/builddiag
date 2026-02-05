@@ -53,7 +53,7 @@ This is sequenced to keep boundaries sharp and avoid scope creep.
 - [x] Ensure CLI ergonomics are consistent:
   - `check`, `md`, `github-annotations`, `explain`, `list-checks`
   - Stable exit codes (0 ok, 1 tool error, 2 policy fail)
-- [ ] Provide copy/paste snippets in README:
+- [x] Provide copy/paste snippets in README:
   - Local usage
   - CI usage (artifact paths, annotation flags)
 - [x] Add `--profile` CLI flag for easy profile switching
@@ -61,19 +61,19 @@ This is sequenced to keep boundaries sharp and avoid scope creep.
 
 ## Phase 4 — Distribution
 
-- [ ] Prebuilt binaries for Linux/macOS/Windows
-- [ ] Crates.io publish posture:
-  - Publish CLI crate
-  - Keep internal crates private unless embedding is a goal
-- [ ] GitHub releases with changelogs
+- [x] Prebuilt binaries for Linux/macOS/Windows
+- [x] Crates.io publish posture:
+  - Publish CLI crate and dependency crates
+  - Document internal crates as implementation detail
+- [x] GitHub releases with changelogs
 
 ## Phase 5 — Ecosystem Integration Alignment
 
-- [ ] Align builddiag's receipt envelope semantics with cockpit contract:
+- [x] Align builddiag's receipt envelope semantics with cockpit contract:
   - Minimal required fields
   - One extension point (`data`)
   - Avoid multiple near-envelopes
-- [ ] Document integration patterns:
+- [x] Document integration patterns:
   - CI workflows (GitHub Actions)
   - Local development hooks
   - Pre-commit integration

@@ -86,6 +86,13 @@ A good minimum:
 - `by_severity` (map: info, warn, error → count)
 - `by_check` (map: check_id → count)
 
+## Receipt Shape
+
+Keep the receipt minimal and stable:
+- Required fields: `schema`, `verdict`, `findings`
+- Optional fields: `tool`, `run`, `summary`, `data`
+- Single extension point: report-level `data`
+
 ## Rendering Strategy
 
 Rendering is a separate layer:

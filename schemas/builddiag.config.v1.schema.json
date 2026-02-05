@@ -50,6 +50,18 @@
           "require_file": true,
           "verify_local_files": false
         },
+        "edition": {
+          "allow_overrides": [],
+          "allow_per_crate_override": false,
+          "require_consistent": true
+        },
+        "lockfile": {
+          "require_for_binaries": true,
+          "warn_for_libraries": false
+        },
+        "member_ordering": {
+          "require_sorted": true
+        },
         "msrv": {
           "allow_overrides": [],
           "allow_per_crate_override": false,
@@ -153,6 +165,30 @@
         }
       }
     },
+    "EditionPolicy": {
+      "description": "Policy settings for edition consistency checks.",
+      "type": "object",
+      "properties": {
+        "allow_overrides": {
+          "description": "List of crate paths allowed to have different edition.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "allow_per_crate_override": {
+          "description": "Allow individual crates to override the workspace edition.",
+          "type": "boolean",
+          "default": false
+        },
+        "require_consistent": {
+          "description": "Require all crates to have consistent edition.",
+          "type": "boolean",
+          "default": true
+        }
+      }
+    },
     "FailOn": {
       "description": "Condition that determines when builddiag should exit with failure.\n\nThis controls the exit code behavior based on finding severity.",
       "oneOf": [
@@ -172,6 +208,33 @@
           "const": "never"
         }
       ]
+    },
+    "LockfilePolicy": {
+      "description": "Policy settings for lockfile checks.\n\nControls how builddiag validates Cargo.lock presence.",
+      "type": "object",
+      "properties": {
+        "require_for_binaries": {
+          "description": "Require Cargo.lock for binary crates.",
+          "type": "boolean",
+          "default": true
+        },
+        "warn_for_libraries": {
+          "description": "Warn about lockfile in library-only crates.",
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "MemberOrderingPolicy": {
+      "description": "Policy settings for member ordering checks.",
+      "type": "object",
+      "properties": {
+        "require_sorted": {
+          "description": "Require workspace.members to be sorted alphabetically.",
+          "type": "boolean",
+          "default": true
+        }
+      }
     },
     "MsrvPolicy": {
       "description": "Policy settings for MSRV (Minimum Supported Rust Version) checks.\n\nControls how builddiag validates MSRV configuration across the workspace.",
@@ -244,7 +307,7 @@
       }
     },
     "Policy": {
-      "description": "Combined policy settings for all check categories.\n\nGroups together MSRV, toolchain, and checksums policies.",
+      "description": "Combined policy settings for all check categories.\n\nGroups together MSRV, toolchain, checksums, edition, member ordering, and lockfile policies.",
       "type": "object",
       "properties": {
         "checksums": {
@@ -254,6 +317,30 @@
             "require_coverage": false,
             "require_file": true,
             "verify_local_files": false
+          }
+        },
+        "edition": {
+          "description": "Edition consistency policy.",
+          "$ref": "#/$defs/EditionPolicy",
+          "default": {
+            "allow_overrides": [],
+            "allow_per_crate_override": false,
+            "require_consistent": true
+          }
+        },
+        "lockfile": {
+          "description": "Lockfile policy.",
+          "$ref": "#/$defs/LockfilePolicy",
+          "default": {
+            "require_for_binaries": true,
+            "warn_for_libraries": false
+          }
+        },
+        "member_ordering": {
+          "description": "Member ordering policy.",
+          "$ref": "#/$defs/MemberOrderingPolicy",
+          "default": {
+            "require_sorted": true
           }
         },
         "msrv": {

@@ -119,7 +119,6 @@ fn arb_finding() -> impl Strategy<Value = Finding> {
             severity,
             message,
             location,
-            data: None, // Skip arbitrary JSON data for simplicity
         })
 }
 
@@ -210,22 +209,32 @@ fn arb_summary() -> impl Strategy<Value = Summary> {
         })
 }
 
+/// Generate arbitrary report-level data payloads.
+fn arb_report_data() -> impl Strategy<Value = Option<serde_json::Value>> {
+    prop_oneof![
+        Just(None),
+        arb_message().prop_map(|msg| Some(serde_json::json!({ "note": msg }))),
+    ]
+}
+
 /// Generate arbitrary Report instances.
 fn arb_report() -> impl Strategy<Value = Report> {
     (
-        arb_tool_info(),
-        arb_run_info(),
+        proptest::option::of(arb_tool_info()),
+        proptest::option::of(arb_run_info()),
         arb_verdict(),
         proptest::collection::vec(arb_finding(), 0..10),
         proptest::option::of(arb_summary()),
+        arb_report_data(),
     )
-        .prop_map(|(tool, run, verdict, findings, summary)| Report {
+        .prop_map(|(tool, run, verdict, findings, summary, data)| Report {
             schema: Report::SCHEMA_V1.to_string(),
             tool,
             run,
             verdict,
             findings,
             summary,
+            data,
         })
 }
 
@@ -460,15 +469,11 @@ proptest! {
 
         // Verify the round-trip produces equivalent data
         prop_assert_eq!(report.schema, parsed.schema);
-        prop_assert_eq!(report.tool.name, parsed.tool.name);
-        prop_assert_eq!(report.tool.version, parsed.tool.version);
-        prop_assert_eq!(report.run.started_at, parsed.run.started_at);
-        prop_assert_eq!(report.run.ended_at, parsed.run.ended_at);
-        prop_assert_eq!(report.run.duration_ms, parsed.run.duration_ms);
-        prop_assert_eq!(report.run.host.os, parsed.run.host.os);
-        prop_assert_eq!(report.run.host.arch, parsed.run.host.arch);
+        prop_assert_eq!(report.tool, parsed.tool);
+        prop_assert_eq!(report.run, parsed.run);
         prop_assert_eq!(report.verdict, parsed.verdict);
         prop_assert_eq!(report.findings.len(), parsed.findings.len());
+        prop_assert_eq!(report.data, parsed.data);
 
         // Compare summary if present
         match (&report.summary, &parsed.summary) {
