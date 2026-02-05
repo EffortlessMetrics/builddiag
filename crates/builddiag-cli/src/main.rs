@@ -105,6 +105,12 @@ enum Command {
         #[arg(long)]
         md: Option<Utf8PathBuf>,
 
+        /// Artifacts output directory. When set, always writes sensor.report.v1
+        /// to <dir>/report.json with builddiag-native payload in <dir>/extras/payload.json.
+        /// Overrides --out, --md, and --format.
+        #[arg(long)]
+        artifacts_dir: Option<Utf8PathBuf>,
+
         /// Annotation output format (github or none).
         #[arg(long, value_enum, default_value = "none")]
         annotations: AnnotationFormat,
@@ -202,6 +208,7 @@ fn try_main() -> Result<()> {
             profile,
             out,
             md,
+            artifacts_dir,
             annotations,
             format,
             mode,
@@ -214,15 +221,27 @@ fn try_main() -> Result<()> {
         } => {
             let start = Utc::now();
 
+            // --artifacts-dir forces sensor format and overrides out/md paths
+            let (effective_out, effective_md, effective_format) =
+                if let Some(ref dir) = artifacts_dir {
+                    (
+                        Some(dir.join("report.json")),
+                        Some(dir.join("comment.md")),
+                        OutputFormat::Sensor,
+                    )
+                } else {
+                    (out.clone(), md.clone(), format)
+                };
+
             // In cockpit mode, wrap everything including config loading in error handling
             let result = run_check_command(
                 &root,
                 config.as_deref(),
                 profile,
-                out.as_deref(),
-                md.as_deref(),
+                effective_out.as_deref(),
+                effective_md.as_deref(),
                 annotations,
-                format,
+                effective_format,
                 diff_aware,
                 base.as_deref(),
                 head.as_deref(),
@@ -240,7 +259,8 @@ fn try_main() -> Result<()> {
                         &cmd_result.out_json,
                         cmd_result.out_md.as_deref(),
                         annotations,
-                        format,
+                        effective_format,
+                        artifacts_dir.as_deref(),
                     )?;
                     process::exit(cmd_result.run.exit_code);
                 }
@@ -252,7 +272,8 @@ fn try_main() -> Result<()> {
                         &cmd_result.out_json,
                         cmd_result.out_md.as_deref(),
                         annotations,
-                        format,
+                        effective_format,
+                        artifacts_dir.as_deref(),
                     )?;
                     process::exit(0); // Report written successfully
                 }
@@ -261,9 +282,13 @@ fn try_main() -> Result<()> {
                 }
                 (Err(e), Mode::Cockpit) => {
                     // Create error receipt and try to write it
-                    // Use default output path if we couldn't load config
-                    let out_json =
-                        out.unwrap_or_else(|| root.join("artifacts/builddiag/report.json"));
+                    // Use artifacts-dir or --out, falling back to default path
+                    let out_json = if let Some(ref dir) = artifacts_dir {
+                        dir.join("report.json")
+                    } else {
+                        effective_out
+                            .unwrap_or_else(|| root.join("artifacts/builddiag/report.json"))
+                    };
 
                     let receipt = create_error_receipt(start, &e);
                     let json = serde_json::to_vec_pretty(&receipt)?;
@@ -658,13 +683,32 @@ fn finish_check_output(
     md: Option<&Utf8Path>,
     annotations: AnnotationFormat,
     format: OutputFormat,
+    artifacts_dir: Option<&Utf8Path>,
 ) -> Result<()> {
     match format {
         OutputFormat::Builddiag => {
             write_outputs(out_json, md, run)?;
         }
         OutputFormat::Sensor => {
-            let sensor = sensor_report.expect("sensor report should exist");
+            let mut sensor = sensor_report.expect("sensor report should exist").clone();
+
+            // When using --artifacts-dir, write builddiag-native payload to extras/
+            // and reference it from the sensor envelope
+            if let Some(dir) = artifacts_dir {
+                let extras_dir = dir.join("extras");
+                std::fs::create_dir_all(&extras_dir)
+                    .with_context(|| format!("create {extras_dir}"))?;
+                let payload_path = extras_dir.join("payload.json");
+                let payload = serde_json::to_vec_pretty(&run.report)?;
+                write_atomic(&payload_path, &payload)?;
+
+                sensor.artifacts.push(builddiag_types::Artifact {
+                    name: "payload".to_string(),
+                    path: "extras/payload.json".to_string(),
+                    mime_type: Some("application/json".to_string()),
+                });
+            }
+
             let json = serde_json::to_vec_pretty(&sensor)?;
             write_atomic(out_json, &json)?;
             if let Some(md_path) = md {

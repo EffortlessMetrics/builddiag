@@ -91,21 +91,17 @@ fn try_main() -> Result<()> {
 fn generate_schemas(out_dir: &Utf8Path) -> Result<()> {
     std::fs::create_dir_all(out_dir).with_context(|| format!("create {out_dir}"))?;
 
-    // Native builddiag schemas
+    // Native builddiag schemas only.
+    // sensor.report.v1.schema.json is owned by the contracts pack, not generated here.
     let report = schema_for!(builddiag_types::Report);
     let cfg = schema_for!(builddiag_types::Config);
 
     write_json(out_dir.join("builddiag.report.v1.schema.json"), &report)?;
     write_json(out_dir.join("builddiag.config.v1.schema.json"), &cfg)?;
 
-    // Cockpit-compatible sensor report schema
-    let sensor_report = schema_for!(builddiag_types::SensorReport);
-    write_json(out_dir.join("sensor.report.v1.schema.json"), &sensor_report)?;
-
     println!("Generated schemas:");
     println!("  - {}/builddiag.report.v1.schema.json", out_dir);
     println!("  - {}/builddiag.config.v1.schema.json", out_dir);
-    println!("  - {}/sensor.report.v1.schema.json", out_dir);
 
     Ok(())
 }
@@ -178,7 +174,22 @@ fn run_conform(
         }
     }
 
-    // 4. Golden File Check (optional)
+    // 4. Artifact Layout Check
+    if should_run("layout") {
+        println!("=== Artifact Layout Check ===");
+        match run_layout_check(fixtures) {
+            Ok(()) => {
+                println!("  PASS: Artifact layout is correct\n");
+                passed += 1;
+            }
+            Err(e) => {
+                println!("  FAIL: Artifact layout check failed: {e:#}\n");
+                failed += 1;
+            }
+        }
+    }
+
+    // 5. Golden File Check (optional)
     if should_run("golden") {
         println!("=== Golden File Check ===");
         match run_golden_check(fixtures, golden, update_golden) {
@@ -210,8 +221,8 @@ fn run_conform(
 }
 
 fn run_schema_validation(fixtures: &Utf8Path) -> Result<()> {
-    // Load the sensor schema
-    let schema_path = Utf8Path::new("schemas/sensor.report.v1.schema.json");
+    // Load the sensor schema from the contracts pack (shared ABI, not locally generated)
+    let schema_path = Utf8Path::new("contracts/schemas/sensor.report.v1.schema.json");
     let schema_content = std::fs::read_to_string(schema_path)
         .with_context(|| format!("read schema from {schema_path}"))?;
     let schema_value: serde_json::Value =
@@ -324,6 +335,102 @@ fn run_survivability_check(fixtures: &Utf8Path) -> Result<()> {
         "    Broken config produced valid JSON error receipt (exit code: {})",
         status.status.code().unwrap_or(-1)
     );
+    Ok(())
+}
+
+fn run_layout_check(fixtures: &Utf8Path) -> Result<()> {
+    let valid_dir = fixtures.join("valid-workspace");
+    if !valid_dir.exists() {
+        return Ok(());
+    }
+
+    let temp_dir = tempfile::TempDir::new()?;
+    let artifacts_dir = Utf8Path::from_path(temp_dir.path())
+        .unwrap()
+        .join("artifacts/builddiag");
+
+    let output = std::process::Command::new("cargo")
+        .args([
+            "run",
+            "-p",
+            "builddiag",
+            "--",
+            "check",
+            "--root",
+            valid_dir.as_str(),
+            "--profile",
+            "oss",
+            "--artifacts-dir",
+            artifacts_dir.as_str(),
+        ])
+        .output()
+        .context("run builddiag with --artifacts-dir")?;
+
+    // Verify report.json exists and is sensor format
+    let report_path = artifacts_dir.join("report.json");
+    if !report_path.exists() {
+        anyhow::bail!("report.json not found at {report_path}");
+    }
+    let report_content = std::fs::read_to_string(&report_path)?;
+    let report: serde_json::Value =
+        serde_json::from_str(&report_content).context("parse report.json")?;
+    let schema = report
+        .get("schema")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if schema != "sensor.report.v1" {
+        anyhow::bail!(
+            "report.json has schema '{schema}', expected 'sensor.report.v1'"
+        );
+    }
+    println!("    report.json: OK (sensor.report.v1)");
+
+    // Verify comment.md exists
+    let comment_path = artifacts_dir.join("comment.md");
+    if !comment_path.exists() {
+        anyhow::bail!("comment.md not found at {comment_path}");
+    }
+    println!("    comment.md: OK");
+
+    // Verify extras/payload.json exists and is builddiag format
+    let payload_path = artifacts_dir.join("extras/payload.json");
+    if !payload_path.exists() {
+        anyhow::bail!("extras/payload.json not found at {payload_path}");
+    }
+    let payload_content = std::fs::read_to_string(&payload_path)?;
+    let payload: serde_json::Value =
+        serde_json::from_str(&payload_content).context("parse extras/payload.json")?;
+    let payload_schema = payload
+        .get("schema")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if payload_schema != "builddiag.report.v1" {
+        anyhow::bail!(
+            "extras/payload.json has schema '{payload_schema}', expected 'builddiag.report.v1'"
+        );
+    }
+    println!("    extras/payload.json: OK (builddiag.report.v1)");
+
+    // Verify no path traversal or absolute paths in report artifacts
+    if let Some(artifacts) = report.get("artifacts").and_then(|v| v.as_array()) {
+        for art in artifacts {
+            if let Some(path) = art.get("path").and_then(|v| v.as_str()) {
+                if path.contains("..") {
+                    anyhow::bail!("artifact path contains '..': {path}");
+                }
+                if path.starts_with('/') || (path.len() > 1 && path.as_bytes()[1] == b':') {
+                    anyhow::bail!("artifact path is absolute: {path}");
+                }
+            }
+        }
+    }
+    println!("    artifact paths: OK (no traversal, no absolute)");
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        println!("    note: exit code {} (stderr: {stderr})", output.status.code().unwrap_or(-1));
+    }
+
     Ok(())
 }
 

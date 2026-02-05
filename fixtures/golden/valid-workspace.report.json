@@ -5,15 +5,15 @@
     "version": "0.2.0"
   },
   "run": {
-    "started_at": "2026-02-05T14:25:07.375320200Z",
-    "ended_at": "2026-02-05T14:25:07.398170800Z",
-    "duration_ms": 22,
+    "started_at": "2026-02-05T22:50:30.117449300Z",
+    "ended_at": "2026-02-05T22:50:30.142786700Z",
+    "duration_ms": 25,
     "host": {
       "os": "windows",
       "arch": "x86_64"
     },
     "git": {
-      "commit": "fdc71b35d6652bb7d842719c57517d4be7d4b31b",
+      "commit": "54d8de7dd4ec3697f40260c71078dad7bdb1c895",
       "branch": "main",
       "dirty": true
     },
@@ -40,11 +40,62 @@
   "verdict": {
     "status": "pass",
     "counts": {
-      "info": 0,
+      "info": 5,
       "warn": 0,
       "error": 0,
       "suppressed": 0
     }
   },
-  "findings": []
+  "findings": [
+    {
+      "check_id": "workspace.publish_ready",
+      "code": "missing_description",
+      "severity": "info",
+      "message": "fixture-a: missing required 'description' field for publishing",
+      "fingerprint": "d12b3b478b44a0431b9f92e06794eb79e4689dd9b4cb1037b194c0e7fa44727f",
+      "location": {
+        "path": "crates\\a\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "workspace.publish_ready",
+      "code": "missing_documentation",
+      "severity": "info",
+      "message": "fixture-a: missing recommended 'documentation' or 'homepage' field",
+      "fingerprint": "bb2ee7b226faadd8c58a85ea208c1505d61202038ff9fe8cad6413e6cb1e94de",
+      "location": {
+        "path": "crates\\a\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "workspace.publish_ready",
+      "code": "missing_license",
+      "severity": "info",
+      "message": "fixture-a: missing required 'license' or 'license-file' field for publishing",
+      "fingerprint": "38bfc90a6c231752aa6bf82a0ea5a678a3d3c6071d2cdd3c9389db7d28c10da9",
+      "location": {
+        "path": "crates\\a\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "workspace.publish_ready",
+      "code": "missing_readme",
+      "severity": "info",
+      "message": "fixture-a: missing recommended 'readme' field",
+      "fingerprint": "effbaed6197868038d5e78e475ce13202275db4dc25115b6386b0e7e363cd172",
+      "location": {
+        "path": "crates\\a\\Cargo.toml"
+      }
+    },
+    {
+      "check_id": "workspace.publish_ready",
+      "code": "missing_repository",
+      "severity": "info",
+      "message": "fixture-a: missing recommended 'repository' field",
+      "fingerprint": "01959579daad95ef8882d886612d2818de148ab8511f23d685335332a28d3dc6",
+      "location": {
+        "path": "crates\\a\\Cargo.toml"
+      }
+    }
+  ]
 }

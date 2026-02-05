@@ -502,9 +502,9 @@ use sha2::{Digest, Sha256};
 
 /// Compute a stable fingerprint for a finding.
 ///
-/// The fingerprint is a truncated SHA-256 hash of the finding's identifying fields:
+/// The fingerprint is a full SHA-256 hash of the finding's identifying fields:
 /// `check_id + code + path + line`. This provides a stable identifier for deduplication
-/// across runs and baselines.
+/// across runs, baselines, waivers, and ratchets.
 ///
 /// # Stability Guarantees
 ///
@@ -514,7 +514,7 @@ use sha2::{Digest, Sha256};
 ///
 /// # Format
 ///
-/// Returns a 16-character hex string (first 8 bytes of SHA-256).
+/// Returns a 64-character hex string (full SHA-256).
 ///
 /// # Examples
 ///
@@ -537,7 +537,7 @@ use sha2::{Digest, Sha256};
 /// let fp1 = compute_fingerprint(&finding);
 /// let fp2 = compute_fingerprint(&finding);
 /// assert_eq!(fp1, fp2); // Stable
-/// assert_eq!(fp1.len(), 16); // 16 hex chars
+/// assert_eq!(fp1.len(), 64); // Full SHA-256 hex
 /// ```
 pub fn compute_fingerprint(finding: &Finding) -> String {
     let path = finding
@@ -551,8 +551,8 @@ pub fn compute_fingerprint(finding: &Finding) -> String {
     let input = format!("{}\0{}\0{}\0{}", finding.check_id, finding.code, path, line);
 
     let hash = Sha256::digest(input.as_bytes());
-    // Return first 8 bytes as 16-char hex string
-    hex::encode(&hash[..8])
+    // Return full SHA-256 as 64-char hex string
+    hex::encode(hash)
 }
 
 /// Convert a base Finding to a SensorFinding with computed fingerprint.
@@ -649,8 +649,15 @@ pub fn build_verdict_counts(findings: &[Finding]) -> VerdictCounts {
 
 /// Build verdict reasons from check reports.
 ///
-/// Returns a list of human-readable reasons explaining why the verdict
-/// is not Pass. Includes check IDs that failed or warned.
+/// Returns a list of snake_case reason tokens explaining why the verdict
+/// is not Pass. Tokens are machine-addressable for cockpit policy routing.
+///
+/// # Token Format
+///
+/// - `all_checks_skipped` — every check was skipped
+/// - `tool_error` — an internal error occurred
+/// - `check_failed:<id>` — a specific check failed
+/// - `check_warned:<id>` — a specific check warned
 ///
 /// # Examples
 ///
@@ -668,7 +675,7 @@ pub fn build_verdict_counts(findings: &[Finding]) -> VerdictCounts {
 /// ];
 ///
 /// let reasons = build_verdict_reasons(Verdict::Fail, &checks);
-/// assert!(reasons.iter().any(|r| r.contains("rust.msrv_defined")));
+/// assert!(reasons.contains(&"check_failed:rust.msrv_defined".to_string()));
 /// ```
 pub fn build_verdict_reasons(verdict: Verdict, checks: &[CheckReport]) -> Vec<String> {
     let mut reasons = Vec::new();
@@ -676,28 +683,30 @@ pub fn build_verdict_reasons(verdict: Verdict, checks: &[CheckReport]) -> Vec<St
     match verdict {
         Verdict::Pass => {}
         Verdict::Skip => {
-            reasons.push("all checks were skipped".to_string());
+            reasons.push("all_checks_skipped".to_string());
         }
         Verdict::Error => {
-            reasons.push("internal error occurred".to_string());
+            reasons.push("tool_error".to_string());
         }
         Verdict::Warn | Verdict::Fail => {
-            let failed: Vec<_> = checks
+            let mut failed: Vec<_> = checks
                 .iter()
                 .filter(|c| c.status == CheckStatus::Fail)
                 .map(|c| c.id.as_str())
                 .collect();
-            let warned: Vec<_> = checks
+            failed.sort();
+            let mut warned: Vec<_> = checks
                 .iter()
                 .filter(|c| c.status == CheckStatus::Warn)
                 .map(|c| c.id.as_str())
                 .collect();
+            warned.sort();
 
-            if !failed.is_empty() {
-                reasons.push(format!("checks failed: {}", failed.join(", ")));
+            for id in &failed {
+                reasons.push(format!("check_failed:{id}"));
             }
-            if !warned.is_empty() {
-                reasons.push(format!("checks warned: {}", warned.join(", ")));
+            for id in &warned {
+                reasons.push(format!("check_warned:{id}"));
             }
         }
     }
@@ -988,7 +997,7 @@ mod tests {
         let fp2 = compute_fingerprint(&finding);
 
         assert_eq!(fp1, fp2, "Fingerprint should be stable");
-        assert_eq!(fp1.len(), 16, "Fingerprint should be 16 hex chars");
+        assert_eq!(fp1.len(), 64, "Fingerprint should be 64 hex chars (full SHA-256)");
     }
 
     #[test]
@@ -1051,7 +1060,7 @@ mod tests {
         let finding = make_finding(Severity::Warn, "check", "code", "msg", None, None);
 
         let fp = compute_fingerprint(&finding);
-        assert_eq!(fp.len(), 16);
+        assert_eq!(fp.len(), 64);
     }
 
     #[test]
@@ -1142,15 +1151,22 @@ mod tests {
         ];
 
         let reasons = build_verdict_reasons(Verdict::Fail, &checks);
-        assert!(reasons.iter().any(|r| r.contains("rust.msrv_defined")));
-        assert!(reasons.iter().any(|r| r.contains("rust.toolchain")));
+        assert!(reasons.contains(&"check_failed:rust.msrv_defined".to_string()));
+        assert!(reasons.contains(&"check_warned:rust.toolchain".to_string()));
     }
 
     #[test]
     fn test_build_verdict_reasons_skip() {
         let checks = vec![];
         let reasons = build_verdict_reasons(Verdict::Skip, &checks);
-        assert!(reasons.iter().any(|r| r.contains("skipped")));
+        assert!(reasons.contains(&"all_checks_skipped".to_string()));
+    }
+
+    #[test]
+    fn test_build_verdict_reasons_error() {
+        let checks = vec![];
+        let reasons = build_verdict_reasons(Verdict::Error, &checks);
+        assert!(reasons.contains(&"tool_error".to_string()));
     }
 
     #[test]

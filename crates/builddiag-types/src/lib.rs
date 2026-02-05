@@ -480,14 +480,14 @@ impl From<Verdict> for VerdictStatus {
 /// Provides more detail than a simple status enum:
 /// - `status`: The overall verdict (Pass/Warn/Fail/Skip)
 /// - `counts`: Breakdown of findings by severity
-/// - `reasons`: Human-readable reasons for non-pass verdicts
+/// - `reasons`: Machine-addressable snake_case reason tokens
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SensorVerdict {
     /// Overall verdict status.
     pub status: VerdictStatus,
     /// Counts of findings by severity.
     pub counts: VerdictCounts,
-    /// Reasons explaining the verdict (for non-pass statuses).
+    /// Snake_case reason tokens explaining the verdict (machine-addressable).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reasons: Vec<String>,
 }
@@ -518,7 +518,7 @@ pub struct SensorFinding {
     pub severity: Severity,
     /// Human-readable description of the finding.
     pub message: String,
-    /// Stable fingerprint for deduplication (sha256 of check_id+code+path+line).
+    /// Stable fingerprint for deduplication (full 64-char SHA-256 hex of check_id+code+path+line).
     pub fingerprint: String,
     /// File location where the finding was detected, if applicable.
     #[serde(skip_serializing_if = "Option::is_none")]

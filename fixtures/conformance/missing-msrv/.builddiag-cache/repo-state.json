@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "cargo_root": {
+    "meta": {
+      "path": "Cargo.toml",
+      "mtime": 1770301531,
+      "content_hash": "9c72073126edbcba946071271572f14b821375f0d335395568e360804903e00a"
+    },
+    "workspace_msrv": null,
+    "workspace_edition": null,
+    "workspace_resolver": null,
+    "is_workspace": true,
+    "member_patterns": [],
+    "exclude_patterns": []
+  },
+  "toolchain": {
+    "meta": null,
+    "channel": null
+  },
+  "checksums": {
+    "meta": null,
+    "entry_count": 0
+  },
+  "members": {
+    "Cargo.toml": {
+      "meta": {
+        "path": "Cargo.toml",
+        "mtime": 1770301531,
+        "content_hash": "9c72073126edbcba946071271572f14b821375f0d335395568e360804903e00a"
+      },
+      "name": "missing-msrv-fixture",
+      "rust_version": null,
+      "rust_version_workspace": false,
+      "edition": "2024",
+      "edition_workspace": false,
+      "has_binary_target": false
+    }
+  },
+  "lockfile_exists": false
+}

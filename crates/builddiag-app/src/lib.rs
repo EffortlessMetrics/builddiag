@@ -391,6 +391,12 @@ pub fn report_to_sensor(
 ///
 /// In Cockpit mode, we need to produce a valid report even when the tool
 /// fails internally. This creates a minimal report with the error information.
+///
+/// Uses canonical tool-error identity:
+/// - `check_id = "tool.runtime"`
+/// - `code = "runtime_error"`
+/// - `severity = error`
+/// - `verdict = Error` (maps to `fail` in sensor format)
 pub fn create_error_receipt(started_at: DateTime<Utc>, error: &anyhow::Error) -> Report {
     let end = Utc::now();
     let duration_ms = (end - started_at).num_milliseconds().max(0) as u64;
@@ -413,8 +419,8 @@ pub fn create_error_receipt(started_at: DateTime<Utc>, error: &anyhow::Error) ->
         }),
         verdict: Verdict::Error,
         findings: vec![Finding {
-            check_id: "builddiag.internal".to_string(),
-            code: "tool_error".to_string(),
+            check_id: "tool.runtime".to_string(),
+            code: "runtime_error".to_string(),
             severity: Severity::Error,
             message: format!("Internal error: {error:#}"),
             location: None,
@@ -1064,8 +1070,8 @@ diff_aware = "yes"
             assert_eq!(receipt.schema, REPORT_SCHEMA_V1);
             assert_eq!(receipt.verdict, Verdict::Error);
             assert_eq!(receipt.findings.len(), 1);
-            assert_eq!(receipt.findings[0].check_id, "builddiag.internal");
-            assert_eq!(receipt.findings[0].code, "tool_error");
+            assert_eq!(receipt.findings[0].check_id, "tool.runtime");
+            assert_eq!(receipt.findings[0].code, "runtime_error");
             assert_eq!(receipt.findings[0].severity, Severity::Error);
             assert!(receipt.findings[0].message.contains("Test error message"));
             assert!(receipt.tool.is_some());

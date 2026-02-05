@@ -213,7 +213,7 @@
           "description": "Optional structured data for this finding."
         },
         "fingerprint": {
-          "description": "Stable fingerprint for deduplication (sha256 of check_id+code+path+line).",
+          "description": "Stable fingerprint for deduplication (full 64-char SHA-256 hex of check_id+code+path+line).",
           "type": "string"
         },
         "help": {
@@ -311,7 +311,7 @@
       ]
     },
     "SensorVerdict": {
-      "description": "Structured verdict for sensor reports.\n\nProvides more detail than a simple status enum:\n- `status`: The overall verdict (Pass/Warn/Fail/Skip)\n- `counts`: Breakdown of findings by severity\n- `reasons`: Human-readable reasons for non-pass verdicts",
+      "description": "Structured verdict for sensor reports.\n\nProvides more detail than a simple status enum:\n- `status`: The overall verdict (Pass/Warn/Fail/Skip)\n- `counts`: Breakdown of findings by severity\n- `reasons`: Machine-addressable snake_case reason tokens",
       "type": "object",
       "properties": {
         "counts": {
@@ -319,7 +319,7 @@
           "$ref": "#/$defs/VerdictCounts"
         },
         "reasons": {
-          "description": "Reasons explaining the verdict (for non-pass statuses).",
+          "description": "Snake_case reason tokens explaining the verdict (machine-addressable).",
           "type": "array",
           "items": {
             "type": "string"

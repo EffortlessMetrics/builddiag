@@ -37,7 +37,7 @@ Add stable fingerprint generation for finding comparison.
 
 **Acceptance criteria:**
 - [ ] `fingerprint(finding: &Finding) -> String` function
-- [ ] Uses SHA-256 truncated to 16 hex chars
+- [ ] Uses full SHA-256 (64 hex chars)
 - [ ] Fingerprint based on: check type, file path, message content
 - [ ] Unit tests for fingerprint stability
 - [ ] Property test: fingerprint determinism across runs
