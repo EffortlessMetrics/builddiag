@@ -720,6 +720,12 @@ fn finish_check_output(
                     path: "extras/payload.json".to_string(),
                     mime_type: Some("application/json".to_string()),
                 });
+
+                sensor.artifacts.push(builddiag_types::Artifact {
+                    name: "comment".to_string(),
+                    path: "comment.md".to_string(),
+                    mime_type: Some("text/markdown".to_string()),
+                });
             }
 
             let json = serde_json::to_vec_pretty(&sensor)?;

@@ -5,15 +5,15 @@
     "version": "0.2.0"
   },
   "run": {
-    "started_at": "2026-02-06T07:23:50.969561200Z",
-    "ended_at": "2026-02-06T07:23:51.012308800Z",
-    "duration_ms": 42,
+    "started_at": "2026-02-06T21:19:30.134410800Z",
+    "ended_at": "2026-02-06T21:19:30.156378Z",
+    "duration_ms": 21,
     "host": {
       "os": "windows",
       "arch": "x86_64"
     },
     "git": {
-      "commit": "d65ecc62201d01b5d117d8e95e2feb68c49015c3",
+      "commit": "4471821a5ec5041d366d86f91a8f2d717952966f",
       "branch": "main",
       "dirty": true
     },
@@ -39,13 +39,16 @@
     }
   },
   "verdict": {
-    "status": "pass",
+    "status": "skip",
     "counts": {
       "info": 0,
       "warn": 0,
       "error": 0,
       "suppressed": 0
-    }
+    },
+    "reasons": [
+      "all_checks_skipped"
+    ]
   },
   "findings": []
 }

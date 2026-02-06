@@ -4658,6 +4658,7 @@ dependencies = [
  "clap",
  "jsonschema",
  "proptest",
+ "regex",
  "schemars",
  "serde",
  "serde_json",

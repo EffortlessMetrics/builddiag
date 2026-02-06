@@ -378,6 +378,22 @@ impl Report {
 /// The schema identifier for sensor.report.v1.
 pub const SENSOR_REPORT_SCHEMA_V1: &str = "sensor.report.v1";
 
+/// Canonical verdict reason tokens for sensor.report.v1.
+///
+/// These tokens appear in [`SensorVerdict::reasons`] and are the single
+/// source of truth for reason strings. Downstream consumers should
+/// pattern-match against these constants rather than bare string literals.
+pub mod verdict_reasons {
+    /// One or more checks failed.
+    pub const CHECKS_FAILED: &str = "checks_failed";
+    /// One or more checks produced warnings.
+    pub const CHECKS_WARNED: &str = "checks_warned";
+    /// All checks were skipped — no meaningful result.
+    pub const ALL_CHECKS_SKIPPED: &str = "all_checks_skipped";
+    /// An internal/runtime error occurred.
+    pub const TOOL_ERROR: &str = "tool_error";
+}
+
 /// Status of a capability for "No Green By Omission" tracking.
 ///
 /// Capabilities track whether features like git integration, config loading,

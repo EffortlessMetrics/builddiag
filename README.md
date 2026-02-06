@@ -146,6 +146,87 @@ Example `.vscode/tasks.json`:
 }
 ```
 
+## Output Formats
+
+builddiag supports three output formats via `--format`:
+
+| Format | Schema | Use Case |
+|--------|--------|----------|
+| `builddiag` (default) | `builddiag.report.v1` | Native format for direct consumption |
+| `sensor` | `sensor.report.v1` | Cockpit CI governance bus envelope |
+| `diagnostics` | N/A | IDE-compatible `path:line:col: severity: message` lines |
+
+The **sensor** format wraps the native report in a Cockpit-compatible envelope with structured verdicts, fingerprinted findings, capability tracking, and artifact references.
+
+```bash
+builddiag check --format sensor --out report.json
+```
+
+## Artifacts Directory Mode
+
+The `--artifacts-dir` flag writes a complete artifact bundle suitable for CI archival:
+
+```bash
+builddiag check --artifacts-dir artifacts/builddiag
+```
+
+This produces:
+
+```
+artifacts/builddiag/
+├── report.json          # sensor.report.v1 envelope
+├── comment.md           # Markdown summary (PR comment)
+└── extras/
+    └── payload.json     # builddiag.report.v1 native payload
+```
+
+When `--artifacts-dir` is set, `--format`, `--out`, and `--md` are overridden automatically.
+
+## Exit Code Modes
+
+The `--mode` flag controls exit code semantics:
+
+| Mode | Exit 0 | Exit 1 | Exit 2 |
+|------|--------|--------|--------|
+| `standard` (default) | Pass or Warn (when fail_on=error) | Runtime error | Policy violation |
+| `cockpit` | Report written successfully | Catastrophic failure (no report) | N/A |
+
+**Cockpit mode** is designed for CI pipelines where the downstream system reads the report JSON to determine pass/fail. Even on policy violations or tool errors, builddiag writes an error receipt and exits 0 so the pipeline can continue.
+
+```bash
+builddiag check --mode cockpit --artifacts-dir artifacts/builddiag
+```
+
+## Profiles
+
+Profiles configure check severities as presets. Select with `--profile` or in config:
+
+| Profile | Philosophy | Typical Use |
+|---------|-----------|-------------|
+| `oss` (default) | Warn-heavy, low friction | Open source projects, wide adoption |
+| `team` | Stronger gating | Organizational repos with discipline |
+| `strict` | All checks at error severity | Release discipline, CI/CD gates |
+
+<details>
+<summary>Profile severity matrix</summary>
+
+| Check | oss | team | strict |
+|-------|-----|------|--------|
+| `rust.msrv_defined` | warn | warn | error |
+| `rust.msrv_consistent` | error | error | error |
+| `rust.toolchain_pinning` | info | warn | error |
+| `rust.toolchain_msrv_relation` | warn | error | error |
+| `rust.edition_deprecations` | info | warn | error |
+| `workspace.resolver_v2` | info | warn | error |
+| `workspace.edition_consistent` | warn | error | error |
+| `workspace.member_ordering` | info | info | error |
+| `workspace.publish_ready` | info | warn | error |
+| `deps.*` | info | warn | error |
+| `deps.security_advisory` | skip | warn | error |
+| `tools.*` | skip | warn | error |
+
+</details>
+
 ## Config
 
 Optional config file:

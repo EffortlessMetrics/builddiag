@@ -1,3 +1,3 @@
-## builddiag: ✅ Pass (0 errors, 0 warnings)
+## builddiag: ⏭️ Skip (0 errors, 0 warnings)
 
 No findings.

@@ -238,6 +238,57 @@ fn run_conform(
         }
     }
 
+    // 8. Native Schema Validation
+    if should_run("native-schema") {
+        println!("=== Native Schema Validation ===");
+        match run_native_schema_validation(fixtures) {
+            Ok(()) => {
+                println!(
+                    "  PASS: All native reports validate against builddiag.report.v1 schema\n"
+                );
+                passed += 1;
+            }
+            Err(e) => {
+                println!("  FAIL: Native schema validation failed: {e:#}\n");
+                failed += 1;
+            }
+        }
+    }
+
+    // 9. Verdict Contract Check
+    if should_run("verdict-contract") {
+        println!("=== Verdict Contract Check ===");
+        match run_verdict_contract_check(fixtures) {
+            Ok(()) => {
+                println!("  PASS: Verdict contract is consistent across all fixtures\n");
+                passed += 1;
+            }
+            Err(e) => {
+                println!("  FAIL: Verdict contract check failed: {e:#}\n");
+                failed += 1;
+            }
+        }
+    }
+
+    // 10. Native Golden File Check
+    if should_run("native-golden") {
+        println!("=== Native Golden File Check ===");
+        match run_native_golden_check(fixtures, golden, update_golden) {
+            Ok(()) => {
+                if update_golden {
+                    println!("  INFO: Native golden files updated\n");
+                } else {
+                    println!("  PASS: Native output matches golden files (excluding timestamps)\n");
+                }
+                passed += 1;
+            }
+            Err(e) => {
+                println!("  FAIL: Native golden file check failed: {e:#}\n");
+                failed += 1;
+            }
+        }
+    }
+
     // Summary
     println!("=== Summary ===");
     println!("  Passed: {passed}");
@@ -440,6 +491,24 @@ fn run_layout_check(fixtures: &Utf8Path) -> Result<()> {
                 }
             }
         }
+    }
+    // Verify artifacts array includes both "payload" and "comment"
+    if let Some(artifacts) = report.get("artifacts").and_then(|v| v.as_array()) {
+        let has_payload = artifacts
+            .iter()
+            .any(|a| a.get("name").and_then(|v| v.as_str()) == Some("payload"));
+        let has_comment = artifacts
+            .iter()
+            .any(|a| a.get("name").and_then(|v| v.as_str()) == Some("comment"));
+        if !has_payload {
+            anyhow::bail!("artifacts array missing 'payload' entry");
+        }
+        if !has_comment {
+            anyhow::bail!("artifacts array missing 'comment' entry");
+        }
+        println!("    artifacts: OK (payload + comment declared)");
+    } else {
+        anyhow::bail!("report.json missing 'artifacts' array");
     }
     println!("    artifact paths: OK (no traversal, no absolute)");
 
@@ -739,6 +808,222 @@ fn run_library_parity_check(fixtures: &Utf8Path) -> Result<()> {
     }
 
     println!("    valid-workspace: Library output matches CLI output");
+    Ok(())
+}
+
+/// Run builddiag in native (builddiag.report.v1) format on a fixture directory.
+fn run_builddiag_native(root: &Utf8Path) -> Result<String> {
+    let temp_dir = tempfile::TempDir::new()?;
+    let out_file = Utf8Path::from_path(temp_dir.path())
+        .unwrap()
+        .join("report.json");
+
+    let mut args = vec![
+        "run",
+        "-p",
+        "builddiag",
+        "--",
+        "check",
+        "--root",
+        root.as_str(),
+        "--format",
+        "builddiag",
+        "--profile",
+        "oss",
+        "--out",
+        out_file.as_str(),
+    ];
+
+    // Auto-detect config file in the fixture directory
+    let config_path = root.join(".builddiag.toml");
+    let config_str;
+    if config_path.exists() {
+        config_str = config_path.to_string();
+        args.extend(["--config", &config_str]);
+    }
+
+    let output = std::process::Command::new("cargo")
+        .args(&args)
+        .output()
+        .context("run builddiag (native format)")?;
+
+    if !out_file.exists() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("builddiag (native) did not produce output: {stderr}");
+    }
+
+    std::fs::read_to_string(&out_file).context("read builddiag native output")
+}
+
+fn run_native_schema_validation(fixtures: &Utf8Path) -> Result<()> {
+    let schema_path = Utf8Path::new("schemas/builddiag.report.v1.schema.json");
+    let schema_content = std::fs::read_to_string(schema_path)
+        .with_context(|| format!("read native schema from {schema_path}"))?;
+    let schema_value: serde_json::Value =
+        serde_json::from_str(&schema_content).context("parse native schema JSON")?;
+
+    let validator = jsonschema::validator_for(&schema_value)
+        .map_err(|e| anyhow::anyhow!("compile native schema: {e}"))?;
+
+    // Skip fixtures that don't produce normal reports
+    let skip_fixtures = ["broken-config", "tool-error"];
+    for entry in discover_fixture_dirs(fixtures)? {
+        let name = entry
+            .file_name()
+            .ok_or_else(|| anyhow::anyhow!("no file name for fixture dir"))?;
+        if skip_fixtures.contains(&name) {
+            continue;
+        }
+
+        let report = run_builddiag_native(&entry)?;
+        let report_value: serde_json::Value =
+            serde_json::from_str(&report).with_context(|| format!("parse {name} native report"))?;
+
+        if let Err(e) = validator.validate(&report_value) {
+            anyhow::bail!("{name} native report failed schema validation: {}", e);
+        }
+        println!("    {name}: OK");
+    }
+
+    Ok(())
+}
+
+fn run_verdict_contract_check(fixtures: &Utf8Path) -> Result<()> {
+    let fingerprint_re = regex::Regex::new(r"^[0-9a-f]{64}$").unwrap();
+    let valid_reasons: &[&str] = &[
+        builddiag_types::verdict_reasons::CHECKS_FAILED,
+        builddiag_types::verdict_reasons::CHECKS_WARNED,
+        builddiag_types::verdict_reasons::ALL_CHECKS_SKIPPED,
+        builddiag_types::verdict_reasons::TOOL_ERROR,
+    ];
+
+    let skip_fixtures = ["broken-config", "tool-error"];
+    for entry in discover_fixture_dirs(fixtures)? {
+        let name = entry
+            .file_name()
+            .ok_or_else(|| anyhow::anyhow!("no file name for fixture dir"))?;
+        if skip_fixtures.contains(&name) {
+            continue;
+        }
+
+        let report_str = run_builddiag_sensor(&entry)?;
+        let report: serde_json::Value = serde_json::from_str(&report_str)
+            .with_context(|| format!("parse {name} sensor report"))?;
+
+        // Validate fingerprints on all findings
+        if let Some(findings) = report.get("findings").and_then(|v| v.as_array()) {
+            for (i, finding) in findings.iter().enumerate() {
+                if let Some(fp) = finding.get("fingerprint").and_then(|v| v.as_str()) {
+                    if !fingerprint_re.is_match(fp) {
+                        anyhow::bail!(
+                            "{name}: finding[{i}] fingerprint is not 64-char hex: '{fp}'"
+                        );
+                    }
+                } else {
+                    anyhow::bail!("{name}: finding[{i}] missing fingerprint");
+                }
+            }
+        }
+
+        // Validate verdict contract
+        let verdict = report
+            .get("verdict")
+            .ok_or_else(|| anyhow::anyhow!("{name}: missing verdict"))?;
+        let status = verdict
+            .get("status")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("{name}: missing verdict.status"))?;
+        let reasons: Vec<&str> = verdict
+            .get("reasons")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect::<Vec<&str>>())
+            .unwrap_or_default();
+        let data = verdict.get("data");
+
+        match status {
+            "pass" => {
+                if !reasons.is_empty() {
+                    anyhow::bail!(
+                        "{name}: pass verdict should have empty reasons, got {reasons:?}"
+                    );
+                }
+                if data.is_some() && !data.unwrap().is_null() {
+                    anyhow::bail!("{name}: pass verdict should have no data");
+                }
+            }
+            "skip" => {
+                if !reasons.contains(&builddiag_types::verdict_reasons::ALL_CHECKS_SKIPPED) {
+                    anyhow::bail!(
+                        "{name}: skip verdict should have 'all_checks_skipped' reason, got {reasons:?}"
+                    );
+                }
+            }
+            "warn" | "fail" => {
+                if reasons.is_empty() {
+                    anyhow::bail!("{name}: {status} verdict should have at least one reason token");
+                }
+                for r in &reasons {
+                    if !valid_reasons.contains(r) {
+                        anyhow::bail!("{name}: unknown reason token '{r}'");
+                    }
+                }
+                // Warn/fail verdicts with check-level failures should have data
+                if (reasons.contains(&builddiag_types::verdict_reasons::CHECKS_FAILED)
+                    || reasons.contains(&builddiag_types::verdict_reasons::CHECKS_WARNED))
+                    && (data.is_none() || data.unwrap().is_null())
+                {
+                    anyhow::bail!(
+                        "{name}: {status} verdict with checks_failed/checks_warned should have data"
+                    );
+                }
+            }
+            _ => {
+                anyhow::bail!("{name}: unexpected verdict status '{status}'");
+            }
+        }
+
+        println!("    {name}: OK (status={status}, reasons={reasons:?})");
+    }
+
+    Ok(())
+}
+
+fn run_native_golden_check(fixtures: &Utf8Path, golden: &Utf8Path, update: bool) -> Result<()> {
+    let skip_fixtures = ["broken-config", "tool-error"];
+
+    for entry in discover_fixture_dirs(fixtures)? {
+        let name = entry
+            .file_name()
+            .ok_or_else(|| anyhow::anyhow!("no file name for fixture dir"))?;
+        if skip_fixtures.contains(&name) {
+            continue;
+        }
+
+        let golden_name = format!("{name}.native.report.json");
+        let golden_path = golden.join(&golden_name);
+
+        let current = run_builddiag_native(&entry)?;
+        let current_normalized = normalize_for_comparison(&current)?;
+
+        if update {
+            std::fs::create_dir_all(golden)?;
+            std::fs::write(&golden_path, &current)?;
+            println!("    Updated {golden_path}");
+        } else if golden_path.exists() {
+            let golden_content = std::fs::read_to_string(&golden_path)?;
+            let golden_normalized = normalize_for_comparison(&golden_content)?;
+
+            if current_normalized != golden_normalized {
+                anyhow::bail!(
+                    "Native output differs from golden file {golden_path}\n\nExpected:\n{}\n\nGot:\n{}",
+                    golden_normalized,
+                    current_normalized
+                );
+            }
+            println!("    {golden_name}: OK");
+        }
+    }
+
     Ok(())
 }
 

@@ -17,6 +17,7 @@ builddiag-types = { path = "../crates/builddiag-types" }
 builddiag-core = { path = "../crates/builddiag-core" }
 toml.workspace = true
 jsonschema = "0.41.0"
+regex = "1"
 
 [dev-dependencies]
 proptest.workspace = true

@@ -497,7 +497,9 @@ fn compare_location_line(
 // Sensor Report Support (sensor.report.v1)
 // =============================================================================
 
-use builddiag_types::{SensorFinding, SensorVerdict, VerdictCounts, VerdictStatus};
+use builddiag_types::{
+    SensorFinding, SensorVerdict, VerdictCounts, VerdictStatus, verdict_reasons,
+};
 use sha2::{Digest, Sha256};
 
 /// Compute a stable fingerprint for a finding.
@@ -684,20 +686,20 @@ pub fn build_verdict_reasons(verdict: Verdict, checks: &[CheckReport]) -> Vec<St
     match verdict {
         Verdict::Pass => {}
         Verdict::Skip => {
-            reasons.push("all_checks_skipped".to_string());
+            reasons.push(verdict_reasons::ALL_CHECKS_SKIPPED.to_string());
         }
         Verdict::Error => {
-            reasons.push("tool_error".to_string());
+            reasons.push(verdict_reasons::TOOL_ERROR.to_string());
         }
         Verdict::Warn | Verdict::Fail => {
             let has_failed = checks.iter().any(|c| c.status == CheckStatus::Fail);
             let has_warned = checks.iter().any(|c| c.status == CheckStatus::Warn);
 
             if has_failed {
-                reasons.push("checks_failed".to_string());
+                reasons.push(verdict_reasons::CHECKS_FAILED.to_string());
             }
             if has_warned {
-                reasons.push("checks_warned".to_string());
+                reasons.push(verdict_reasons::CHECKS_WARNED.to_string());
             }
         }
     }
@@ -732,7 +734,7 @@ pub fn build_verdict_reasons(verdict: Verdict, checks: &[CheckReport]) -> Vec<St
 /// ```
 pub fn build_verdict_data(verdict: Verdict, checks: &[CheckReport]) -> Option<serde_json::Value> {
     match verdict {
-        Verdict::Warn | Verdict::Fail => {
+        Verdict::Warn | Verdict::Fail | Verdict::Error => {
             let mut failed: Vec<String> = checks
                 .iter()
                 .filter(|c| c.status == CheckStatus::Fail)
@@ -759,7 +761,7 @@ pub fn build_verdict_data(verdict: Verdict, checks: &[CheckReport]) -> Option<se
             }
             Some(serde_json::Value::Object(map))
         }
-        _ => None,
+        Verdict::Pass | Verdict::Skip => None,
     }
 }
 
@@ -814,7 +816,7 @@ pub fn build_sensor_verdict(verdict: Verdict, checks: &[CheckReport]) -> SensorV
 #[cfg(test)]
 mod tests {
     use super::*;
-    use builddiag_types::{Finding, Location, Severity};
+    use builddiag_types::{Finding, Location, Severity, verdict_reasons};
 
     /// Helper to create a Finding for tests
     fn make_finding(
@@ -1206,8 +1208,8 @@ mod tests {
         ];
 
         let reasons = build_verdict_reasons(Verdict::Fail, &checks);
-        assert!(reasons.contains(&"checks_failed".to_string()));
-        assert!(reasons.contains(&"checks_warned".to_string()));
+        assert!(reasons.contains(&verdict_reasons::CHECKS_FAILED.to_string()));
+        assert!(reasons.contains(&verdict_reasons::CHECKS_WARNED.to_string()));
         assert_eq!(reasons.len(), 2);
     }
 
@@ -1215,14 +1217,14 @@ mod tests {
     fn test_build_verdict_reasons_skip() {
         let checks = vec![];
         let reasons = build_verdict_reasons(Verdict::Skip, &checks);
-        assert!(reasons.contains(&"all_checks_skipped".to_string()));
+        assert!(reasons.contains(&verdict_reasons::ALL_CHECKS_SKIPPED.to_string()));
     }
 
     #[test]
     fn test_build_verdict_reasons_error() {
         let checks = vec![];
         let reasons = build_verdict_reasons(Verdict::Error, &checks);
-        assert!(reasons.contains(&"tool_error".to_string()));
+        assert!(reasons.contains(&verdict_reasons::TOOL_ERROR.to_string()));
     }
 
     #[test]
@@ -1244,7 +1246,11 @@ mod tests {
         let verdict = build_sensor_verdict(Verdict::Fail, &checks);
         assert_eq!(verdict.status, VerdictStatus::Fail);
         assert_eq!(verdict.counts.error, 1);
-        assert!(verdict.reasons.contains(&"checks_failed".to_string()));
+        assert!(
+            verdict
+                .reasons
+                .contains(&verdict_reasons::CHECKS_FAILED.to_string())
+        );
         let data = verdict.data.as_ref().unwrap();
         let failed = data["failed_checks"].as_array().unwrap();
         assert_eq!(failed[0].as_str().unwrap(), "rust.msrv_defined");
@@ -1292,5 +1298,26 @@ mod tests {
     fn test_build_verdict_data_skip_returns_none() {
         let checks = vec![];
         assert!(build_verdict_data(Verdict::Skip, &checks).is_none());
+    }
+
+    #[test]
+    fn test_build_verdict_data_error_with_checks() {
+        let checks = vec![CheckReport {
+            id: "rust.msrv_defined".to_string(),
+            status: CheckStatus::Fail,
+            findings: vec![],
+            skipped_reason: None,
+        }];
+
+        let data = build_verdict_data(Verdict::Error, &checks).unwrap();
+        let failed = data["failed_checks"].as_array().unwrap();
+        assert_eq!(failed.len(), 1);
+        assert_eq!(failed[0].as_str().unwrap(), "rust.msrv_defined");
+    }
+
+    #[test]
+    fn test_build_verdict_data_error_no_checks() {
+        let checks: Vec<CheckReport> = vec![];
+        assert!(build_verdict_data(Verdict::Error, &checks).is_none());
     }
 }

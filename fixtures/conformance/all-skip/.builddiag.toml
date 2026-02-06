@@ -40,3 +40,23 @@ enabled = false
 [[checks]]
 id = "deps.duplicate_versions"
 enabled = false
+
+[[checks]]
+id = "deps.lockfile_present"
+enabled = false
+
+[[checks]]
+id = "deps.wildcard_version"
+enabled = false
+
+[[checks]]
+id = "deps.path_missing_version"
+enabled = false
+
+[[checks]]
+id = "deps.workspace_inheritance"
+enabled = false
+
+[[checks]]
+id = "deps.security_advisory"
+enabled = false

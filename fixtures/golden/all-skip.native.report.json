@@ -1,0 +1,28 @@
+{
+  "schema": "builddiag.report.v1",
+  "tool": {
+    "name": "builddiag",
+    "version": "0.2.0"
+  },
+  "run": {
+    "started_at": "2026-02-06T21:19:33.760392600Z",
+    "ended_at": "2026-02-06T21:19:33.783934600Z",
+    "duration_ms": 23,
+    "host": {
+      "os": "windows",
+      "arch": "x86_64"
+    },
+    "git": {
+      "commit": "4471821a5ec5041d366d86f91a8f2d717952966f",
+      "branch": "main",
+      "dirty": true
+    }
+  },
+  "verdict": "skip",
+  "findings": [],
+  "summary": {
+    "total_findings": 0,
+    "by_severity": {},
+    "by_check": {}
+  }
+}

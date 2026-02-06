@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+publish = false
 description = "Internal repo loading for builddiag (not intended for direct use)"
 keywords = ["rust", "build", "validation"]
 categories = ["development-tools"]

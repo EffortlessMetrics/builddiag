@@ -1,13 +1,13 @@
 {
-  "schema": "sensor.report.v1",
+  "schema": "builddiag.report.v1",
   "tool": {
     "name": "builddiag",
     "version": "0.2.0"
   },
   "run": {
-    "started_at": "2026-02-06T21:19:30.440508400Z",
-    "ended_at": "2026-02-06T21:19:30.465401200Z",
-    "duration_ms": 24,
+    "started_at": "2026-02-06T21:19:34.056438800Z",
+    "ended_at": "2026-02-06T21:19:34.081988400Z",
+    "duration_ms": 25,
     "host": {
       "os": "windows",
       "arch": "x86_64"
@@ -16,52 +16,15 @@
       "commit": "4471821a5ec5041d366d86f91a8f2d717952966f",
       "branch": "main",
       "dirty": true
-    },
-    "capabilities": {
-      "checksums": {
-        "status": "unavailable",
-        "reason": "checksums file not found"
-      },
-      "config": {
-        "status": "available"
-      },
-      "diff_aware": {
-        "status": "skipped",
-        "reason": "diff-aware mode not enabled"
-      },
-      "git": {
-        "status": "available"
-      },
-      "toolchain": {
-        "status": "unavailable",
-        "reason": "rust-toolchain.toml not found"
-      }
     }
   },
-  "verdict": {
-    "status": "warn",
-    "counts": {
-      "info": 7,
-      "warn": 1,
-      "error": 0,
-      "suppressed": 0
-    },
-    "reasons": [
-      "checks_warned"
-    ],
-    "data": {
-      "warned_checks": [
-        "rust.msrv_defined"
-      ]
-    }
-  },
+  "verdict": "warn",
   "findings": [
     {
       "check_id": "rust.msrv_defined",
       "code": "missing_msrv",
       "severity": "warn",
       "message": "Missing workspace/package rust-version (MSRV) in Cargo.toml",
-      "fingerprint": "ea040cee1b551c190ebd8414bc3672fcf6b42d3cf6ffbdf94a7bc2ea313be687",
       "location": {
         "path": "Cargo.toml"
       }
@@ -70,15 +33,13 @@
       "check_id": "rust.toolchain_pinning",
       "code": "missing_toolchain",
       "severity": "info",
-      "message": "Missing rust-toolchain.toml (or rust-toolchain) at repo root",
-      "fingerprint": "9b1ec2c17a88333b310719267a261f855c01165e530c4932c1638ff49602f6e5"
+      "message": "Missing rust-toolchain.toml (or rust-toolchain) at repo root"
     },
     {
       "check_id": "workspace.publish_ready",
       "code": "missing_description",
       "severity": "info",
       "message": "missing-msrv-fixture: missing required 'description' field for publishing",
-      "fingerprint": "f3c226d03251268cbf6d464d0571e99a2f0561046051903b5020afb88a96bcc6",
       "location": {
         "path": "Cargo.toml"
       }
@@ -88,7 +49,6 @@
       "code": "missing_documentation",
       "severity": "info",
       "message": "missing-msrv-fixture: missing recommended 'documentation' or 'homepage' field",
-      "fingerprint": "ec03682aa0f043bf8e3e186f19674bd84010305ed66ae9ae75cda130c906dc2e",
       "location": {
         "path": "Cargo.toml"
       }
@@ -98,7 +58,6 @@
       "code": "missing_license",
       "severity": "info",
       "message": "missing-msrv-fixture: missing required 'license' or 'license-file' field for publishing",
-      "fingerprint": "e2e356dd80bb5e264df164d7327915b1ebcd91b0b60c41871c9c56abf2487c10",
       "location": {
         "path": "Cargo.toml"
       }
@@ -108,7 +67,6 @@
       "code": "missing_readme",
       "severity": "info",
       "message": "missing-msrv-fixture: missing recommended 'readme' field",
-      "fingerprint": "35bac0889c2ab7d7cb96f0b0220d21cee97934113c7a5800e8dff054b29fa5f4",
       "location": {
         "path": "Cargo.toml"
       }
@@ -118,7 +76,6 @@
       "code": "missing_repository",
       "severity": "info",
       "message": "missing-msrv-fixture: missing recommended 'repository' field",
-      "fingerprint": "bb929cb8a5e9466dd46469303b1425eefe7c701bdb457bc09a71ee6476aab563",
       "location": {
         "path": "Cargo.toml"
       }
@@ -128,10 +85,22 @@
       "code": "resolver_not_v2",
       "severity": "info",
       "message": "workspace.resolver is None; expected '2'",
-      "fingerprint": "16f2f1fa8152d96919f9b06a73f1eee4d731d23e36bc66444cd85d833074128d",
       "location": {
         "path": "Cargo.toml"
       }
     }
-  ]
+  ],
+  "summary": {
+    "total_findings": 8,
+    "by_severity": {
+      "info": 7,
+      "warn": 1
+    },
+    "by_check": {
+      "rust.msrv_defined": 1,
+      "rust.toolchain_pinning": 1,
+      "workspace.publish_ready": 5,
+      "workspace.resolver_v2": 1
+    }
+  }
 }
