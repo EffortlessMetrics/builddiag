@@ -156,6 +156,25 @@ builddiag check --config builddiag.toml
 
 If no config is provided, sensible defaults are used.
 
+## Library Usage
+
+Use `builddiag-core` to embed builddiag in your own tools:
+
+```toml
+[dependencies]
+builddiag-core = "0.2"
+```
+
+```rust
+use builddiag_core::{Settings, run};
+
+let settings = Settings::default();
+let result = run(&settings)?;
+println!("Verdict: {:?}", result.report.verdict);
+```
+
+See [docs/integration.md](docs/integration.md) for substrate bridge and advanced patterns.
+
 ## Generate JSON Schemas
 
 ```bash

@@ -399,14 +399,9 @@ fn run_layout_check(fixtures: &Utf8Path) -> Result<()> {
     let report_content = std::fs::read_to_string(&report_path)?;
     let report: serde_json::Value =
         serde_json::from_str(&report_content).context("parse report.json")?;
-    let schema = report
-        .get("schema")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let schema = report.get("schema").and_then(|v| v.as_str()).unwrap_or("");
     if schema != "sensor.report.v1" {
-        anyhow::bail!(
-            "report.json has schema '{schema}', expected 'sensor.report.v1'"
-        );
+        anyhow::bail!("report.json has schema '{schema}', expected 'sensor.report.v1'");
     }
     println!("    report.json: OK (sensor.report.v1)");
 
@@ -425,10 +420,7 @@ fn run_layout_check(fixtures: &Utf8Path) -> Result<()> {
     let payload_content = std::fs::read_to_string(&payload_path)?;
     let payload: serde_json::Value =
         serde_json::from_str(&payload_content).context("parse extras/payload.json")?;
-    let payload_schema = payload
-        .get("schema")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let payload_schema = payload.get("schema").and_then(|v| v.as_str()).unwrap_or("");
     if payload_schema != "builddiag.report.v1" {
         anyhow::bail!(
             "extras/payload.json has schema '{payload_schema}', expected 'builddiag.report.v1'"
@@ -476,7 +468,10 @@ fn run_layout_check(fixtures: &Utf8Path) -> Result<()> {
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        println!("    note: exit code {} (stderr: {stderr})", output.status.code().unwrap_or(-1));
+        println!(
+            "    note: exit code {} (stderr: {stderr})",
+            output.status.code().unwrap_or(-1)
+        );
     }
 
     Ok(())
@@ -686,10 +681,7 @@ fn run_tool_error_check(fixtures: &Utf8Path) -> Result<()> {
         .get("check_id")
         .and_then(|v| v.as_str())
         .unwrap_or("");
-    let code = finding
-        .get("code")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let code = finding.get("code").and_then(|v| v.as_str()).unwrap_or("");
     let severity = finding
         .get("severity")
         .and_then(|v| v.as_str())
@@ -732,8 +724,7 @@ fn run_library_parity_check(fixtures: &Utf8Path) -> Result<()> {
         substrate: None,
     };
 
-    let result = builddiag_core::run(&settings)
-        .context("builddiag_core::run() failed")?;
+    let result = builddiag_core::run(&settings).context("builddiag_core::run() failed")?;
 
     let lib_json = serde_json::to_string_pretty(&result.sensor_report)
         .context("serialize library sensor report")?;

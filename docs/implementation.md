@@ -78,6 +78,19 @@ This is sequenced to keep boundaries sharp and avoid scope creep.
   - Local development hooks
   - Pre-commit integration
 
+## Phase 6 — Library API and Sensor Report
+
+- [x] Introduce `builddiag-core` crate as public library facade (Clap-free)
+- [x] Implement dual-format output: `builddiag.report.v1` + `sensor.report.v1`
+- [x] Implement `SensorVerdict` with structured data (status, counts, reasons, data)
+- [x] Add capabilities map for "No Green By Omission" tracking
+- [x] Add `SensorFinding` with fingerprint (SHA-256), help, URL
+- [x] Implement substrate bridge: `Substrate` type + `repo_state_from_substrate()`
+- [x] Add `--artifacts-dir` CLI flag for sensor-mode artifact layout
+- [x] Move sensor schema to `contracts/schemas/` (shared ABI)
+- [x] Add conformance testing: 7 checks via `xtask conform`
+- [x] Add library-parity conformance check
+
 ## Future Considerations
 
 ### Potential New Checks

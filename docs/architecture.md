@@ -37,6 +37,8 @@ A clean split that matches ports/adapters:
 ```
 builddiag-cli      CLI entry point, argument parsing (clap)
        ↓
+builddiag-core     Public library facade (Clap-free, embeddable)
+       ↓
 builddiag-app      Orchestration, config loading, atomic output writing
        ↓
 builddiag-render   Markdown & GitHub annotation rendering (budget-aware)
@@ -63,6 +65,7 @@ Each crate has its own `CLAUDE.md` with detailed documentation.
 | `builddiag-checks` | Check implementations and documentation registry |
 | `builddiag-render` | Output rendering: Markdown, GitHub annotations |
 | `builddiag-app` | Orchestration: config loading, check coordination, atomic writes |
+| `builddiag-core` | Public library facade: Clap-free API, substrate bridge, dual-format output |
 | `builddiag-cli` | CLI: argument parsing, command routing, exit codes |
 | `depguard` | Dependency hygiene library (integrated by builddiag-checks) |
 
@@ -70,13 +73,50 @@ Each crate has its own `CLAUDE.md` with detailed documentation.
 
 1. Load config (defaults + optional file + CLI overrides)
 2. Build repo model from repo files (workspace discovery, toolchain file discovery, etc.)
+   — or accept pre-computed `Substrate` to skip disk I/O
 3. Apply profile mapping → effective config
 4. Run enabled checks against the repo model
 5. Aggregate findings → verdict + summary
-6. Write canonical artifacts:
+6. Build dual reports:
+   - `builddiag.report.v1` — native report
+   - `sensor.report.v1` — Cockpit CI sensor envelope
+7. Write canonical artifacts:
    - `artifacts/builddiag/report.json`
    - Optional `comment.md` / annotations
-7. Exit with stable code semantics
+   - With `--artifacts-dir`: `<dir>/report.json` (sensor) + `<dir>/extras/payload.json` (native)
+8. Exit with stable code semantics
+
+## Substrate Bridge
+
+When builddiag is used as a library (`builddiag-core`), callers can supply a `Substrate` struct
+containing pre-computed repository state (manifests, toolchain info, checksums presence). This
+skips disk-based repo discovery, enabling zero-I/O in-process integration.
+
+```rust
+let substrate = Substrate {
+    manifests: vec![ManifestInfo { ... }],
+    has_toolchain: true,
+    toolchain_channel: Some("1.75.0".to_string()),
+    has_checksums: false,
+    has_lockfile: true,
+    workspace_msrv: Some("1.75".to_string()),
+};
+let settings = Settings { substrate: Some(substrate), ..Default::default() };
+let result = builddiag_core::run(&settings)?;
+```
+
+## Sensor Report (sensor.report.v1)
+
+The sensor report wraps builddiag's native report in the Cockpit CI governance envelope:
+
+- `schema`: `"sensor.report.v1"`
+- `sensor`: tool identity and version
+- `verdict`: structured `SensorVerdict` with status, counts, reasons, and optional data
+- `capabilities`: map of capabilities for "No Green By Omission" tracking
+- `findings`: extended `SensorFinding` with fingerprint (SHA-256), help, and URL
+- `payload`: the full native `builddiag.report.v1` report
+
+Contract schema lives at `contracts/schemas/sensor.report.v1.schema.json`.
 
 ## Receipt Schema (builddiag.report.v1)
 
@@ -125,8 +165,16 @@ Renderers follow the same ordering and apply explicit budgets.
 
 ## Integration with Cockpit
 
-builddiag produces:
-- `artifacts/builddiag/report.json` (canonical)
-- Optional `artifacts/builddiag/comment.md`
+builddiag produces two report formats:
+- `builddiag.report.v1` — native report with findings, verdict, and metadata
+- `sensor.report.v1` — Cockpit CI sensor envelope wrapping the native report
+
+Default artifact layout:
+- `artifacts/builddiag/report.json` (native)
+- `artifacts/builddiag/comment.md`
+
+With `--artifacts-dir <dir>`:
+- `<dir>/report.json` (sensor.report.v1)
+- `<dir>/extras/payload.json` (builddiag.report.v1)
 
 Cockpit policy decides whether builddiag is blocking; builddiag only emits observations.

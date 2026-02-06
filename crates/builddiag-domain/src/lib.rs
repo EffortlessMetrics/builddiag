@@ -730,10 +730,7 @@ pub fn build_verdict_reasons(verdict: Verdict, checks: &[CheckReport]) -> Vec<St
 /// let failed = data["failed_checks"].as_array().unwrap();
 /// assert_eq!(failed[0].as_str().unwrap(), "rust.msrv_defined");
 /// ```
-pub fn build_verdict_data(
-    verdict: Verdict,
-    checks: &[CheckReport],
-) -> Option<serde_json::Value> {
+pub fn build_verdict_data(verdict: Verdict, checks: &[CheckReport]) -> Option<serde_json::Value> {
     match verdict {
         Verdict::Warn | Verdict::Fail => {
             let mut failed: Vec<String> = checks
@@ -1051,7 +1048,11 @@ mod tests {
         let fp2 = compute_fingerprint(&finding);
 
         assert_eq!(fp1, fp2, "Fingerprint should be stable");
-        assert_eq!(fp1.len(), 64, "Fingerprint should be 64 hex chars (full SHA-256)");
+        assert_eq!(
+            fp1.len(),
+            64,
+            "Fingerprint should be 64 hex chars (full SHA-256)"
+        );
     }
 
     #[test]

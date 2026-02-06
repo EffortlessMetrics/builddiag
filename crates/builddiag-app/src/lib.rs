@@ -291,7 +291,14 @@ pub fn build_capabilities(
     has_checksums: bool,
     diff_aware_used: bool,
 ) -> BTreeMap<String, Capability> {
-    build_capabilities_inner(config, git_info, has_toolchain, has_checksums, diff_aware_used, false)
+    build_capabilities_inner(
+        config,
+        git_info,
+        has_toolchain,
+        has_checksums,
+        diff_aware_used,
+        false,
+    )
 }
 
 /// Build capabilities map, optionally including substrate capability.
@@ -303,7 +310,14 @@ pub fn build_capabilities_with_substrate(
     diff_aware_used: bool,
     substrate_used: bool,
 ) -> BTreeMap<String, Capability> {
-    build_capabilities_inner(config, git_info, has_toolchain, has_checksums, diff_aware_used, substrate_used)
+    build_capabilities_inner(
+        config,
+        git_info,
+        has_toolchain,
+        has_checksums,
+        diff_aware_used,
+        substrate_used,
+    )
 }
 
 fn build_capabilities_inner(

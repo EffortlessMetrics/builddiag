@@ -31,7 +31,9 @@ cargo clippy --all-targets --all-features -- -D warnings  # Lint (must pass with
 ### CI & Automation
 ```bash
 cargo run -p xtask -- ci                 # Full CI check (format, lint, test, schema)
-cargo run -p xtask -- schema             # Generate JSON schemas
+cargo run -p xtask -- conform            # Run 7 conformance checks against fixtures
+cargo run -p xtask -- conform --update-golden  # Regenerate golden files
+cargo run -p xtask -- schema             # Generate JSON schemas (builddiag-native only)
 cargo run -p xtask -- coverage [--html]  # Code coverage
 ```
 
@@ -49,10 +51,12 @@ cargo mutants -p builddiag-domain        # Test specific package
 
 ## Architecture
 
-Seven-crate Cargo workspace with layered architecture (dependencies flow downward):
+Eight-crate Cargo workspace with layered architecture (dependencies flow downward):
 
 ```
 builddiag-cli      CLI entry point, argument parsing
+       ↓
+builddiag-core     Public library facade (Clap-free, embeddable)
        ↓
 builddiag-app      Orchestration, config loading, output writing
        ↓
@@ -67,7 +71,10 @@ builddiag-types    Shared types, config schema, report schema
 ```
 
 ### Key Types (builddiag-types)
-- `Report` - Main output with check results and summary
+- `Report` - Main output with check results and summary (builddiag.report.v1)
+- `SensorReport` - Cockpit CI sensor envelope (sensor.report.v1)
+- `SensorVerdict` - Structured verdict with status, counts, reasons, and data
+- `Substrate` / `ManifestInfo` - Pre-computed repo state for library integration
 - `Config` - Configuration schema for check behavior
 - `Finding` - Individual validation findings with severity/location
 - `CheckReport` - Results from single check execution
@@ -92,6 +99,7 @@ builddiag-types    Shared types, config schema, report schema
 - **Unit tests**: Inline `#[cfg(test)]` modules in source files
 - **Property tests**: `tests/<crate>_properties.rs` using `proptest`
 - **Integration tests**: `crates/builddiag-cli/tests/` using `assert_cmd` + `predicates`
+- **Conformance tests**: `xtask conform` — 7 checks (schema, determinism, survivability, layout, golden, tool-error, library-parity)
 - **Fuzz tests**: `fuzz/fuzz_targets/` (6 targets: version, toml, checksums, config, report, render)
 
 Test naming: unit tests use `test_<description>`, property tests use `prop_<property_name>`, integration tests use `<command>_<scenario>`.

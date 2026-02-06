@@ -30,8 +30,7 @@ use anyhow::Result;
 #[cfg(feature = "cache")]
 pub use builddiag_app::CacheConfig;
 use builddiag_app::{
-    load_config as app_load_config, run_check_with_sensor,
-    run_check_with_sensor_from_repo_state,
+    load_config as app_load_config, run_check_with_sensor, run_check_with_sensor_from_repo_state,
 };
 use builddiag_repo::repo_state_from_substrate;
 use builddiag_types::{CheckReport, Config, SensorReport, Substrate};

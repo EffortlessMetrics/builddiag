@@ -121,21 +121,45 @@ cargo mutants                       # Run all mutation tests
 cargo mutants -p builddiag-domain   # Test specific package
 ```
 
+## 8) Conformance Testing
+
+`xtask conform` runs 7 checks against fixture repositories:
+
+| Check | Description |
+|-------|-------------|
+| **schema** | Validates emitted sensor.report.v1 and builddiag.report.v1 against JSON schemas |
+| **determinism** | Runs builddiag twice, asserts byte-identical output |
+| **survivability** | Runs builddiag on a broken-config fixture, asserts graceful failure with tool.runtime error |
+| **layout** | Validates `--artifacts-dir` produces correct file structure |
+| **golden** | Compares output against committed golden files |
+| **tool-error** | Validates tool error convention: `check_id="tool.runtime"`, `code="runtime_error"` |
+| **library-parity** | Calls `builddiag_core::run()` in-process, compares to CLI subprocess output |
+
+**Fixture auto-discovery:** xtask globs `fixtures/conformance/*/` (skips broken-config and tool-error for schema/golden checks).
+
+**Golden file updates:**
+```bash
+cargo run -p xtask -- conform --update-golden
+```
+
+**Schema validation** uses `contracts/schemas/` for sensor.report.v1 and `schemas/` for builddiag-native schemas.
+
 ## Golden Outputs
 
 Maintain golden files for:
-- `report.json`
+- `report.json` (sensor.report.v1)
+- `extras/payload.json` (builddiag.report.v1)
 - `comment.md`
-- (optional) annotations output
 
-**Location:** `artifacts/builddiag/` (snapshots)
+**Location:** `fixtures/golden/` (per-fixture snapshots)
 
 Determinism is a feature: golden tests make it enforceable.
 
-## Conformance Checks
+## CI Conformance
 
 CI must enforce:
-- Schema validation for `builddiag.report.v1`
+- `xtask conform` — all 7 conformance checks
+- Schema validation for both `sensor.report.v1` and `builddiag.report.v1`
 - Explain coverage for emitted codes
 - `cargo fmt --check`
 - `cargo clippy -D warnings`
@@ -178,16 +202,28 @@ crates/
 │   └── src/lib.rs                    # Unit tests for rendering
 ├── builddiag-app/
 │   └── src/lib.rs                    # Unit tests for orchestration
+├── builddiag-core/
+│   └── src/lib.rs                    # Unit tests for library API + substrate
 ├── builddiag-cli/
 │   └── tests/                        # Integration tests (assert_cmd)
 ├── depguard/
 │   └── src/lib.rs                    # Unit tests for dependency hygiene
-└── fuzz/
-    └── fuzz_targets/                 # Fuzz tests (4 targets)
-        ├── fuzz_version.rs
-        ├── fuzz_toml.rs
-        ├── fuzz_checksums.rs
-        └── fuzz_config.rs
+fuzz/
+│   └── fuzz_targets/                 # Fuzz tests (6 targets)
+fixtures/
+│   ├── conformance/                  # Conformance test fixtures
+│   │   ├── valid-workspace/          # Healthy repo
+│   │   ├── missing-msrv/            # Missing MSRV
+│   │   ├── all-skip/                # All checks disabled
+│   │   ├── broken-config/           # Malformed config (survivability)
+│   │   └── tool-error/              # Triggers tool.runtime error
+│   └── golden/                       # Golden output files per fixture
+contracts/
+│   └── schemas/
+│       └── sensor.report.v1.schema.json  # Shared sensor schema
+schemas/
+    ├── builddiag.report.v1.schema.json   # Native report schema
+    └── builddiag.config.v1.schema.json   # Config schema
 ```
 
 ## Test Helpers
