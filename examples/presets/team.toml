@@ -1,0 +1,24 @@
+# builddiag preset: team
+#
+# Stronger gating for team/organization projects.
+# Blocks on wiring and hygiene issues.
+#
+# Usage:
+#   cp examples/presets/team.toml .builddiag.toml
+#   builddiag check --config .builddiag.toml
+
+profile = "team"
+
+[defaults]
+fail_on = "error"
+out_dir = "artifacts/builddiag"
+
+[policy.msrv]
+require_defined = true
+source = "workspace"
+
+[policy.toolchain]
+require_pinned = true
+
+[policy.checksums]
+require_file = true

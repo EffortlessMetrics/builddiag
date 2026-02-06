@@ -291,6 +291,29 @@ pub fn build_capabilities(
     has_checksums: bool,
     diff_aware_used: bool,
 ) -> BTreeMap<String, Capability> {
+    build_capabilities_inner(config, git_info, has_toolchain, has_checksums, diff_aware_used, false)
+}
+
+/// Build capabilities map, optionally including substrate capability.
+pub fn build_capabilities_with_substrate(
+    config: &Config,
+    git_info: Option<&GitInfo>,
+    has_toolchain: bool,
+    has_checksums: bool,
+    diff_aware_used: bool,
+    substrate_used: bool,
+) -> BTreeMap<String, Capability> {
+    build_capabilities_inner(config, git_info, has_toolchain, has_checksums, diff_aware_used, substrate_used)
+}
+
+fn build_capabilities_inner(
+    config: &Config,
+    git_info: Option<&GitInfo>,
+    has_toolchain: bool,
+    has_checksums: bool,
+    diff_aware_used: bool,
+    substrate_used: bool,
+) -> BTreeMap<String, Capability> {
     let mut caps = BTreeMap::new();
 
     // Git capability
@@ -344,6 +367,11 @@ pub fn build_capabilities(
             "diff_aware".to_string(),
             Capability::skipped("diff-aware mode not enabled"),
         );
+    }
+
+    // Substrate capability
+    if substrate_used {
+        caps.insert("substrate".to_string(), Capability::available());
     }
 
     caps
@@ -557,6 +585,24 @@ fn run_check_with_sensor_inner(
         sensor_report,
         checks,
     })
+}
+
+/// Run checks using a pre-computed [`RepoState`] from a substrate.
+///
+/// This is the substrate bridge entry point: when the caller has already
+/// built a `RepoState` (e.g. via [`builddiag_repo::repo_state_from_substrate`]),
+/// this function runs checks and produces both report formats without any
+/// filesystem discovery.
+pub fn run_check_with_sensor_from_repo_state(
+    root: &Utf8Path,
+    config: &Config,
+    allow_all: bool,
+    repo_state: builddiag_repo::RepoState,
+) -> Result<SensorCheckRun> {
+    let start = Utc::now();
+    let diff_aware_used = repo_state.changed_files.is_some();
+
+    run_check_with_sensor_inner(root, config, allow_all, repo_state, start, diff_aware_used)
 }
 
 #[cfg(test)]

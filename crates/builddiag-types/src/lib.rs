@@ -480,16 +480,20 @@ impl From<Verdict> for VerdictStatus {
 /// Provides more detail than a simple status enum:
 /// - `status`: The overall verdict (Pass/Warn/Fail/Skip)
 /// - `counts`: Breakdown of findings by severity
-/// - `reasons`: Machine-addressable snake_case reason tokens
+/// - `reasons`: Machine-addressable reason tokens
+/// - `data`: Optional structured data providing detail behind reason tokens
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SensorVerdict {
     /// Overall verdict status.
     pub status: VerdictStatus,
     /// Counts of findings by severity.
     pub counts: VerdictCounts,
-    /// Snake_case reason tokens explaining the verdict (machine-addressable).
+    /// Machine-addressable reason tokens explaining the verdict.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reasons: Vec<String>,
+    /// Optional structured data providing detail behind reason tokens.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<serde_json::Value>,
 }
 
 impl Default for SensorVerdict {
@@ -498,6 +502,7 @@ impl Default for SensorVerdict {
             status: VerdictStatus::Pass,
             counts: VerdictCounts::default(),
             reasons: Vec::new(),
+            data: None,
         }
     }
 }
@@ -609,6 +614,72 @@ pub struct SensorReport {
 impl SensorReport {
     /// The schema identifier for sensor.report.v1.
     pub const SCHEMA_V1: &'static str = SENSOR_REPORT_SCHEMA_V1;
+}
+
+// =============================================================================
+// Substrate Types — Pre-computed repo state from upstream tools
+// =============================================================================
+
+/// Pre-computed repository state supplied by an upstream tool.
+///
+/// When builddiag is used as a library (via `builddiag-core`), an upstream
+/// tool such as `tokmd-core` can supply a `Substrate` instead of having
+/// builddiag discover the repository from disk. This avoids redundant I/O
+/// when the caller has already parsed the workspace.
+///
+/// # Example
+///
+/// ```
+/// use builddiag_types::{Substrate, ManifestInfo};
+///
+/// let substrate = Substrate {
+///     manifests: vec![ManifestInfo {
+///         path: "crates/foo/Cargo.toml".to_string(),
+///         name: Some("foo".to_string()),
+///         msrv: Some("1.75".to_string()),
+///         edition: Some("2024".to_string()),
+///     }],
+///     has_toolchain: true,
+///     toolchain_channel: Some("1.75.0".to_string()),
+///     has_checksums: false,
+///     has_lockfile: true,
+///     workspace_msrv: Some("1.75".to_string()),
+/// };
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Substrate {
+    /// Parsed manifests for each workspace member.
+    pub manifests: Vec<ManifestInfo>,
+    /// Whether a `rust-toolchain.toml` file was detected.
+    pub has_toolchain: bool,
+    /// Toolchain channel string (e.g. "1.75.0", "nightly-2024-01-15").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub toolchain_channel: Option<String>,
+    /// Whether a checksums file was detected.
+    pub has_checksums: bool,
+    /// Whether `Cargo.lock` exists.
+    pub has_lockfile: bool,
+    /// Workspace-level MSRV, if defined.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_msrv: Option<String>,
+}
+
+/// Information about a single Cargo manifest, pre-parsed by an upstream tool.
+///
+/// Paths must be repo-relative with forward slashes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ManifestInfo {
+    /// Repo-relative path to the manifest (forward slashes).
+    pub path: String,
+    /// Package name from `[package].name`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Rust-version / MSRV from `[package].rust-version`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub msrv: Option<String>,
+    /// Edition from `[package].edition`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edition: Option<String>,
 }
 
 // -----------------
@@ -2582,7 +2653,8 @@ mod tests {
                         error: 0,
                         suppressed: 0,
                     },
-                    reasons: vec!["2 warnings found".to_string()],
+                    reasons: vec!["checks_warned".to_string()],
+                    data: None,
                 },
                 findings: vec![SensorFinding {
                     check_id: "test".to_string(),

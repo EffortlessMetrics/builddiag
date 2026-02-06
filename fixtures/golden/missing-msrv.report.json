@@ -5,15 +5,15 @@
     "version": "0.2.0"
   },
   "run": {
-    "started_at": "2026-02-05T22:50:39.219959600Z",
-    "ended_at": "2026-02-05T22:50:39.247578300Z",
-    "duration_ms": 27,
+    "started_at": "2026-02-06T07:23:51.395884700Z",
+    "ended_at": "2026-02-06T07:23:51.424148Z",
+    "duration_ms": 28,
     "host": {
       "os": "windows",
       "arch": "x86_64"
     },
     "git": {
-      "commit": "54d8de7dd4ec3697f40260c71078dad7bdb1c895",
+      "commit": "d65ecc62201d01b5d117d8e95e2feb68c49015c3",
       "branch": "main",
       "dirty": true
     },
@@ -47,8 +47,13 @@
       "suppressed": 0
     },
     "reasons": [
-      "check_warned:rust.msrv_defined"
-    ]
+      "checks_warned"
+    ],
+    "data": {
+      "warned_checks": [
+        "rust.msrv_defined"
+      ]
+    }
   },
   "findings": [
     {

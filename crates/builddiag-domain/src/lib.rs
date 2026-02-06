@@ -649,15 +649,16 @@ pub fn build_verdict_counts(findings: &[Finding]) -> VerdictCounts {
 
 /// Build verdict reasons from check reports.
 ///
-/// Returns a list of snake_case reason tokens explaining why the verdict
-/// is not Pass. Tokens are machine-addressable for cockpit policy routing.
+/// Returns a list of machine-addressable reason tokens explaining why the
+/// verdict is not Pass. Tokens are coarse (one per category) for cockpit
+/// policy routing; per-check detail lives in [`build_verdict_data`].
 ///
 /// # Token Format
 ///
 /// - `all_checks_skipped` — every check was skipped
 /// - `tool_error` — an internal error occurred
-/// - `check_failed:<id>` — a specific check failed
-/// - `check_warned:<id>` — a specific check warned
+/// - `checks_failed` — one or more checks failed
+/// - `checks_warned` — one or more checks warned
 ///
 /// # Examples
 ///
@@ -675,7 +676,7 @@ pub fn build_verdict_counts(findings: &[Finding]) -> VerdictCounts {
 /// ];
 ///
 /// let reasons = build_verdict_reasons(Verdict::Fail, &checks);
-/// assert!(reasons.contains(&"check_failed:rust.msrv_defined".to_string()));
+/// assert!(reasons.contains(&"checks_failed".to_string()));
 /// ```
 pub fn build_verdict_reasons(verdict: Verdict, checks: &[CheckReport]) -> Vec<String> {
     let mut reasons = Vec::new();
@@ -689,24 +690,14 @@ pub fn build_verdict_reasons(verdict: Verdict, checks: &[CheckReport]) -> Vec<St
             reasons.push("tool_error".to_string());
         }
         Verdict::Warn | Verdict::Fail => {
-            let mut failed: Vec<_> = checks
-                .iter()
-                .filter(|c| c.status == CheckStatus::Fail)
-                .map(|c| c.id.as_str())
-                .collect();
-            failed.sort();
-            let mut warned: Vec<_> = checks
-                .iter()
-                .filter(|c| c.status == CheckStatus::Warn)
-                .map(|c| c.id.as_str())
-                .collect();
-            warned.sort();
+            let has_failed = checks.iter().any(|c| c.status == CheckStatus::Fail);
+            let has_warned = checks.iter().any(|c| c.status == CheckStatus::Warn);
 
-            for id in &failed {
-                reasons.push(format!("check_failed:{id}"));
+            if has_failed {
+                reasons.push("checks_failed".to_string());
             }
-            for id in &warned {
-                reasons.push(format!("check_warned:{id}"));
+            if has_warned {
+                reasons.push("checks_warned".to_string());
             }
         }
     }
@@ -714,10 +705,71 @@ pub fn build_verdict_reasons(verdict: Verdict, checks: &[CheckReport]) -> Vec<St
     reasons
 }
 
+/// Build verdict data with per-check detail behind coarse reason tokens.
+///
+/// Returns `Some(Value)` with `failed_checks` and/or `warned_checks` arrays
+/// when checks have failed or warned. Returns `None` for Pass/Skip/Error
+/// verdicts or when no check-level detail is available.
+///
+/// # Examples
+///
+/// ```
+/// use builddiag_domain::build_verdict_data;
+/// use builddiag_types::{CheckReport, CheckStatus, Verdict};
+///
+/// let checks = vec![
+///     CheckReport {
+///         id: "rust.msrv_defined".to_string(),
+///         status: CheckStatus::Fail,
+///         findings: vec![],
+///         skipped_reason: None,
+///     },
+/// ];
+///
+/// let data = build_verdict_data(Verdict::Fail, &checks).unwrap();
+/// let failed = data["failed_checks"].as_array().unwrap();
+/// assert_eq!(failed[0].as_str().unwrap(), "rust.msrv_defined");
+/// ```
+pub fn build_verdict_data(
+    verdict: Verdict,
+    checks: &[CheckReport],
+) -> Option<serde_json::Value> {
+    match verdict {
+        Verdict::Warn | Verdict::Fail => {
+            let mut failed: Vec<String> = checks
+                .iter()
+                .filter(|c| c.status == CheckStatus::Fail)
+                .map(|c| c.id.clone())
+                .collect();
+            failed.sort();
+            let mut warned: Vec<String> = checks
+                .iter()
+                .filter(|c| c.status == CheckStatus::Warn)
+                .map(|c| c.id.clone())
+                .collect();
+            warned.sort();
+
+            if failed.is_empty() && warned.is_empty() {
+                return None;
+            }
+
+            let mut map = serde_json::Map::new();
+            if !failed.is_empty() {
+                map.insert("failed_checks".to_string(), serde_json::json!(failed));
+            }
+            if !warned.is_empty() {
+                map.insert("warned_checks".to_string(), serde_json::json!(warned));
+            }
+            Some(serde_json::Value::Object(map))
+        }
+        _ => None,
+    }
+}
+
 /// Build a complete SensorVerdict from a Verdict and check reports.
 ///
-/// Combines the verdict status, finding counts, and reasons into the
-/// sensor.report.v1 verdict structure.
+/// Combines the verdict status, finding counts, reasons, and per-check
+/// detail data into the sensor.report.v1 verdict structure.
 ///
 /// # Examples
 ///
@@ -744,6 +796,7 @@ pub fn build_verdict_reasons(verdict: Verdict, checks: &[CheckReport]) -> Vec<St
 /// assert_eq!(verdict.status, VerdictStatus::Fail);
 /// assert_eq!(verdict.counts.error, 1);
 /// assert!(!verdict.reasons.is_empty());
+/// assert!(verdict.data.is_some());
 /// ```
 pub fn build_sensor_verdict(verdict: Verdict, checks: &[CheckReport]) -> SensorVerdict {
     // Collect all findings from checks
@@ -757,6 +810,7 @@ pub fn build_sensor_verdict(verdict: Verdict, checks: &[CheckReport]) -> SensorV
         status: VerdictStatus::from(verdict),
         counts,
         reasons: build_verdict_reasons(verdict, checks),
+        data: build_verdict_data(verdict, checks),
     }
 }
 
@@ -1151,8 +1205,9 @@ mod tests {
         ];
 
         let reasons = build_verdict_reasons(Verdict::Fail, &checks);
-        assert!(reasons.contains(&"check_failed:rust.msrv_defined".to_string()));
-        assert!(reasons.contains(&"check_warned:rust.toolchain".to_string()));
+        assert!(reasons.contains(&"checks_failed".to_string()));
+        assert!(reasons.contains(&"checks_warned".to_string()));
+        assert_eq!(reasons.len(), 2);
     }
 
     #[test]
@@ -1188,6 +1243,53 @@ mod tests {
         let verdict = build_sensor_verdict(Verdict::Fail, &checks);
         assert_eq!(verdict.status, VerdictStatus::Fail);
         assert_eq!(verdict.counts.error, 1);
-        assert!(!verdict.reasons.is_empty());
+        assert!(verdict.reasons.contains(&"checks_failed".to_string()));
+        let data = verdict.data.as_ref().unwrap();
+        let failed = data["failed_checks"].as_array().unwrap();
+        assert_eq!(failed[0].as_str().unwrap(), "rust.msrv_defined");
+    }
+
+    #[test]
+    fn test_build_verdict_data_fail_and_warn() {
+        let checks = vec![
+            CheckReport {
+                id: "rust.msrv_defined".to_string(),
+                status: CheckStatus::Fail,
+                findings: vec![],
+                skipped_reason: None,
+            },
+            CheckReport {
+                id: "rust.toolchain".to_string(),
+                status: CheckStatus::Warn,
+                findings: vec![],
+                skipped_reason: None,
+            },
+        ];
+
+        let data = build_verdict_data(Verdict::Fail, &checks).unwrap();
+        let failed = data["failed_checks"].as_array().unwrap();
+        assert_eq!(failed.len(), 1);
+        assert_eq!(failed[0].as_str().unwrap(), "rust.msrv_defined");
+        let warned = data["warned_checks"].as_array().unwrap();
+        assert_eq!(warned.len(), 1);
+        assert_eq!(warned[0].as_str().unwrap(), "rust.toolchain");
+    }
+
+    #[test]
+    fn test_build_verdict_data_pass_returns_none() {
+        let checks = vec![CheckReport {
+            id: "check".to_string(),
+            status: CheckStatus::Pass,
+            findings: vec![],
+            skipped_reason: None,
+        }];
+
+        assert!(build_verdict_data(Verdict::Pass, &checks).is_none());
+    }
+
+    #[test]
+    fn test_build_verdict_data_skip_returns_none() {
+        let checks = vec![];
+        assert!(build_verdict_data(Verdict::Skip, &checks).is_none());
     }
 }

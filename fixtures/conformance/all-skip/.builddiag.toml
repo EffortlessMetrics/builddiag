@@ -1,0 +1,42 @@
+# Config that disables every check to produce all_checks_skipped verdict.
+profile = "oss"
+
+[[checks]]
+id = "rust.msrv_defined"
+enabled = false
+
+[[checks]]
+id = "rust.msrv_consistent"
+enabled = false
+
+[[checks]]
+id = "rust.toolchain_pinning"
+enabled = false
+
+[[checks]]
+id = "rust.toolchain_msrv_relation"
+enabled = false
+
+[[checks]]
+id = "rust.edition_deprecations"
+enabled = false
+
+[[checks]]
+id = "workspace.resolver_v2"
+enabled = false
+
+[[checks]]
+id = "workspace.edition_consistent"
+enabled = false
+
+[[checks]]
+id = "workspace.member_ordering"
+enabled = false
+
+[[checks]]
+id = "workspace.publish_ready"
+enabled = false
+
+[[checks]]
+id = "deps.duplicate_versions"
+enabled = false

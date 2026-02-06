@@ -1386,7 +1386,11 @@ fn check_member_ordering(
 }
 
 fn rel_path(root: &camino::Utf8Path, p: &camino::Utf8Path) -> String {
-    p.strip_prefix(root).ok().unwrap_or(p).to_string()
+    p.strip_prefix(root)
+        .ok()
+        .unwrap_or(p)
+        .as_str()
+        .replace('\\', "/")
 }
 
 fn check_deps_wildcard(

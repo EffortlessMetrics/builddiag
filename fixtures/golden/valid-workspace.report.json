@@ -5,15 +5,15 @@
     "version": "0.2.0"
   },
   "run": {
-    "started_at": "2026-02-05T22:50:30.117449300Z",
-    "ended_at": "2026-02-05T22:50:30.142786700Z",
-    "duration_ms": 25,
+    "started_at": "2026-02-06T07:23:51.851705300Z",
+    "ended_at": "2026-02-06T07:23:51.893178Z",
+    "duration_ms": 41,
     "host": {
       "os": "windows",
       "arch": "x86_64"
     },
     "git": {
-      "commit": "54d8de7dd4ec3697f40260c71078dad7bdb1c895",
+      "commit": "d65ecc62201d01b5d117d8e95e2feb68c49015c3",
       "branch": "main",
       "dirty": true
     },
@@ -52,9 +52,9 @@
       "code": "missing_description",
       "severity": "info",
       "message": "fixture-a: missing required 'description' field for publishing",
-      "fingerprint": "d12b3b478b44a0431b9f92e06794eb79e4689dd9b4cb1037b194c0e7fa44727f",
+      "fingerprint": "2707c79a4163d5d3ab0cf7ecff09f9673c2e19ce469e167c5d3e0d06c9f314e1",
       "location": {
-        "path": "crates\\a\\Cargo.toml"
+        "path": "crates/a/Cargo.toml"
       }
     },
     {
@@ -62,9 +62,9 @@
       "code": "missing_documentation",
       "severity": "info",
       "message": "fixture-a: missing recommended 'documentation' or 'homepage' field",
-      "fingerprint": "bb2ee7b226faadd8c58a85ea208c1505d61202038ff9fe8cad6413e6cb1e94de",
+      "fingerprint": "d4749a3097c1ffb8e3da4951630fd6efeb2af98c56db8661986876a9c4f24e90",
       "location": {
-        "path": "crates\\a\\Cargo.toml"
+        "path": "crates/a/Cargo.toml"
       }
     },
     {
@@ -72,9 +72,9 @@
       "code": "missing_license",
       "severity": "info",
       "message": "fixture-a: missing required 'license' or 'license-file' field for publishing",
-      "fingerprint": "38bfc90a6c231752aa6bf82a0ea5a678a3d3c6071d2cdd3c9389db7d28c10da9",
+      "fingerprint": "17814dd4540956f93d134af98f6e1ba43854f677df91b46d4200a5213d23d898",
       "location": {
-        "path": "crates\\a\\Cargo.toml"
+        "path": "crates/a/Cargo.toml"
       }
     },
     {
@@ -82,9 +82,9 @@
       "code": "missing_readme",
       "severity": "info",
       "message": "fixture-a: missing recommended 'readme' field",
-      "fingerprint": "effbaed6197868038d5e78e475ce13202275db4dc25115b6386b0e7e363cd172",
+      "fingerprint": "a86e20a6f7d4a620165e49d62c50bdd6bc9a898d0c10997704408b9f80df5200",
       "location": {
-        "path": "crates\\a\\Cargo.toml"
+        "path": "crates/a/Cargo.toml"
       }
     },
     {
@@ -92,9 +92,9 @@
       "code": "missing_repository",
       "severity": "info",
       "message": "fixture-a: missing recommended 'repository' field",
-      "fingerprint": "01959579daad95ef8882d886612d2818de148ab8511f23d685335332a28d3dc6",
+      "fingerprint": "c4ba6f8e74f3f2fed6391293e7b10a659d5162a91af7c8a6f40d7e849ad63824",
       "location": {
-        "path": "crates\\a\\Cargo.toml"
+        "path": "crates/a/Cargo.toml"
       }
     }
   ]

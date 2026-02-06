@@ -311,15 +311,19 @@
       ]
     },
     "SensorVerdict": {
-      "description": "Structured verdict for sensor reports.\n\nProvides more detail than a simple status enum:\n- `status`: The overall verdict (Pass/Warn/Fail/Skip)\n- `counts`: Breakdown of findings by severity\n- `reasons`: Machine-addressable snake_case reason tokens",
+      "description": "Structured verdict for sensor reports.\n\nProvides more detail than a simple status enum:\n- `status`: The overall verdict (Pass/Warn/Fail/Skip)\n- `counts`: Breakdown of findings by severity\n- `reasons`: Machine-addressable reason tokens\n- `data`: Optional structured data providing detail behind reason tokens",
       "type": "object",
       "properties": {
         "counts": {
           "description": "Counts of findings by severity.",
           "$ref": "#/$defs/VerdictCounts"
         },
+        "data": {
+          "description": "Optional structured data providing detail behind reason tokens.",
+          "type": "object"
+        },
         "reasons": {
-          "description": "Snake_case reason tokens explaining the verdict (machine-addressable).",
+          "description": "Machine-addressable reason tokens explaining the verdict.",
           "type": "array",
           "items": {
             "type": "string"

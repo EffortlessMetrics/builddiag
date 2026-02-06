@@ -17,6 +17,7 @@ camino.workspace = true
 chrono.workspace = true
 builddiag-app = { path = "../builddiag-app" }
 builddiag-checks = { path = "../builddiag-checks" }
+builddiag-core = { path = "../builddiag-core" }
 builddiag-domain = { path = "../builddiag-domain" }
 builddiag-render = { path = "../builddiag-render" }
 builddiag-types = { path = "../builddiag-types" }
@@ -27,8 +28,8 @@ serde_json.workspace = true
 assert_cmd.workspace = true
 tempfile.workspace = true
 predicates.workspace = true
-cucumber = "0.21"
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+cucumber = "0.22.1"
+tokio = { version = "1.49.0", features = ["macros", "rt-multi-thread"] }
 
 [[test]]
 name = "cucumber"

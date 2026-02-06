@@ -477,6 +477,66 @@ fn build_cache_from_state(
     Ok(cache)
 }
 
+/// Build a [`RepoState`] from a pre-computed [`Substrate`], skipping all
+/// filesystem operations.
+///
+/// This is the substrate bridge entry point: when an upstream tool has
+/// already parsed the workspace, it can pass a [`Substrate`] to avoid
+/// redundant disk I/O.
+///
+/// # Arguments
+///
+/// * `root` - Repository root path (used for path context, no I/O performed)
+/// * `substrate` - Pre-computed repository state from upstream
+pub fn repo_state_from_substrate(
+    root: &Utf8Path,
+    substrate: &builddiag_types::Substrate,
+) -> RepoState {
+    let toolchain = if substrate.has_toolchain {
+        substrate.toolchain_channel.as_ref().map(|ch| Toolchain {
+            path: root.join("rust-toolchain.toml"),
+            channel: ch.clone(),
+        })
+    } else {
+        None
+    };
+
+    let members: Vec<Member> = substrate
+        .manifests
+        .iter()
+        .map(|m| Member {
+            name: m.name.clone().unwrap_or_default(),
+            manifest_path: root.join(&m.path),
+            rust_version: m.msrv.clone(),
+            rust_version_workspace: false,
+            edition: m.edition.clone(),
+            edition_workspace: false,
+            has_binary_target: false,
+            publish_metadata: PublishMetadata::default(),
+        })
+        .collect();
+
+    let workspace = WorkspaceInfo {
+        is_workspace: substrate.manifests.len() > 1,
+        members,
+        workspace_msrv: substrate.workspace_msrv.clone(),
+        workspace_edition: None,
+        workspace_resolver: None,
+    };
+
+    RepoState {
+        root: root.to_path_buf(),
+        cargo_root: Some(root.join("Cargo.toml")),
+        toolchain,
+        workspace,
+        workspace_model: None,
+        tools_checksums: None,
+        tools_manifest: None,
+        changed_files: None,
+        lockfile_exists: substrate.has_lockfile,
+    }
+}
+
 fn find_toolchain(root: &Utf8Path, rust_toolchain_toml_path: &str) -> Result<Option<Toolchain>> {
     let candidate = root.join(rust_toolchain_toml_path);
     if candidate.exists() {

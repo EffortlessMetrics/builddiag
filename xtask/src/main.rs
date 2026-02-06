@@ -208,6 +208,36 @@ fn run_conform(
         }
     }
 
+    // 6. Tool Error Convention Check
+    if should_run("tool-error") {
+        println!("=== Tool Error Convention Check ===");
+        match run_tool_error_check(fixtures) {
+            Ok(()) => {
+                println!("  PASS: Tool error produces correct receipt\n");
+                passed += 1;
+            }
+            Err(e) => {
+                println!("  FAIL: Tool error check failed: {e:#}\n");
+                failed += 1;
+            }
+        }
+    }
+
+    // 7. Library Parity Check
+    if should_run("library-parity") {
+        println!("=== Library Parity Check ===");
+        match run_library_parity_check(fixtures) {
+            Ok(()) => {
+                println!("  PASS: Library and CLI produce identical sensor reports\n");
+                passed += 1;
+            }
+            Err(e) => {
+                println!("  FAIL: Library parity check failed: {e:#}\n");
+                failed += 1;
+            }
+        }
+    }
+
     // Summary
     println!("=== Summary ===");
     println!("  Passed: {passed}");
@@ -231,30 +261,25 @@ fn run_schema_validation(fixtures: &Utf8Path) -> Result<()> {
     let validator = jsonschema::validator_for(&schema_value)
         .map_err(|e| anyhow::anyhow!("compile schema: {e}"))?;
 
-    // Test valid-workspace fixture
-    let valid_dir = fixtures.join("valid-workspace");
-    if valid_dir.exists() {
-        let report = run_builddiag_sensor(&valid_dir)?;
+    // Auto-discover fixture directories (skip broken-config and tool-error
+    // which are special cases that don't produce sensor reports)
+    let skip_fixtures = ["broken-config", "tool-error"];
+    for entry in discover_fixture_dirs(fixtures)? {
+        let name = entry
+            .file_name()
+            .ok_or_else(|| anyhow::anyhow!("no file name for fixture dir"))?;
+        if skip_fixtures.contains(&name) {
+            continue;
+        }
+
+        let report = run_builddiag_sensor(&entry)?;
         let report_value: serde_json::Value =
-            serde_json::from_str(&report).context("parse valid-workspace report")?;
+            serde_json::from_str(&report).with_context(|| format!("parse {name} report"))?;
 
         if let Err(e) = validator.validate(&report_value) {
-            anyhow::bail!("valid-workspace report failed schema validation: {}", e);
+            anyhow::bail!("{name} report failed schema validation: {}", e);
         }
-        println!("    valid-workspace: OK");
-    }
-
-    // Test missing-msrv fixture
-    let missing_dir = fixtures.join("missing-msrv");
-    if missing_dir.exists() {
-        let report = run_builddiag_sensor(&missing_dir)?;
-        let report_value: serde_json::Value =
-            serde_json::from_str(&report).context("parse missing-msrv report")?;
-
-        if let Err(e) = validator.validate(&report_value) {
-            anyhow::bail!("missing-msrv report failed schema validation: {}", e);
-        }
-        println!("    missing-msrv: OK");
+        println!("    {name}: OK");
     }
 
     Ok(())
@@ -426,6 +451,29 @@ fn run_layout_check(fixtures: &Utf8Path) -> Result<()> {
     }
     println!("    artifact paths: OK (no traversal, no absolute)");
 
+    // Verify finding location paths use forward slashes and are relative
+    if let Some(findings) = report.get("findings").and_then(|v| v.as_array()) {
+        for finding in findings {
+            if let Some(loc) = finding.get("location")
+                && let Some(path) = loc.get("path").and_then(|v| v.as_str())
+            {
+                if path.contains('\\') {
+                    anyhow::bail!("finding location path contains backslash: {path}");
+                }
+                if path.contains("..") {
+                    anyhow::bail!("finding location path contains traversal: {path}");
+                }
+                if path.starts_with('/')
+                    || (path.len() > 1 && path.as_bytes()[1] == b':')
+                    || path.starts_with("\\\\")
+                {
+                    anyhow::bail!("finding location path is absolute: {path}");
+                }
+            }
+        }
+    }
+    println!("    finding location paths: OK (no traversal, no absolute, forward slashes)");
+
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         println!("    note: exit code {} (stderr: {stderr})", output.status.code().unwrap_or(-1));
@@ -435,32 +483,41 @@ fn run_layout_check(fixtures: &Utf8Path) -> Result<()> {
 }
 
 fn run_golden_check(fixtures: &Utf8Path, golden: &Utf8Path, update: bool) -> Result<()> {
-    let valid_dir = fixtures.join("valid-workspace");
-    let valid_golden = golden.join("valid-workspace.report.json");
+    // Skip fixtures that don't produce sensor reports
+    let skip_fixtures = ["broken-config", "tool-error"];
 
-    if !valid_dir.exists() {
-        return Ok(());
-    }
-
-    let current = run_builddiag_sensor(&valid_dir)?;
-    let current_normalized = normalize_for_comparison(&current)?;
-
-    if update {
-        std::fs::create_dir_all(golden)?;
-        std::fs::write(&valid_golden, &current)?;
-        println!("    Updated {valid_golden}");
-    } else if valid_golden.exists() {
-        let golden_content = std::fs::read_to_string(&valid_golden)?;
-        let golden_normalized = normalize_for_comparison(&golden_content)?;
-
-        if current_normalized != golden_normalized {
-            anyhow::bail!(
-                "Output differs from golden file {valid_golden}\n\nExpected:\n{}\n\nGot:\n{}",
-                golden_normalized,
-                current_normalized
-            );
+    // Auto-discover fixture directories
+    for entry in discover_fixture_dirs(fixtures)? {
+        let name = entry
+            .file_name()
+            .ok_or_else(|| anyhow::anyhow!("no file name for fixture dir"))?;
+        if skip_fixtures.contains(&name) {
+            continue;
         }
-        println!("    valid-workspace.report.json: OK");
+
+        let golden_name = format!("{name}.report.json");
+        let golden_path = golden.join(&golden_name);
+
+        let current = run_builddiag_sensor(&entry)?;
+        let current_normalized = normalize_for_comparison(&current)?;
+
+        if update {
+            std::fs::create_dir_all(golden)?;
+            std::fs::write(&golden_path, &current)?;
+            println!("    Updated {golden_path}");
+        } else if golden_path.exists() {
+            let golden_content = std::fs::read_to_string(&golden_path)?;
+            let golden_normalized = normalize_for_comparison(&golden_content)?;
+
+            if current_normalized != golden_normalized {
+                anyhow::bail!(
+                    "Output differs from golden file {golden_path}\n\nExpected:\n{}\n\nGot:\n{}",
+                    golden_normalized,
+                    current_normalized
+                );
+            }
+            println!("    {golden_name}: OK");
+        }
     }
 
     Ok(())
@@ -472,22 +529,32 @@ fn run_builddiag_sensor(root: &Utf8Path) -> Result<String> {
         .unwrap()
         .join("report.json");
 
+    let mut args = vec![
+        "run",
+        "-p",
+        "builddiag",
+        "--",
+        "check",
+        "--root",
+        root.as_str(),
+        "--format",
+        "sensor",
+        "--profile",
+        "oss",
+        "--out",
+        out_file.as_str(),
+    ];
+
+    // Auto-detect config file in the fixture directory
+    let config_path = root.join(".builddiag.toml");
+    let config_str;
+    if config_path.exists() {
+        config_str = config_path.to_string();
+        args.extend(["--config", &config_str]);
+    }
+
     let output = std::process::Command::new("cargo")
-        .args([
-            "run",
-            "-p",
-            "builddiag",
-            "--",
-            "check",
-            "--root",
-            root.as_str(),
-            "--format",
-            "sensor",
-            "--profile",
-            "oss",
-            "--out",
-            out_file.as_str(),
-        ])
+        .args(&args)
         .output()
         .context("run builddiag")?;
 
@@ -498,6 +565,26 @@ fn run_builddiag_sensor(root: &Utf8Path) -> Result<String> {
     }
 
     std::fs::read_to_string(&out_file).context("read builddiag output")
+}
+
+/// Discover all fixture directories under the given path.
+///
+/// Returns sorted list of directories that contain a `Cargo.toml`.
+fn discover_fixture_dirs(fixtures: &Utf8Path) -> Result<Vec<Utf8PathBuf>> {
+    let mut dirs = Vec::new();
+    for entry in std::fs::read_dir(fixtures).with_context(|| format!("read {fixtures}"))? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            let utf8 = Utf8PathBuf::from_path_buf(path)
+                .map_err(|_| anyhow::anyhow!("non-utf8 path in fixtures"))?;
+            if utf8.join("Cargo.toml").exists() {
+                dirs.push(utf8);
+            }
+        }
+    }
+    dirs.sort();
+    Ok(dirs)
 }
 
 fn normalize_for_comparison(json: &str) -> Result<String> {
@@ -522,6 +609,146 @@ fn normalize_for_comparison(json: &str) -> Result<String> {
     }
 
     serde_json::to_string_pretty(&value).context("serialize normalized JSON")
+}
+
+fn run_tool_error_check(fixtures: &Utf8Path) -> Result<()> {
+    let tool_error_dir = fixtures.join("tool-error");
+    if !tool_error_dir.exists() {
+        return Ok(());
+    }
+
+    let temp_dir = tempfile::TempDir::new()?;
+    let out_file = Utf8Path::from_path(temp_dir.path())
+        .unwrap()
+        .join("error-receipt.json");
+
+    // Run in cockpit mode — should produce error receipt and exit 0
+    let output = std::process::Command::new("cargo")
+        .args([
+            "run",
+            "-p",
+            "builddiag",
+            "--",
+            "check",
+            "--root",
+            tool_error_dir.as_str(),
+            "--format",
+            "sensor",
+            "--mode",
+            "cockpit",
+            "--profile",
+            "oss",
+            "--out",
+            out_file.as_str(),
+        ])
+        .output()
+        .context("run builddiag on tool-error fixture")?;
+
+    // Should exit 0 in cockpit mode (report written)
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!(
+            "Expected exit 0 in cockpit mode, got {}: {stderr}",
+            output.status.code().unwrap_or(-1)
+        );
+    }
+
+    if !out_file.exists() {
+        anyhow::bail!("Error receipt was not written to {out_file}");
+    }
+
+    let receipt_content = std::fs::read_to_string(&out_file)?;
+    let receipt: serde_json::Value =
+        serde_json::from_str(&receipt_content).context("error receipt is not valid JSON")?;
+
+    // Verify verdict is "error"
+    let verdict = receipt
+        .get("verdict")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if verdict != "error" {
+        anyhow::bail!("Expected verdict 'error', got '{verdict}'");
+    }
+    println!("    verdict: error (OK)");
+
+    // Verify finding has check_id = "tool.runtime" and code = "runtime_error"
+    let findings = receipt
+        .get("findings")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| anyhow::anyhow!("missing findings array"))?;
+
+    if findings.is_empty() {
+        anyhow::bail!("Expected at least one finding in error receipt");
+    }
+
+    let finding = &findings[0];
+    let check_id = finding
+        .get("check_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let code = finding
+        .get("code")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let severity = finding
+        .get("severity")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    if check_id != "tool.runtime" {
+        anyhow::bail!("Expected check_id 'tool.runtime', got '{check_id}'");
+    }
+    if code != "runtime_error" {
+        anyhow::bail!("Expected code 'runtime_error', got '{code}'");
+    }
+    if severity != "error" {
+        anyhow::bail!("Expected severity 'error', got '{severity}'");
+    }
+
+    println!("    finding: check_id=tool.runtime, code=runtime_error, severity=error (OK)");
+    Ok(())
+}
+
+fn run_library_parity_check(fixtures: &Utf8Path) -> Result<()> {
+    let valid_dir = fixtures.join("valid-workspace");
+    if !valid_dir.exists() {
+        return Ok(());
+    }
+
+    // Run via CLI (subprocess) to get sensor output
+    let cli_output = run_builddiag_sensor(&valid_dir)?;
+    let cli_normalized = normalize_for_comparison(&cli_output)?;
+
+    // Run via library (in-process) to get sensor output
+    let settings = builddiag_core::Settings {
+        root: valid_dir.clone(),
+        config: builddiag_types::Config {
+            profile: builddiag_types::Profile::Oss,
+            ..Default::default()
+        },
+        allow_all: false,
+        changed_files: None,
+        cache_config: None,
+        substrate: None,
+    };
+
+    let result = builddiag_core::run(&settings)
+        .context("builddiag_core::run() failed")?;
+
+    let lib_json = serde_json::to_string_pretty(&result.sensor_report)
+        .context("serialize library sensor report")?;
+    let lib_normalized = normalize_for_comparison(&lib_json)?;
+
+    if cli_normalized != lib_normalized {
+        anyhow::bail!(
+            "Library and CLI produce different sensor reports!\n\nCLI:\n{}\n\nLibrary:\n{}",
+            cli_normalized,
+            lib_normalized
+        );
+    }
+
+    println!("    valid-workspace: Library output matches CLI output");
+    Ok(())
 }
 
 fn run_ci() -> Result<()> {

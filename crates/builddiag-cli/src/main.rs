@@ -1,9 +1,9 @@
 use anyhow::{Context, Result};
 use builddiag_app::{
-    compute_changed_files, create_error_receipt, load_config, run_check, run_check_with_sensor,
-    write_atomic, write_outputs,
+    compute_changed_files, create_error_receipt, run_check, write_atomic, write_outputs,
 };
 use builddiag_checks::{BUILTIN_CHECKS, CHECK_DOCS, explain_check};
+use builddiag_core::load_config;
 use builddiag_domain::explain::{all_check_ids, explain, explain_check_all_codes};
 use builddiag_render::{render_diagnostics, render_github_annotations, render_markdown};
 use builddiag_types::{Config, Profile, ProfileCheckState};
@@ -664,12 +664,25 @@ fn run_check_command(
             })
         }
         OutputFormat::Sensor => {
-            let sr = run_check_with_sensor(root, &cfg, always, changed, cache_config.as_ref())?;
+            let settings = builddiag_core::Settings {
+                root: root.to_path_buf(),
+                config: cfg,
+                allow_all: always,
+                changed_files: changed,
+                cache_config,
+                substrate: None,
+            };
+            let result = builddiag_core::run(&settings)?;
             Ok(CheckCommandResult {
-                run: sr.check_run,
+                run: builddiag_app::CheckRun {
+                    report: result.report,
+                    markdown: result.markdown,
+                    annotations: result.annotations,
+                    exit_code: result.exit_code,
+                },
                 out_json,
                 out_md,
-                sensor_report: Some(sr.sensor_report),
+                sensor_report: Some(result.sensor_report),
             })
         }
     }

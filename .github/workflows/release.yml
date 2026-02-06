@@ -307,6 +307,8 @@ jobs:
           sleep 30
           cargo publish -p builddiag-app
           sleep 30
+          cargo publish -p builddiag-core
+          sleep 30
           cargo publish -p builddiag
 
   announce:

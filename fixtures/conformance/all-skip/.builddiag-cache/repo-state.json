@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "cargo_root": {
+    "meta": {
+      "path": "Cargo.toml",
+      "mtime": 1770362455,
+      "content_hash": "8c7fedffb4f9c5850e6c61f4bccee0ae3c8c9c5b94451bf29169f00d2a23833d"
+    },
+    "workspace_msrv": null,
+    "workspace_edition": null,
+    "workspace_resolver": null,
+    "is_workspace": true,
+    "member_patterns": [],
+    "exclude_patterns": []
+  },
+  "toolchain": {
+    "meta": null,
+    "channel": null
+  },
+  "checksums": {
+    "meta": null,
+    "entry_count": 0
+  },
+  "members": {
+    "Cargo.toml": {
+      "meta": {
+        "path": "Cargo.toml",
+        "mtime": 1770362455,
+        "content_hash": "8c7fedffb4f9c5850e6c61f4bccee0ae3c8c9c5b94451bf29169f00d2a23833d"
+      },
+      "name": "all-skip",
+      "rust_version": null,
+      "rust_version_workspace": false,
+      "edition": "2024",
+      "edition_workspace": false,
+      "has_binary_target": false
+    }
+  },
+  "lockfile_exists": false
+}
