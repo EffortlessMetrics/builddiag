@@ -214,7 +214,7 @@ fixtures/
 │   ├── conformance/                  # Conformance test fixtures
 │   │   ├── valid-workspace/          # Healthy repo
 │   │   ├── missing-msrv/            # Missing MSRV
-│   │   ├── all-skip/                # All checks disabled
+│   │   ├── all-disabled/             # All checks disabled
 │   │   ├── broken-config/           # Malformed config (survivability)
 │   │   └── tool-error/              # Triggers tool.runtime error
 │   └── golden/                       # Golden output files per fixture

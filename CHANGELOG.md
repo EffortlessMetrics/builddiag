@@ -22,7 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tool-error conformance check: validates `check_id="tool.runtime"`, `code="runtime_error"` convention.
 - Layout check: validates `--artifacts-dir` artifact structure.
 - Fixture auto-discovery in xtask for `fixtures/conformance/*/`.
-- New fixtures: `all-skip` (all checks disabled) and `tool-error` (broken config).
+- New fixtures: `all-disabled` (all checks disabled) and `tool-error` (broken config).
 - Example config presets in `examples/presets/` (oss.toml, strict.toml, team.toml).
 - Golden files for all conformance fixtures.
 

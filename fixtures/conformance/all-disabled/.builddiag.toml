@@ -1,4 +1,4 @@
-# Config that disables every check to produce all_checks_skipped verdict.
+# Config that disables every check — produces a pass verdict (nothing to evaluate).
 profile = "oss"
 
 [[checks]]

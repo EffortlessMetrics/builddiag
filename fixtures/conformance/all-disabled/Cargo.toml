@@ -1,5 +1,5 @@
 [package]
-name = "all-skip"
+name = "all-disabled"
 version = "0.1.0"
 edition = "2024"
 

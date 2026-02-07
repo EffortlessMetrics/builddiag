@@ -176,14 +176,8 @@ pub fn check_status_from_findings(findings: &[Finding]) -> CheckStatus {
 ///
 /// # Verdict Determination
 ///
-/// The overall verdict is determined by the highest severity status across all checks:
-///
-/// | Check Statuses | Verdict |
-/// |----------------|---------|
-/// | All Skip | [`Verdict::Skip`] |
-/// | All Pass (or Skip) | [`Verdict::Pass`] |
-/// | Any Warn (no Fail) | [`Verdict::Warn`] |
-/// | Any Fail | [`Verdict::Fail`] |
+/// The overall verdict is determined by the highest severity status across active checks
+/// (checks without a `skipped_reason`). See [`determine_verdict`] for details.
 ///
 /// # Arguments
 ///
@@ -271,11 +265,17 @@ pub fn summarize(checks: &[CheckReport]) -> Summary {
 
 /// Determine the overall verdict from check reports.
 ///
-/// This function examines all check reports and returns the most severe verdict:
-/// - If any check failed, returns `Fail`
-/// - If any check warned (and none failed), returns `Warn`
-/// - If all checks passed, returns `Pass`
-/// - If all checks were skipped, returns `Skip`
+/// Checks with a `skipped_reason` (e.g. disabled by config) are treated as
+/// non-participating and excluded from verdict computation. Only active checks
+/// (those without a `skipped_reason`) influence the result.
+///
+/// | Active Check Statuses | Verdict |
+/// |-----------------------|---------|
+/// | None (all disabled) | [`Verdict::Pass`] |
+/// | All Skip (selected but couldn't run) | [`Verdict::Skip`] |
+/// | All Pass (or Skip) | [`Verdict::Pass`] |
+/// | Any Warn (no Fail) | [`Verdict::Warn`] |
+/// | Any Fail | [`Verdict::Fail`] |
 ///
 /// # Arguments
 ///
@@ -283,12 +283,19 @@ pub fn summarize(checks: &[CheckReport]) -> Summary {
 ///
 /// # Returns
 ///
-/// The overall [`Verdict`] based on all check statuses.
+/// The overall [`Verdict`] based on all active check statuses.
 pub fn determine_verdict(checks: &[CheckReport]) -> Verdict {
+    // Filter out checks disabled by config (have a skipped_reason).
+    let active: Vec<_> = checks.iter().filter(|c| c.skipped_reason.is_none()).collect();
+
+    if active.is_empty() {
+        return Verdict::Pass; // All checks disabled → nothing to evaluate
+    }
+
     let mut verdict = Verdict::Pass;
     let mut any_ran = false;
 
-    for c in checks {
+    for c in &active {
         match c.status {
             CheckStatus::Skip => {}
             CheckStatus::Pass => any_ran = true,
@@ -734,7 +741,7 @@ pub fn build_verdict_reasons(verdict: Verdict, checks: &[CheckReport]) -> Vec<St
 /// ```
 pub fn build_verdict_data(verdict: Verdict, checks: &[CheckReport]) -> Option<serde_json::Value> {
     match verdict {
-        Verdict::Warn | Verdict::Fail | Verdict::Error => {
+        Verdict::Warn | Verdict::Fail => {
             let mut failed: Vec<String> = checks
                 .iter()
                 .filter(|c| c.status == CheckStatus::Fail)
@@ -761,7 +768,7 @@ pub fn build_verdict_data(verdict: Verdict, checks: &[CheckReport]) -> Option<se
             }
             Some(serde_json::Value::Object(map))
         }
-        Verdict::Pass | Verdict::Skip => None,
+        Verdict::Pass | Verdict::Skip | Verdict::Error => None,
     }
 }
 
@@ -1301,23 +1308,97 @@ mod tests {
     }
 
     #[test]
-    fn test_build_verdict_data_error_with_checks() {
+    fn test_build_verdict_data_error_returns_none() {
+        // Error verdict always returns None — check rollups are for Warn/Fail only
         let checks = vec![CheckReport {
             id: "rust.msrv_defined".to_string(),
             status: CheckStatus::Fail,
             findings: vec![],
             skipped_reason: None,
         }];
+        assert!(build_verdict_data(Verdict::Error, &checks).is_none());
 
-        let data = build_verdict_data(Verdict::Error, &checks).unwrap();
-        let failed = data["failed_checks"].as_array().unwrap();
-        assert_eq!(failed.len(), 1);
-        assert_eq!(failed[0].as_str().unwrap(), "rust.msrv_defined");
+        let empty: Vec<CheckReport> = vec![];
+        assert!(build_verdict_data(Verdict::Error, &empty).is_none());
+    }
+
+    // ==========================================================================
+    // determine_verdict tests
+    // ==========================================================================
+
+    #[test]
+    fn test_determine_verdict_all_disabled_returns_pass() {
+        let checks = vec![
+            CheckReport {
+                id: "rust.msrv_defined".to_string(),
+                status: CheckStatus::Skip,
+                findings: vec![],
+                skipped_reason: Some("disabled by config".to_string()),
+            },
+            CheckReport {
+                id: "rust.toolchain".to_string(),
+                status: CheckStatus::Skip,
+                findings: vec![],
+                skipped_reason: Some("disabled by config".to_string()),
+            },
+        ];
+
+        assert_eq!(determine_verdict(&checks), Verdict::Pass);
     }
 
     #[test]
-    fn test_build_verdict_data_error_no_checks() {
+    fn test_determine_verdict_empty_checks_returns_pass() {
         let checks: Vec<CheckReport> = vec![];
-        assert!(build_verdict_data(Verdict::Error, &checks).is_none());
+        assert_eq!(determine_verdict(&checks), Verdict::Pass);
+    }
+
+    #[test]
+    fn test_determine_verdict_mix_disabled_and_active() {
+        // Disabled check + passing active check → Pass
+        let checks = vec![
+            CheckReport {
+                id: "rust.msrv_defined".to_string(),
+                status: CheckStatus::Skip,
+                findings: vec![],
+                skipped_reason: Some("disabled by config".to_string()),
+            },
+            CheckReport {
+                id: "rust.toolchain".to_string(),
+                status: CheckStatus::Pass,
+                findings: vec![],
+                skipped_reason: None,
+            },
+        ];
+        assert_eq!(determine_verdict(&checks), Verdict::Pass);
+
+        // Disabled check + failing active check → Fail
+        let checks = vec![
+            CheckReport {
+                id: "rust.msrv_defined".to_string(),
+                status: CheckStatus::Skip,
+                findings: vec![],
+                skipped_reason: Some("disabled by config".to_string()),
+            },
+            CheckReport {
+                id: "rust.toolchain".to_string(),
+                status: CheckStatus::Fail,
+                findings: vec![],
+                skipped_reason: None,
+            },
+        ];
+        assert_eq!(determine_verdict(&checks), Verdict::Fail);
+    }
+
+    #[test]
+    fn test_determine_verdict_active_skip_returns_skip() {
+        // Checks that are skipped without a skipped_reason (selected but
+        // couldn't run due to missing prerequisites) still count as Skip
+        let checks = vec![CheckReport {
+            id: "rust.msrv_defined".to_string(),
+            status: CheckStatus::Skip,
+            findings: vec![],
+            skipped_reason: None,
+        }];
+        assert_eq!(determine_verdict(&checks), Verdict::Skip);
     }
 }
