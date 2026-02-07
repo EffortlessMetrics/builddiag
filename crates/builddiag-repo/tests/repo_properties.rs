@@ -76,8 +76,23 @@ members = [
 /// Strategy for generating valid crate names (lowercase alphanumeric with hyphens).
 fn crate_name_strategy() -> impl Strategy<Value = String> {
     "[a-z][a-z0-9-]{0,10}[a-z0-9]?".prop_filter("non-empty and valid", |s| {
-        !s.is_empty() && !s.starts_with('-') && !s.ends_with('-')
+        !s.is_empty() && !s.starts_with('-') && !s.ends_with('-') && !is_windows_reserved(s)
     })
+}
+
+/// Returns `true` if the name is a Windows reserved device name.
+///
+/// These names (CON, PRN, AUX, NUL, COM1-9, LPT1-9) cannot be used as
+/// file or directory names on Windows and will cause I/O failures.
+fn is_windows_reserved(name: &str) -> bool {
+    matches!(
+        name.to_ascii_uppercase().as_str(),
+        "CON" | "PRN" | "AUX" | "NUL"
+            | "COM1" | "COM2" | "COM3" | "COM4" | "COM5"
+            | "COM6" | "COM7" | "COM8" | "COM9"
+            | "LPT1" | "LPT2" | "LPT3" | "LPT4" | "LPT5"
+            | "LPT6" | "LPT7" | "LPT8" | "LPT9"
+    )
 }
 
 /// Strategy for generating a set of unique crate names.

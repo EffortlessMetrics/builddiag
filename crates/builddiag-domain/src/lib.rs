@@ -200,12 +200,14 @@ pub fn check_status_from_findings(findings: &[Finding]) -> CheckStatus {
 ///         status: CheckStatus::Pass,
 ///         findings: vec![],
 ///         skipped_reason: None,
+///         skipped_detail: None,
 ///     },
 ///     CheckReport {
 ///         id: "check2".into(),
 ///         status: CheckStatus::Pass,
 ///         findings: vec![],
 ///         skipped_reason: None,
+///         skipped_detail: None,
 ///     },
 /// ];
 /// let summary = summarize(&checks);
@@ -228,6 +230,7 @@ pub fn check_status_from_findings(findings: &[Finding]) -> CheckStatus {
 ///             }),
 ///         }],
 ///         skipped_reason: None,
+///         skipped_detail: None,
 ///     },
 /// ];
 /// let summary = summarize(&checks);
@@ -682,6 +685,7 @@ pub fn build_verdict_counts(findings: &[Finding]) -> VerdictCounts {
 ///         status: CheckStatus::Fail,
 ///         findings: vec![],
 ///         skipped_reason: None,
+///         skipped_detail: None,
 ///     },
 /// ];
 ///
@@ -733,6 +737,7 @@ pub fn build_verdict_reasons(verdict: Verdict, checks: &[CheckReport]) -> Vec<St
 ///         status: CheckStatus::Fail,
 ///         findings: vec![],
 ///         skipped_reason: None,
+///         skipped_detail: None,
 ///     },
 /// ];
 ///
@@ -796,6 +801,7 @@ pub fn build_verdict_data(verdict: Verdict, checks: &[CheckReport]) -> Option<se
 ///             location: None,
 ///         }],
 ///         skipped_reason: None,
+///         skipped_detail: None,
 ///     },
 /// ];
 ///
@@ -1192,6 +1198,7 @@ mod tests {
             status: CheckStatus::Pass,
             findings: vec![],
             skipped_reason: None,
+            skipped_detail: None,
         }];
 
         let reasons = build_verdict_reasons(Verdict::Pass, &checks);
@@ -1206,12 +1213,14 @@ mod tests {
                 status: CheckStatus::Fail,
                 findings: vec![],
                 skipped_reason: None,
+                skipped_detail: None,
             },
             CheckReport {
                 id: "rust.toolchain".to_string(),
                 status: CheckStatus::Warn,
                 findings: vec![],
                 skipped_reason: None,
+                skipped_detail: None,
             },
         ];
 
@@ -1249,6 +1258,7 @@ mod tests {
                 None,
             )],
             skipped_reason: None,
+            skipped_detail: None,
         }];
 
         let verdict = build_sensor_verdict(Verdict::Fail, &checks);
@@ -1272,12 +1282,14 @@ mod tests {
                 status: CheckStatus::Fail,
                 findings: vec![],
                 skipped_reason: None,
+                skipped_detail: None,
             },
             CheckReport {
                 id: "rust.toolchain".to_string(),
                 status: CheckStatus::Warn,
                 findings: vec![],
                 skipped_reason: None,
+                skipped_detail: None,
             },
         ];
 
@@ -1297,6 +1309,7 @@ mod tests {
             status: CheckStatus::Pass,
             findings: vec![],
             skipped_reason: None,
+            skipped_detail: None,
         }];
 
         assert!(build_verdict_data(Verdict::Pass, &checks).is_none());
@@ -1316,6 +1329,7 @@ mod tests {
             status: CheckStatus::Fail,
             findings: vec![],
             skipped_reason: None,
+            skipped_detail: None,
         }];
         assert!(build_verdict_data(Verdict::Error, &checks).is_none());
 
@@ -1335,12 +1349,14 @@ mod tests {
                 status: CheckStatus::Skip,
                 findings: vec![],
                 skipped_reason: Some(check_skip_reasons::DISABLED_BY_CONFIG.to_string()),
+                skipped_detail: None,
             },
             CheckReport {
                 id: "rust.toolchain".to_string(),
                 status: CheckStatus::Skip,
                 findings: vec![],
                 skipped_reason: Some(check_skip_reasons::DISABLED_BY_CONFIG.to_string()),
+                skipped_detail: None,
             },
         ];
 
@@ -1362,12 +1378,14 @@ mod tests {
                 status: CheckStatus::Skip,
                 findings: vec![],
                 skipped_reason: Some(check_skip_reasons::DISABLED_BY_CONFIG.to_string()),
+                skipped_detail: None,
             },
             CheckReport {
                 id: "rust.toolchain".to_string(),
                 status: CheckStatus::Pass,
                 findings: vec![],
                 skipped_reason: None,
+                skipped_detail: None,
             },
         ];
         assert_eq!(determine_verdict(&checks), Verdict::Pass);
@@ -1379,12 +1397,14 @@ mod tests {
                 status: CheckStatus::Skip,
                 findings: vec![],
                 skipped_reason: Some(check_skip_reasons::DISABLED_BY_CONFIG.to_string()),
+                skipped_detail: None,
             },
             CheckReport {
                 id: "rust.toolchain".to_string(),
                 status: CheckStatus::Fail,
                 findings: vec![],
                 skipped_reason: None,
+                skipped_detail: None,
             },
         ];
         assert_eq!(determine_verdict(&checks), Verdict::Fail);
@@ -1399,6 +1419,7 @@ mod tests {
             status: CheckStatus::Skip,
             findings: vec![],
             skipped_reason: None,
+            skipped_detail: None,
         }];
         assert_eq!(determine_verdict(&checks), Verdict::Skip);
 
@@ -1407,7 +1428,8 @@ mod tests {
             id: "rust.toolchain_pinning".to_string(),
             status: CheckStatus::Skip,
             findings: vec![],
-            skipped_reason: Some("no toolchain file".to_string()),
+            skipped_reason: Some(check_skip_reasons::MISSING_PREREQUISITE.to_string()),
+            skipped_detail: Some("no toolchain file".to_string()),
         }];
         assert_eq!(determine_verdict(&checks), Verdict::Skip);
     }
@@ -1420,13 +1442,15 @@ mod tests {
                 id: "rust.toolchain_pinning".to_string(),
                 status: CheckStatus::Skip,
                 findings: vec![],
-                skipped_reason: Some("no toolchain file".to_string()),
+                skipped_reason: Some(check_skip_reasons::MISSING_PREREQUISITE.to_string()),
+                skipped_detail: Some("no toolchain file".to_string()),
             },
             CheckReport {
                 id: "rust.msrv_consistent".to_string(),
                 status: CheckStatus::Skip,
                 findings: vec![],
-                skipped_reason: Some("no workspace/package MSRV".to_string()),
+                skipped_reason: Some(check_skip_reasons::MISSING_PREREQUISITE.to_string()),
+                skipped_detail: Some("no workspace/package MSRV".to_string()),
             },
         ];
         assert_eq!(determine_verdict(&checks), Verdict::Skip);
@@ -1441,12 +1465,14 @@ mod tests {
                 status: CheckStatus::Skip,
                 findings: vec![],
                 skipped_reason: Some(check_skip_reasons::DISABLED_BY_CONFIG.to_string()),
+                skipped_detail: None,
             },
             CheckReport {
                 id: "rust.toolchain_pinning".to_string(),
                 status: CheckStatus::Skip,
                 findings: vec![],
-                skipped_reason: Some("no toolchain file".to_string()),
+                skipped_reason: Some(check_skip_reasons::MISSING_PREREQUISITE.to_string()),
+                skipped_detail: Some("no toolchain file".to_string()),
             },
         ];
         assert_eq!(determine_verdict(&checks), Verdict::Skip);
@@ -1460,13 +1486,15 @@ mod tests {
                 id: "rust.toolchain_pinning".to_string(),
                 status: CheckStatus::Skip,
                 findings: vec![],
-                skipped_reason: Some("no toolchain file".to_string()),
+                skipped_reason: Some(check_skip_reasons::MISSING_PREREQUISITE.to_string()),
+                skipped_detail: Some("no toolchain file".to_string()),
             },
             CheckReport {
                 id: "rust.msrv_defined".to_string(),
                 status: CheckStatus::Pass,
                 findings: vec![],
                 skipped_reason: None,
+                skipped_detail: None,
             },
         ];
         assert_eq!(determine_verdict(&checks), Verdict::Pass);
@@ -1480,6 +1508,7 @@ mod tests {
             status: CheckStatus::Skip,
             findings: vec![],
             skipped_reason: Some(check_skip_reasons::DIFF_AWARE_NO_MATCH.to_string()),
+            skipped_detail: None,
         }];
         assert_eq!(determine_verdict(&checks), Verdict::Pass);
     }

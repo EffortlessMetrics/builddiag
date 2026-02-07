@@ -464,6 +464,7 @@ fn execute_check(task: &CheckTask, repo: &RepoState, config: &Config) -> Result<
             status: CheckStatus::Skip,
             findings: Vec::new(),
             skipped_reason: Some(reason.clone()),
+            skipped_detail: None,
         });
     }
 
@@ -680,6 +681,7 @@ fn check_msrv_defined(
         status: check_status_from_findings(&findings),
         findings,
         skipped_reason: None,
+        skipped_detail: None,
     })
 }
 
@@ -694,7 +696,8 @@ fn check_msrv_consistent(
             id: "rust.msrv_consistent".to_string(),
             status: CheckStatus::Skip,
             findings: Vec::new(),
-            skipped_reason: Some("no workspace/package MSRV to compare".to_string()),
+            skipped_reason: Some(check_skip_reasons::MISSING_PREREQUISITE.to_string()),
+            skipped_detail: Some("no workspace/package MSRV to compare".to_string()),
         });
     };
 
@@ -714,6 +717,7 @@ fn check_msrv_consistent(
                 status: check_status_from_findings(&findings),
                 findings,
                 skipped_reason: None,
+                skipped_detail: None,
             });
         }
     };
@@ -781,6 +785,7 @@ fn check_msrv_consistent(
         status: check_status_from_findings(&findings),
         findings,
         skipped_reason: None,
+        skipped_detail: None,
     })
 }
 
@@ -807,6 +812,7 @@ fn check_toolchain_pinning(
             status: check_status_from_findings(&findings),
             findings,
             skipped_reason: None,
+            skipped_detail: None,
         });
     };
 
@@ -853,6 +859,7 @@ fn check_toolchain_pinning(
         status: check_status_from_findings(&findings),
         findings,
         skipped_reason: None,
+        skipped_detail: None,
     })
 }
 
@@ -867,7 +874,8 @@ fn check_toolchain_msrv_relation(
             id: "rust.toolchain_msrv_relation".to_string(),
             status: CheckStatus::Skip,
             findings: Vec::new(),
-            skipped_reason: Some("no toolchain file".to_string()),
+            skipped_reason: Some(check_skip_reasons::MISSING_PREREQUISITE.to_string()),
+            skipped_detail: Some("no toolchain file".to_string()),
         });
     };
     let Some(msrv_raw) = &repo.workspace.workspace_msrv else {
@@ -875,7 +883,8 @@ fn check_toolchain_msrv_relation(
             id: "rust.toolchain_msrv_relation".to_string(),
             status: CheckStatus::Skip,
             findings: Vec::new(),
-            skipped_reason: Some("no workspace/package MSRV".to_string()),
+            skipped_reason: Some(check_skip_reasons::MISSING_PREREQUISITE.to_string()),
+            skipped_detail: Some("no workspace/package MSRV".to_string()),
         });
     };
 
@@ -886,7 +895,8 @@ fn check_toolchain_msrv_relation(
                 id: "rust.toolchain_msrv_relation".to_string(),
                 status: CheckStatus::Skip,
                 findings: Vec::new(),
-                skipped_reason: Some("non-numeric toolchain channel".to_string()),
+                skipped_reason: Some(check_skip_reasons::NOT_APPLICABLE.to_string()),
+                skipped_detail: Some("non-numeric toolchain channel".to_string()),
             });
         }
     };
@@ -923,6 +933,7 @@ fn check_toolchain_msrv_relation(
         status: check_status_from_findings(&findings),
         findings,
         skipped_reason: None,
+        skipped_detail: None,
     })
 }
 
@@ -948,6 +959,7 @@ fn check_checksums_file_exists(
         status: check_status_from_findings(&findings),
         findings,
         skipped_reason: None,
+        skipped_detail: None,
     })
 }
 
@@ -961,7 +973,8 @@ fn check_checksums_format(
             id: "tools.checksums_format".to_string(),
             status: CheckStatus::Skip,
             findings: Vec::new(),
-            skipped_reason: Some("no checksums file".to_string()),
+            skipped_reason: Some(check_skip_reasons::MISSING_PREREQUISITE.to_string()),
+            skipped_detail: Some("no checksums file".to_string()),
         });
     };
 
@@ -1009,6 +1022,7 @@ fn check_checksums_format(
         status: check_status_from_findings(&findings),
         findings,
         skipped_reason: None,
+        skipped_detail: None,
     })
 }
 
@@ -1022,7 +1036,8 @@ fn check_checksums_coverage(
             id: "tools.checksums_coverage".to_string(),
             status: CheckStatus::Skip,
             findings: Vec::new(),
-            skipped_reason: Some("coverage not required by policy".to_string()),
+            skipped_reason: Some(check_skip_reasons::DISABLED_BY_POLICY.to_string()),
+            skipped_detail: Some("coverage not required by policy".to_string()),
         });
     }
 
@@ -1031,7 +1046,8 @@ fn check_checksums_coverage(
             id: "tools.checksums_coverage".to_string(),
             status: CheckStatus::Skip,
             findings: Vec::new(),
-            skipped_reason: Some("no checksums file".to_string()),
+            skipped_reason: Some(check_skip_reasons::MISSING_PREREQUISITE.to_string()),
+            skipped_detail: Some("no checksums file".to_string()),
         });
     };
 
@@ -1040,7 +1056,8 @@ fn check_checksums_coverage(
             id: "tools.checksums_coverage".to_string(),
             status: CheckStatus::Skip,
             findings: Vec::new(),
-            skipped_reason: Some("no tools manifest".to_string()),
+            skipped_reason: Some(check_skip_reasons::MISSING_PREREQUISITE.to_string()),
+            skipped_detail: Some("no tools manifest".to_string()),
         });
     };
 
@@ -1085,6 +1102,7 @@ fn check_checksums_coverage(
         status: check_status_from_findings(&findings),
         findings,
         skipped_reason: None,
+        skipped_detail: None,
     })
 }
 
@@ -1098,7 +1116,8 @@ fn check_checksums_verify_local(
             id: "tools.checksums_verify_local".to_string(),
             status: CheckStatus::Skip,
             findings: Vec::new(),
-            skipped_reason: Some("local verification not enabled".to_string()),
+            skipped_reason: Some(check_skip_reasons::DISABLED_BY_POLICY.to_string()),
+            skipped_detail: Some("local verification not enabled".to_string()),
         });
     }
     let Some(cks) = &repo.tools_checksums else {
@@ -1106,7 +1125,8 @@ fn check_checksums_verify_local(
             id: "tools.checksums_verify_local".to_string(),
             status: CheckStatus::Skip,
             findings: Vec::new(),
-            skipped_reason: Some("no checksums file".to_string()),
+            skipped_reason: Some(check_skip_reasons::MISSING_PREREQUISITE.to_string()),
+            skipped_detail: Some("no checksums file".to_string()),
         });
     };
 
@@ -1155,6 +1175,7 @@ fn check_checksums_verify_local(
         status: check_status_from_findings(&findings),
         findings,
         skipped_reason: None,
+        skipped_detail: None,
     })
 }
 
@@ -1170,7 +1191,8 @@ fn check_workspace_resolver(
             id: CHECK_ID.to_string(),
             status: CheckStatus::Skip,
             findings,
-            skipped_reason: Some("not a workspace".to_string()),
+            skipped_reason: Some(check_skip_reasons::NOT_APPLICABLE.to_string()),
+            skipped_detail: Some("not a workspace".to_string()),
         });
     }
 
@@ -1191,6 +1213,7 @@ fn check_workspace_resolver(
         status: check_status_from_findings(&findings),
         findings,
         skipped_reason: None,
+        skipped_detail: None,
     })
 }
 
@@ -1207,7 +1230,8 @@ fn check_edition_consistent(
             id: "workspace.edition_consistent".to_string(),
             status: CheckStatus::Skip,
             findings: Vec::new(),
-            skipped_reason: Some("no workspace edition to compare".to_string()),
+            skipped_reason: Some(check_skip_reasons::MISSING_PREREQUISITE.to_string()),
+            skipped_detail: Some("no workspace edition to compare".to_string()),
         });
     };
 
@@ -1226,6 +1250,7 @@ fn check_edition_consistent(
             status: check_status_from_findings(&findings),
             findings,
             skipped_reason: None,
+            skipped_detail: None,
         });
     }
 
@@ -1297,6 +1322,7 @@ fn check_edition_consistent(
         status: check_status_from_findings(&findings),
         findings,
         skipped_reason: None,
+        skipped_detail: None,
     })
 }
 
@@ -1317,7 +1343,8 @@ fn check_member_ordering(
             id: CHECK_ID.to_string(),
             status: CheckStatus::Skip,
             findings,
-            skipped_reason: Some("not a workspace".to_string()),
+            skipped_reason: Some(check_skip_reasons::NOT_APPLICABLE.to_string()),
+            skipped_detail: Some("not a workspace".to_string()),
         });
     }
 
@@ -1326,7 +1353,8 @@ fn check_member_ordering(
             id: CHECK_ID.to_string(),
             status: CheckStatus::Skip,
             findings,
-            skipped_reason: Some("sorting not required by policy".to_string()),
+            skipped_reason: Some(check_skip_reasons::DISABLED_BY_POLICY.to_string()),
+            skipped_detail: Some("sorting not required by policy".to_string()),
         });
     }
 
@@ -1345,7 +1373,8 @@ fn check_member_ordering(
             id: CHECK_ID.to_string(),
             status: CheckStatus::Skip,
             findings,
-            skipped_reason: Some("workspace model not available".to_string()),
+            skipped_reason: Some(check_skip_reasons::MISSING_PREREQUISITE.to_string()),
+            skipped_detail: Some("workspace model not available".to_string()),
         });
     };
 
@@ -1356,6 +1385,7 @@ fn check_member_ordering(
             status: CheckStatus::Pass,
             findings,
             skipped_reason: None,
+            skipped_detail: None,
         });
     }
 
@@ -1379,6 +1409,7 @@ fn check_member_ordering(
         status: check_status_from_findings(&findings),
         findings,
         skipped_reason: None,
+        skipped_detail: None,
     })
 }
 
@@ -1425,6 +1456,7 @@ fn check_deps_wildcard(
         status: check_status_from_findings(&findings),
         findings,
         skipped_reason: None,
+        skipped_detail: None,
     })
 }
 
@@ -1463,6 +1495,7 @@ fn check_deps_path_version(
         status: check_status_from_findings(&findings),
         findings,
         skipped_reason: None,
+        skipped_detail: None,
     })
 }
 
@@ -1501,6 +1534,7 @@ fn check_deps_workspace_inheritance(
         status: check_status_from_findings(&findings),
         findings,
         skipped_reason: None,
+        skipped_detail: None,
     })
 }
 
@@ -1555,6 +1589,7 @@ fn check_lockfile_present(
         status: check_status_from_findings(&findings),
         findings,
         skipped_reason: None,
+        skipped_detail: None,
     })
 }
 
@@ -1660,6 +1695,7 @@ fn check_publish_ready(
         status: check_status_from_findings(&findings),
         findings,
         skipped_reason: None,
+        skipped_detail: None,
     })
 }
 
@@ -1750,6 +1786,7 @@ fn check_edition_deprecations(
         status: check_status_from_findings(&findings),
         findings,
         skipped_reason: None,
+        skipped_detail: None,
     })
 }
 
@@ -1841,6 +1878,7 @@ fn check_duplicate_versions(
         status: check_status_from_findings(&findings),
         findings,
         skipped_reason: None,
+        skipped_detail: None,
     })
 }
 
@@ -1861,7 +1899,8 @@ fn check_security_advisory(
             id: CHECK_ID.to_string(),
             status: CheckStatus::Skip,
             findings: Vec::new(),
-            skipped_reason: Some(
+            skipped_reason: Some(check_skip_reasons::MISSING_PREREQUISITE.to_string()),
+            skipped_detail: Some(
                 "Cargo.lock not found; required for security scanning".to_string(),
             ),
         });
@@ -1875,7 +1914,8 @@ fn check_security_advisory(
             id: CHECK_ID.to_string(),
             status: CheckStatus::Skip,
             findings: Vec::new(),
-            skipped_reason: Some(
+            skipped_reason: Some(check_skip_reasons::FEATURE_NOT_AVAILABLE.to_string()),
+            skipped_detail: Some(
                 "security advisory check requires the 'security' feature to be enabled".to_string(),
             ),
         })
@@ -1935,6 +1975,7 @@ fn check_security_advisory_impl(
         status: check_status_from_findings(&findings),
         findings,
         skipped_reason: None,
+        skipped_detail: None,
     })
 }
 
@@ -2241,8 +2282,11 @@ mod tests {
 
         // Assert: Skip, no workspace MSRV to compare
         assert_eq!(report.status, CheckStatus::Skip);
-        assert!(report.skipped_reason.is_some());
-        assert!(report.skipped_reason.unwrap().contains("no workspace"));
+        assert_eq!(
+            report.skipped_reason.as_deref(),
+            Some(check_skip_reasons::MISSING_PREREQUISITE)
+        );
+        assert!(report.skipped_detail.unwrap().contains("no workspace"));
     }
 
     #[test]
@@ -2486,8 +2530,11 @@ mod tests {
 
         // Assert: Skip, can't compare non-numeric channel
         assert_eq!(report.status, CheckStatus::Skip);
-        assert!(report.skipped_reason.is_some());
-        assert!(report.skipped_reason.unwrap().contains("non-numeric"));
+        assert_eq!(
+            report.skipped_reason.as_deref(),
+            Some(check_skip_reasons::NOT_APPLICABLE)
+        );
+        assert!(report.skipped_detail.unwrap().contains("non-numeric"));
     }
 
     #[test]
@@ -2501,8 +2548,11 @@ mod tests {
 
         // Assert: Skip, no toolchain file
         assert_eq!(report.status, CheckStatus::Skip);
-        assert!(report.skipped_reason.is_some());
-        assert!(report.skipped_reason.unwrap().contains("no toolchain"));
+        assert_eq!(
+            report.skipped_reason.as_deref(),
+            Some(check_skip_reasons::MISSING_PREREQUISITE)
+        );
+        assert!(report.skipped_detail.unwrap().contains("no toolchain"));
     }
 
     #[test]
@@ -2516,8 +2566,11 @@ mod tests {
 
         // Assert: Skip, no MSRV to compare
         assert_eq!(report.status, CheckStatus::Skip);
-        assert!(report.skipped_reason.is_some());
-        assert!(report.skipped_reason.unwrap().contains("no workspace"));
+        assert_eq!(
+            report.skipped_reason.as_deref(),
+            Some(check_skip_reasons::MISSING_PREREQUISITE)
+        );
+        assert!(report.skipped_detail.unwrap().contains("no workspace"));
     }
 
     // =========================================================================
@@ -2585,8 +2638,11 @@ mod tests {
 
         // Assert: Skip, not a workspace
         assert_eq!(report.status, CheckStatus::Skip);
-        assert!(report.skipped_reason.is_some());
-        assert!(report.skipped_reason.unwrap().contains("not a workspace"));
+        assert_eq!(
+            report.skipped_reason.as_deref(),
+            Some(check_skip_reasons::NOT_APPLICABLE)
+        );
+        assert!(report.skipped_detail.unwrap().contains("not a workspace"));
     }
 
     // =========================================================================
@@ -2977,8 +3033,11 @@ mod tests {
         let report = check_security_advisory(&repo, &config, Severity::Error).unwrap();
 
         assert_eq!(report.status, CheckStatus::Skip);
-        assert!(report.skipped_reason.is_some());
-        assert!(report.skipped_reason.unwrap().contains("Cargo.lock"));
+        assert_eq!(
+            report.skipped_reason.as_deref(),
+            Some(check_skip_reasons::MISSING_PREREQUISITE)
+        );
+        assert!(report.skipped_detail.unwrap().contains("Cargo.lock"));
     }
 
     #[test]

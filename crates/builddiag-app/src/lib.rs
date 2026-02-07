@@ -1185,6 +1185,7 @@ diff_aware = "yes"
                 status: CheckStatus::Warn,
                 findings: report.findings.clone(),
                 skipped_reason: None,
+                skipped_detail: None,
             }];
 
             let mut caps = BTreeMap::new();

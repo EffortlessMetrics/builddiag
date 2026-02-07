@@ -296,7 +296,15 @@ pub struct CheckReport {
     /// Individual findings from this check.
     pub findings: Vec<Finding>,
     /// Reason the check was skipped, if `status` is `Skip`.
+    ///
+    /// This should be one of the [`check_skip_reasons`] constants.
     pub skipped_reason: Option<String>,
+    /// Human-readable detail expanding on [`skipped_reason`](Self::skipped_reason).
+    ///
+    /// Contains the original prose (e.g., "no toolchain file") alongside the
+    /// machine-readable token in `skipped_reason`.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub skipped_detail: Option<String>,
 }
 
 /// Counts of findings by severity level.
@@ -399,11 +407,39 @@ pub mod verdict_reasons {
 /// These tokens distinguish *non-participating* checks (disabled by config or
 /// diff-aware filtering) from *execution-level* skips (missing prerequisites).
 /// Use [`CheckReport::is_non_participating`] to test membership.
+///
+/// ## Non-participating tokens
+///
+/// These checks are excluded from the verdict entirely:
+/// - [`DISABLED_BY_CONFIG`](self::DISABLED_BY_CONFIG)
+/// - [`DIFF_AWARE_NO_MATCH`](self::DIFF_AWARE_NO_MATCH)
+///
+/// ## Execution-level tokens
+///
+/// These checks participate in the verdict (count as Skip):
+/// - [`MISSING_PREREQUISITE`](self::MISSING_PREREQUISITE)
+/// - [`NOT_APPLICABLE`](self::NOT_APPLICABLE)
+/// - [`DISABLED_BY_POLICY`](self::DISABLED_BY_POLICY)
+/// - [`FEATURE_NOT_AVAILABLE`](self::FEATURE_NOT_AVAILABLE)
 pub mod check_skip_reasons {
     /// Check was disabled via configuration override or profile default.
     pub const DISABLED_BY_CONFIG: &str = "disabled_by_config";
     /// Diff-aware mode filtered this check out (no matching changed files).
     pub const DIFF_AWARE_NO_MATCH: &str = "diff_aware_no_match";
+
+    // -- Execution-level tokens (participating, count toward verdict) ----------
+
+    /// A required input file or value is absent (e.g., no toolchain file,
+    /// no MSRV, no checksums file, no Cargo.lock).
+    pub const MISSING_PREREQUISITE: &str = "missing_prerequisite";
+    /// The check does not apply to this repository shape (e.g., not a
+    /// workspace, non-numeric toolchain channel).
+    pub const NOT_APPLICABLE: &str = "not_applicable";
+    /// The check ran but a policy sub-setting caused a skip (e.g.,
+    /// coverage/sorting/verification not required by policy).
+    pub const DISABLED_BY_POLICY: &str = "disabled_by_policy";
+    /// A compile-time feature gate prevented the check from running.
+    pub const FEATURE_NOT_AVAILABLE: &str = "feature_not_available";
 }
 
 impl CheckReport {
@@ -1811,6 +1847,7 @@ mod tests {
                 status: CheckStatus::Pass,
                 findings: vec![],
                 skipped_reason: None,
+                skipped_detail: None,
             };
 
             assert_eq!(report.id, "msrv_defined");
@@ -1828,6 +1865,7 @@ mod tests {
                 status: CheckStatus::Warn,
                 findings: vec![finding],
                 skipped_reason: None,
+                skipped_detail: None,
             };
 
             assert_eq!(report.status, CheckStatus::Warn);
@@ -1844,6 +1882,7 @@ mod tests {
                 status: CheckStatus::Fail,
                 findings: vec![finding],
                 skipped_reason: None,
+                skipped_detail: None,
             };
 
             assert_eq!(report.status, CheckStatus::Fail);
@@ -1857,13 +1896,18 @@ mod tests {
                 id: "checksums_valid".to_string(),
                 status: CheckStatus::Skip,
                 findings: vec![],
-                skipped_reason: Some("Checksums file not found".to_string()),
+                skipped_reason: Some(check_skip_reasons::MISSING_PREREQUISITE.to_string()),
+                skipped_detail: Some("Checksums file not found".to_string()),
             };
 
             assert_eq!(report.status, CheckStatus::Skip);
             assert!(report.findings.is_empty());
             assert_eq!(
                 report.skipped_reason,
+                Some(check_skip_reasons::MISSING_PREREQUISITE.to_string())
+            );
+            assert_eq!(
+                report.skipped_detail,
                 Some("Checksums file not found".to_string())
             );
         }
@@ -1881,6 +1925,7 @@ mod tests {
                 status: CheckStatus::Fail,
                 findings,
                 skipped_reason: None,
+                skipped_detail: None,
             };
 
             assert_eq!(report.findings.len(), 3);
@@ -1896,6 +1941,7 @@ mod tests {
                 status: CheckStatus::Pass,
                 findings: vec![],
                 skipped_reason: None,
+                skipped_detail: None,
             };
 
             let report2 = CheckReport {
@@ -1903,6 +1949,7 @@ mod tests {
                 status: CheckStatus::Pass,
                 findings: vec![],
                 skipped_reason: None,
+                skipped_detail: None,
             };
 
             assert_eq!(report1, report2);

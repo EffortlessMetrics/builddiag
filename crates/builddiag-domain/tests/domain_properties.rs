@@ -100,13 +100,17 @@ fn arb_check_report() -> impl Strategy<Value = CheckReport> {
         arb_check_status(),
         proptest::collection::vec(arb_finding(), 0..5),
         proptest::option::of(arb_message()),
+        proptest::option::of(arb_message()),
     )
-        .prop_map(|(id, status, findings, skipped_reason)| CheckReport {
-            id,
-            status,
-            findings,
-            skipped_reason,
-        })
+        .prop_map(
+            |(id, status, findings, skipped_reason, skipped_detail)| CheckReport {
+                id,
+                status,
+                findings,
+                skipped_reason,
+                skipped_detail,
+            },
+        )
 }
 
 /// Generate valid Rust version strings in various formats.
