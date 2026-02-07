@@ -394,6 +394,34 @@ pub mod verdict_reasons {
     pub const TOOL_ERROR: &str = "tool_error";
 }
 
+/// Canonical skip-reason tokens for [`CheckReport::skipped_reason`].
+///
+/// These tokens distinguish *non-participating* checks (disabled by config or
+/// diff-aware filtering) from *execution-level* skips (missing prerequisites).
+/// Use [`CheckReport::is_non_participating`] to test membership.
+pub mod check_skip_reasons {
+    /// Check was disabled via configuration override or profile default.
+    pub const DISABLED_BY_CONFIG: &str = "disabled_by_config";
+    /// Diff-aware mode filtered this check out (no matching changed files).
+    pub const DIFF_AWARE_NO_MATCH: &str = "diff_aware_no_match";
+}
+
+impl CheckReport {
+    /// Returns `true` if this check did not participate in the verdict.
+    ///
+    /// Non-participating checks are those disabled by configuration or
+    /// filtered out by diff-aware mode. Execution-level skips (e.g.,
+    /// "no toolchain file") are still participating — they count toward
+    /// the verdict as Skip.
+    pub fn is_non_participating(&self) -> bool {
+        matches!(
+            self.skipped_reason.as_deref(),
+            Some(check_skip_reasons::DISABLED_BY_CONFIG)
+                | Some(check_skip_reasons::DIFF_AWARE_NO_MATCH)
+        )
+    }
+}
+
 /// Status of a capability for "No Green By Omission" tracking.
 ///
 /// Capabilities track whether features like git integration, config loading,

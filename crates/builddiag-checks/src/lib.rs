@@ -33,7 +33,7 @@ use builddiag_domain::{check_status_from_findings, parse_rust_version};
 use builddiag_repo::{RepoState, maybe_parse_numeric_version};
 use builddiag_types::{
     CheckConfig, CheckReport, CheckStatus, Config, Finding, Location, RelationToMsrv, Severity,
-    effective_check_config,
+    check_skip_reasons, effective_check_config,
 };
 use globset::{Glob, GlobSet, GlobSetBuilder};
 #[cfg(feature = "parallel")]
@@ -414,7 +414,6 @@ fn prepare_check_tasks<'a>(
     allow_all: bool,
 ) -> Vec<CheckTask<'a>> {
     let overrides = config.check_overrides();
-    let profile = config.profile;
 
     BUILTIN_CHECKS
         .iter()
@@ -427,11 +426,7 @@ fn prepare_check_tasks<'a>(
                 return CheckTask {
                     def,
                     effective_severity: effective.severity,
-                    skip_reason: Some(if ov.is_some() {
-                        "disabled by config".to_string()
-                    } else {
-                        format!("disabled by {} profile", profile)
-                    }),
+                    skip_reason: Some(check_skip_reasons::DISABLED_BY_CONFIG.to_string()),
                 };
             }
 
@@ -447,7 +442,7 @@ fn prepare_check_tasks<'a>(
                 return CheckTask {
                     def,
                     effective_severity: effective.severity,
-                    skip_reason: Some("diff-aware: no matching changed files".to_string()),
+                    skip_reason: Some(check_skip_reasons::DIFF_AWARE_NO_MATCH.to_string()),
                 };
             }
 
@@ -497,7 +492,9 @@ fn execute_check(task: &CheckTask, repo: &RepoState, config: &Config) -> Result<
         _ => return Err(anyhow!("unknown check id: {}", task.def.id)),
     };
 
-    report.status = check_status_from_findings(&report.findings);
+    if report.skipped_reason.is_none() {
+        report.status = check_status_from_findings(&report.findings);
+    }
     Ok(report)
 }
 

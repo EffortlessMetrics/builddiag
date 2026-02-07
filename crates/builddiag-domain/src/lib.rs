@@ -265,15 +265,15 @@ pub fn summarize(checks: &[CheckReport]) -> Summary {
 
 /// Determine the overall verdict from check reports.
 ///
-/// Checks with a `skipped_reason` (e.g. disabled by config) are treated as
-/// non-participating and excluded from verdict computation. Only active checks
-/// (those without a `skipped_reason`) influence the result.
+/// Non-participating checks (`disabled_by_config`, `diff_aware_no_match`)
+/// are excluded from verdict computation. Execution-level skips (e.g.,
+/// "no toolchain file") remain participating and count as Skip.
 ///
-/// | Active Check Statuses | Verdict |
-/// |-----------------------|---------|
-/// | None (all disabled) | [`Verdict::Pass`] |
+/// | Participating Check Statuses | Verdict |
+/// |-------------------------------|---------|
+/// | None (all non-participating) | [`Verdict::Pass`] |
 /// | All Skip (selected but couldn't run) | [`Verdict::Skip`] |
-/// | All Pass (or Skip) | [`Verdict::Pass`] |
+/// | All Pass (or mixed Pass+Skip) | [`Verdict::Pass`] |
 /// | Any Warn (no Fail) | [`Verdict::Warn`] |
 /// | Any Fail | [`Verdict::Fail`] |
 ///
@@ -283,10 +283,11 @@ pub fn summarize(checks: &[CheckReport]) -> Summary {
 ///
 /// # Returns
 ///
-/// The overall [`Verdict`] based on all active check statuses.
+/// The overall [`Verdict`] based on all participating check statuses.
 pub fn determine_verdict(checks: &[CheckReport]) -> Verdict {
-    // Filter out checks disabled by config (have a skipped_reason).
-    let active: Vec<_> = checks.iter().filter(|c| c.skipped_reason.is_none()).collect();
+    // Filter out non-participating checks (disabled by config or diff-aware).
+    // Execution-level skips remain participating.
+    let active: Vec<_> = checks.iter().filter(|c| !c.is_non_participating()).collect();
 
     if active.is_empty() {
         return Verdict::Pass; // All checks disabled → nothing to evaluate
@@ -823,7 +824,7 @@ pub fn build_sensor_verdict(verdict: Verdict, checks: &[CheckReport]) -> SensorV
 #[cfg(test)]
 mod tests {
     use super::*;
-    use builddiag_types::{Finding, Location, Severity, verdict_reasons};
+    use builddiag_types::{Finding, Location, Severity, check_skip_reasons, verdict_reasons};
 
     /// Helper to create a Finding for tests
     fn make_finding(
@@ -1333,13 +1334,13 @@ mod tests {
                 id: "rust.msrv_defined".to_string(),
                 status: CheckStatus::Skip,
                 findings: vec![],
-                skipped_reason: Some("disabled by config".to_string()),
+                skipped_reason: Some(check_skip_reasons::DISABLED_BY_CONFIG.to_string()),
             },
             CheckReport {
                 id: "rust.toolchain".to_string(),
                 status: CheckStatus::Skip,
                 findings: vec![],
-                skipped_reason: Some("disabled by config".to_string()),
+                skipped_reason: Some(check_skip_reasons::DISABLED_BY_CONFIG.to_string()),
             },
         ];
 
@@ -1360,7 +1361,7 @@ mod tests {
                 id: "rust.msrv_defined".to_string(),
                 status: CheckStatus::Skip,
                 findings: vec![],
-                skipped_reason: Some("disabled by config".to_string()),
+                skipped_reason: Some(check_skip_reasons::DISABLED_BY_CONFIG.to_string()),
             },
             CheckReport {
                 id: "rust.toolchain".to_string(),
@@ -1377,7 +1378,7 @@ mod tests {
                 id: "rust.msrv_defined".to_string(),
                 status: CheckStatus::Skip,
                 findings: vec![],
-                skipped_reason: Some("disabled by config".to_string()),
+                skipped_reason: Some(check_skip_reasons::DISABLED_BY_CONFIG.to_string()),
             },
             CheckReport {
                 id: "rust.toolchain".to_string(),
@@ -1400,5 +1401,86 @@ mod tests {
             skipped_reason: None,
         }];
         assert_eq!(determine_verdict(&checks), Verdict::Skip);
+
+        // Execution-level skip with a reason is also participating
+        let checks = vec![CheckReport {
+            id: "rust.toolchain_pinning".to_string(),
+            status: CheckStatus::Skip,
+            findings: vec![],
+            skipped_reason: Some("no toolchain file".to_string()),
+        }];
+        assert_eq!(determine_verdict(&checks), Verdict::Skip);
+    }
+
+    #[test]
+    fn test_determine_verdict_execution_skip_returns_skip() {
+        // Two execution-level skips → Skip
+        let checks = vec![
+            CheckReport {
+                id: "rust.toolchain_pinning".to_string(),
+                status: CheckStatus::Skip,
+                findings: vec![],
+                skipped_reason: Some("no toolchain file".to_string()),
+            },
+            CheckReport {
+                id: "rust.msrv_consistent".to_string(),
+                status: CheckStatus::Skip,
+                findings: vec![],
+                skipped_reason: Some("no workspace/package MSRV".to_string()),
+            },
+        ];
+        assert_eq!(determine_verdict(&checks), Verdict::Skip);
+    }
+
+    #[test]
+    fn test_determine_verdict_disabled_plus_execution_skip_returns_skip() {
+        // One config-disabled (non-participating) + one execution skip → Skip
+        let checks = vec![
+            CheckReport {
+                id: "rust.msrv_defined".to_string(),
+                status: CheckStatus::Skip,
+                findings: vec![],
+                skipped_reason: Some(check_skip_reasons::DISABLED_BY_CONFIG.to_string()),
+            },
+            CheckReport {
+                id: "rust.toolchain_pinning".to_string(),
+                status: CheckStatus::Skip,
+                findings: vec![],
+                skipped_reason: Some("no toolchain file".to_string()),
+            },
+        ];
+        assert_eq!(determine_verdict(&checks), Verdict::Skip);
+    }
+
+    #[test]
+    fn test_determine_verdict_execution_skip_plus_pass_returns_pass() {
+        // One execution skip + one Pass → Pass
+        let checks = vec![
+            CheckReport {
+                id: "rust.toolchain_pinning".to_string(),
+                status: CheckStatus::Skip,
+                findings: vec![],
+                skipped_reason: Some("no toolchain file".to_string()),
+            },
+            CheckReport {
+                id: "rust.msrv_defined".to_string(),
+                status: CheckStatus::Pass,
+                findings: vec![],
+                skipped_reason: None,
+            },
+        ];
+        assert_eq!(determine_verdict(&checks), Verdict::Pass);
+    }
+
+    #[test]
+    fn test_determine_verdict_diff_aware_skip_non_participating() {
+        // Single diff-aware skip → Pass (non-participating)
+        let checks = vec![CheckReport {
+            id: "rust.msrv_defined".to_string(),
+            status: CheckStatus::Skip,
+            findings: vec![],
+            skipped_reason: Some(check_skip_reasons::DIFF_AWARE_NO_MATCH.to_string()),
+        }];
+        assert_eq!(determine_verdict(&checks), Verdict::Pass);
     }
 }
