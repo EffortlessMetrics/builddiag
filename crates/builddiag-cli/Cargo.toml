@@ -15,12 +15,12 @@ anyhow.workspace = true
 clap.workspace = true
 camino.workspace = true
 chrono.workspace = true
-builddiag-app = { path = "../builddiag-app" }
-builddiag-checks = { path = "../builddiag-checks" }
-builddiag-core = { path = "../builddiag-core" }
-builddiag-domain = { path = "../builddiag-domain" }
-builddiag-render = { path = "../builddiag-render" }
-builddiag-types = { path = "../builddiag-types" }
+builddiag-app = { path = "../builddiag-app", version = "0.2.0" }
+builddiag-checks = { path = "../builddiag-checks", version = "0.2.0" }
+builddiag-core = { path = "../builddiag-core", version = "0.2.0" }
+builddiag-domain = { path = "../builddiag-domain", version = "0.2.0" }
+builddiag-render = { path = "../builddiag-render", version = "0.2.0" }
+builddiag-types = { path = "../builddiag-types", version = "0.2.0" }
 serde.workspace = true
 serde_json.workspace = true
 

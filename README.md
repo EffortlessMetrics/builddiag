@@ -182,6 +182,23 @@ artifacts/builddiag/
 
 When `--artifacts-dir` is set, `--format`, `--out`, and `--md` are overridden automatically.
 
+## Cockpit Mode
+
+For Cockpit CI governance pipelines, use cockpit mode for a single-flag experience:
+
+```yaml
+- name: builddiag (cockpit mode)
+  run: builddiag check --mode cockpit
+```
+
+This automatically produces the canonical artifact tree at `artifacts/builddiag/`:
+
+- `report.json` — sensor.report.v1 envelope
+- `comment.md` — PR summary
+- `extras/payload.json` — builddiag.report.v1 (native payload)
+
+Cockpit mode exits 0 whenever a report is written (even on policy violations or tool errors), so downstream systems can read the verdict from the report JSON.
+
 ## Exit Code Modes
 
 The `--mode` flag controls exit code semantics:

@@ -5,13 +5,12 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-publish = false
 description = "Internal rendering for builddiag (not intended for direct use)"
 keywords = ["rust", "build", "validation", "markdown"]
 categories = ["development-tools"]
 
 [dependencies]
-builddiag-types = { path = "../builddiag-types" }
+builddiag-types = { path = "../builddiag-types", version = "0.2.0" }
 
 [dev-dependencies]
 insta.workspace = true

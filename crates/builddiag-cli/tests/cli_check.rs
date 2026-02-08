@@ -994,6 +994,109 @@ channel = "1.75.0"
 // Error message tests
 // =============================================================================
 
+// =============================================================================
+// Cockpit mode tests
+// =============================================================================
+
+/// Test: `--mode cockpit` alone defaults to artifacts-dir layout.
+#[test]
+fn cockpit_mode_defaults_artifact_dir() {
+    let dir = TempDir::new().unwrap();
+    create_valid_workspace(&dir);
+
+    let mut cmd = get_builddiag_cmd();
+    cmd.arg("check")
+        .arg("--root")
+        .arg(dir.path())
+        .arg("--mode")
+        .arg("cockpit")
+        .arg("--always");
+
+    cmd.assert().success().code(0);
+
+    // Should create the full artifact tree
+    let report = dir.path().join("artifacts/builddiag/report.json");
+    let comment = dir.path().join("artifacts/builddiag/comment.md");
+    let payload = dir.path().join("artifacts/builddiag/extras/payload.json");
+
+    assert!(report.exists(), "report.json should be created");
+    assert!(comment.exists(), "comment.md should be created");
+    assert!(payload.exists(), "extras/payload.json should be created");
+
+    // report.json should be sensor.report.v1 format
+    let content = fs::read_to_string(&report).unwrap();
+    let val: serde_json::Value = serde_json::from_str(&content).unwrap();
+    assert_eq!(
+        val["schema"], "sensor.report.v1",
+        "cockpit mode should produce sensor format"
+    );
+}
+
+/// Test: explicit `--artifacts-dir` overrides the cockpit default.
+#[test]
+fn cockpit_mode_explicit_artifacts_dir_wins() {
+    let dir = TempDir::new().unwrap();
+    create_valid_workspace(&dir);
+
+    let custom_dir = dir.path().join("custom-artifacts");
+
+    let mut cmd = get_builddiag_cmd();
+    cmd.arg("check")
+        .arg("--root")
+        .arg(dir.path())
+        .arg("--mode")
+        .arg("cockpit")
+        .arg("--artifacts-dir")
+        .arg(&custom_dir)
+        .arg("--always");
+
+    cmd.assert().success().code(0);
+
+    let report = custom_dir.join("report.json");
+    assert!(report.exists(), "report.json should be in custom dir");
+
+    // Default location should NOT exist
+    let default_report = dir.path().join("artifacts/builddiag/report.json");
+    assert!(
+        !default_report.exists(),
+        "default artifact dir should not be used when explicit dir given"
+    );
+}
+
+/// Test: `--out` suppresses the cockpit default artifact-dir.
+#[test]
+fn cockpit_mode_explicit_out_skips_default() {
+    let dir = TempDir::new().unwrap();
+    create_valid_workspace(&dir);
+
+    let custom_out = dir.path().join("my-report.json");
+
+    let mut cmd = get_builddiag_cmd();
+    cmd.arg("check")
+        .arg("--root")
+        .arg(dir.path())
+        .arg("--mode")
+        .arg("cockpit")
+        .arg("--out")
+        .arg(&custom_out)
+        .arg("--always");
+
+    cmd.assert().success().code(0);
+
+    assert!(custom_out.exists(), "custom --out path should be used");
+
+    // Default artifact directory layout should NOT be created
+    let default_payload = dir.path().join("artifacts/builddiag/extras/payload.json");
+    assert!(
+        !default_payload.exists(),
+        "artifact dir layout should not be created when --out is specified"
+    );
+}
+
+// =============================================================================
+// Error message tests
+// =============================================================================
+
 /// Test: Error messages are descriptive.
 /// _Requirements: 6.1_
 #[test]

@@ -295,15 +295,15 @@ jobs:
         run: |
           cargo publish -p builddiag-types
           sleep 30
+          cargo publish -p depguard
+          sleep 30
           cargo publish -p builddiag-domain
           sleep 30
           cargo publish -p builddiag-repo
           sleep 30
-          cargo publish -p depguard
+          cargo publish -p builddiag-render
           sleep 30
           cargo publish -p builddiag-checks
-          sleep 30
-          cargo publish -p builddiag-render
           sleep 30
           cargo publish -p builddiag-app
           sleep 30

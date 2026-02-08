@@ -5,7 +5,6 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-publish = false
 description = "Internal repo loading for builddiag (not intended for direct use)"
 keywords = ["rust", "build", "validation"]
 categories = ["development-tools"]
@@ -24,8 +23,8 @@ toml.workspace = true
 cargo_metadata.workspace = true
 camino.workspace = true
 globset.workspace = true
-builddiag-domain = { path = "../builddiag-domain" }
-builddiag-types = { path = "../builddiag-types" }
+builddiag-domain = { path = "../builddiag-domain", version = "0.2.0" }
+builddiag-types = { path = "../builddiag-types", version = "0.2.0" }
 
 [dev-dependencies]
 tempfile.workspace = true

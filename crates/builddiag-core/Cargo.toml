@@ -14,10 +14,10 @@ default = ["cache"]
 cache = ["builddiag-app/cache"]
 
 [dependencies]
-builddiag-app = { path = "../builddiag-app" }
-builddiag-repo = { path = "../builddiag-repo" }
-builddiag-types = { path = "../builddiag-types" }
-builddiag-domain = { path = "../builddiag-domain" }
+builddiag-app = { path = "../builddiag-app", version = "0.2.0" }
+builddiag-repo = { path = "../builddiag-repo", version = "0.2.0" }
+builddiag-types = { path = "../builddiag-types", version = "0.2.0" }
+builddiag-domain = { path = "../builddiag-domain", version = "0.2.0" }
 anyhow.workspace = true
 camino.workspace = true
 chrono.workspace = true

@@ -221,6 +221,17 @@ fn try_main() -> Result<()> {
         } => {
             let start = Utc::now();
 
+            // Cockpit mode defaults to artifacts-dir when no output flags are specified
+            let artifacts_dir = if mode == Mode::Cockpit
+                && artifacts_dir.is_none()
+                && out.is_none()
+                && md.is_none()
+            {
+                Some(root.join("artifacts/builddiag"))
+            } else {
+                artifacts_dir
+            };
+
             // --artifacts-dir forces sensor format and overrides out/md paths
             let (effective_out, effective_md, effective_format) =
                 if let Some(ref dir) = artifacts_dir {
