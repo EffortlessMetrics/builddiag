@@ -21,4 +21,8 @@ target
 #.idea/
 *.proptest-regressions
 
+# Builddiag runtime cache
+/.builddiag-cache/
+.builddiag-cache/
+
 /nul

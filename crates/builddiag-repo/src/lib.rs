@@ -428,18 +428,24 @@ fn build_cache_from_state(
     let mut cache = RepoStateCache::new();
 
     // Cache Cargo.toml
-    if let Some(ref cargo_root) = state.cargo_root {
-        cache.cargo_root.meta = get_file_meta(root, cargo_root)?;
-        cache.cargo_root.workspace_msrv = state.workspace.workspace_msrv.clone();
-        cache.cargo_root.workspace_edition = state.workspace.workspace_edition.clone();
-        cache.cargo_root.workspace_resolver = state.workspace.workspace_resolver.clone();
-        cache.cargo_root.is_workspace = state.workspace.is_workspace;
+    state
+        .cargo_root
+        .as_ref()
+        .map(|cargo_root| {
+            cache.cargo_root.meta = get_file_meta(root, cargo_root)?;
+            cache.cargo_root.workspace_msrv = state.workspace.workspace_msrv.clone();
+            cache.cargo_root.workspace_edition = state.workspace.workspace_edition.clone();
+            cache.cargo_root.workspace_resolver = state.workspace.workspace_resolver.clone();
+            cache.cargo_root.is_workspace = state.workspace.is_workspace;
 
-        if let Some(ref model) = state.workspace_model {
-            cache.cargo_root.member_patterns = model.member_patterns.clone();
-            cache.cargo_root.exclude_patterns = model.exclude_patterns.clone();
-        }
-    }
+            if let Some(ref model) = state.workspace_model {
+                cache.cargo_root.member_patterns = model.member_patterns.clone();
+                cache.cargo_root.exclude_patterns = model.exclude_patterns.clone();
+            }
+
+            Ok::<(), anyhow::Error>(())
+        })
+        .transpose()?;
 
     // Cache rust-toolchain.toml
     if let Some(ref tc) = state.toolchain {
@@ -595,10 +601,11 @@ fn load_workspace(manifest_path: &Utf8Path) -> Result<WorkspaceInfo> {
     let member_ids: BTreeSet<PackageId> = meta.workspace_members.iter().cloned().collect();
 
     let mut members = Vec::new();
-    for pkg in &meta.packages {
-        if !member_ids.contains(&pkg.id) {
-            continue;
-        }
+    for pkg in meta
+        .packages
+        .iter()
+        .filter(|pkg| member_ids.contains(&pkg.id))
+    {
         let manifest_path =
             Utf8PathBuf::from_path_buf(pkg.manifest_path.clone().into_std_path_buf())
                 .map_err(|_| anyhow!("non-utf8 manifest path"))?;
@@ -893,15 +900,13 @@ pub fn discover_workspace(root_manifest_path: &Utf8Path) -> Result<WorkspaceMode
     let mut member_manifests = BTreeMap::new();
     for member_path in member_paths {
         let manifest_path = join_normalized(workspace_root, &member_path).join("Cargo.toml");
-        if manifest_path.exists() {
-            let txt = fs::read_to_string(&manifest_path)
-                .with_context(|| format!("read member manifest: {manifest_path}"))?;
-            let value: toml::Value = toml::from_str(&txt)
-                .with_context(|| format!("parse member manifest: {manifest_path}"))?;
-            let manifest = parse_manifest(&value)?;
-            let relative_manifest_path = format!("{}/Cargo.toml", member_path);
-            member_manifests.insert(relative_manifest_path, manifest);
-        }
+        let txt = fs::read_to_string(&manifest_path)
+            .with_context(|| format!("read member manifest: {manifest_path}"))?;
+        let value: toml::Value = toml::from_str(&txt)
+            .with_context(|| format!("parse member manifest: {manifest_path}"))?;
+        let manifest = parse_manifest(&value)?;
+        let relative_manifest_path = format!("{}/Cargo.toml", member_path);
+        member_manifests.insert(relative_manifest_path, manifest);
     }
 
     // For non-virtual workspaces, also include the root package as a member
@@ -1120,19 +1125,15 @@ fn walk_for_cargo_tomls(
             continue;
         }
 
-        let utf8_path = match Utf8PathBuf::from_path_buf(path.clone()) {
-            Ok(p) => p,
-            Err(_) => continue, // Skip non-UTF8 paths
-        };
-
-        let dir_name = match utf8_path.file_name() {
-            Some(n) => n,
-            None => continue,
-        };
-
+        let utf8_path =
+            Utf8PathBuf::from_path_buf(path.clone()).expect("non-utf8 path in workspace walk");
+        let dir_name = utf8_path
+            .file_name()
+            .expect("missing directory name in workspace walk")
+            .to_string();
         // Build relative path
         let relative = if relative_prefix.is_empty() {
-            dir_name.to_string()
+            dir_name
         } else {
             format!("{}/{}", relative_prefix, dir_name)
         };
@@ -1196,10 +1197,7 @@ pub fn parse_checksums_content(content: &str) -> Vec<ChecksumEntry> {
         }
         // common format: <hash><space(s)><path>
         let mut parts = trimmed.split_whitespace();
-        let hash = match parts.next() {
-            Some(h) => h.to_string(),
-            None => continue,
-        };
+        let hash = parts.next().unwrap().to_string();
         let path_part = match parts.next() {
             Some(p) => p.to_string(),
             None => "".to_string(),
@@ -1647,6 +1645,17 @@ components = ["rustfmt"]
         assert_eq!(to_repo_relative(root, abs), "/home/other/file.txt");
     }
 
+    #[test]
+    fn join_normalized_converts_backslashes() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+        let joined = join_normalized(&root, "crates\\demo\\Cargo.toml");
+
+        let joined_str = joined.as_str();
+        assert!(joined_str.contains("crates/demo/Cargo.toml"));
+        assert!(!joined_str.contains('\\'));
+    }
+
     // =========================================================================
     // Tests for glob pattern helpers
     // =========================================================================
@@ -1699,6 +1708,63 @@ components = ["rustfmt"]
         assert_eq!(glob, "");
     }
 
+    #[test]
+    fn expand_glob_pattern_returns_empty_for_missing_path() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+
+        let expanded = expand_glob_pattern(&root, "missing/path").unwrap();
+        assert!(expanded.is_empty());
+    }
+
+    #[test]
+    fn expand_glob_pattern_handles_base_path_empty() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+        let member_dir = root.join("member");
+        std::fs::create_dir_all(&member_dir).unwrap();
+        std::fs::write(member_dir.join("Cargo.toml"), make_package_toml("member")).unwrap();
+
+        let expanded = expand_glob_pattern(&root, "*").unwrap();
+        assert!(expanded.contains(&"member".to_string()));
+    }
+
+    #[test]
+    fn expand_glob_pattern_returns_empty_for_missing_search_root() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+
+        let expanded = expand_glob_pattern(&root, "missing/*").unwrap();
+        assert!(expanded.is_empty());
+    }
+
+    #[test]
+    fn walk_for_cargo_tomls_skips_unreadable_dir() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+        let file_path = root.join("not-a-dir");
+        std::fs::write(&file_path, "data").unwrap();
+
+        let glob = globset::Glob::new("*").unwrap().compile_matcher();
+        let mut results = Vec::new();
+        walk_for_cargo_tomls(&file_path, "", &glob, &mut results).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn walk_for_cargo_tomls_uses_empty_relative_prefix() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+        let member_dir = root.join("member");
+        std::fs::create_dir_all(&member_dir).unwrap();
+        std::fs::write(member_dir.join("Cargo.toml"), make_package_toml("member")).unwrap();
+
+        let glob = globset::Glob::new("*").unwrap().compile_matcher();
+        let mut results = Vec::new();
+        walk_for_cargo_tomls(&root, "", &glob, &mut results).unwrap();
+        assert!(results.contains(&"member".to_string()));
+    }
+
     // =========================================================================
     // Tests for workspace discovery
     // =========================================================================
@@ -1712,6 +1778,15 @@ version = "0.1.0"
 edition = "2021"
 "#
         )
+    }
+
+    fn create_minimal_repo() -> (TempDir, Utf8PathBuf) {
+        let temp = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).unwrap();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("Cargo.toml"), make_package_toml("fixture")).unwrap();
+        std::fs::write(root.join("src/lib.rs"), "").unwrap();
+        (temp, root)
     }
 
     /// Helper to create a workspace Cargo.toml with members.
@@ -1782,6 +1857,49 @@ members = [
     }
 
     #[test]
+    fn load_workspace_skips_non_member_packages() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+        let dep_dir = TempDir::new().unwrap();
+        let dep_root = dep_dir.path();
+
+        let dep_path = dep_root.to_string_lossy().replace('\\', "/");
+        std::fs::write(
+            root.join("Cargo.toml"),
+            format!(
+                r#"
+[package]
+name = "root"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+members = ["crates/a"]
+
+[dependencies]
+dep = {{ path = "{dep_path}" }}
+"#
+            ),
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/lib.rs"), "").unwrap();
+
+        std::fs::create_dir_all(root.join("crates/a/src")).unwrap();
+        std::fs::write(root.join("crates/a/Cargo.toml"), make_package_toml("a")).unwrap();
+        std::fs::write(root.join("crates/a/src/lib.rs"), "").unwrap();
+
+        std::fs::create_dir_all(dep_root.join("src")).unwrap();
+        std::fs::write(dep_root.join("Cargo.toml"), make_package_toml("dep")).unwrap();
+        std::fs::write(dep_root.join("src/lib.rs"), "").unwrap();
+
+        let manifest_path = Utf8PathBuf::from_path_buf(root.join("Cargo.toml")).unwrap();
+        let workspace = load_workspace(&manifest_path).unwrap();
+        assert!(workspace.members.iter().any(|m| m.name == "a"));
+        assert!(!workspace.members.iter().any(|m| m.name == "dep"));
+    }
+
+    #[test]
     fn discover_workspace_with_glob_pattern() {
         let temp_dir = TempDir::new().unwrap();
         let root = temp_dir.path();
@@ -1827,6 +1945,25 @@ members = [
                 "crates/beta/Cargo.toml",
                 "crates/gamma/Cargo.toml"
             ]
+        );
+    }
+
+    #[test]
+    fn discover_workspace_skips_missing_member_manifest() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        let manifest_path = root.join("Cargo.toml");
+        std::fs::write(&manifest_path, make_workspace_toml(&["crates/*"])).unwrap();
+
+        std::fs::create_dir_all(root.join("crates/empty")).unwrap();
+
+        let path = Utf8PathBuf::from_path_buf(manifest_path).unwrap();
+        let model = discover_workspace(&path).unwrap();
+        assert!(
+            !model
+                .member_manifests
+                .contains_key("crates/empty/Cargo.toml")
         );
     }
 
@@ -1988,5 +2125,339 @@ edition = "2021"
         assert!(model.has_members());
         assert_eq!(model.member_count(), 1);
         assert_eq!(model.member_paths(), vec!["Cargo.toml"]);
+    }
+
+    // =========================================================================
+    // Additional coverage for repo loading and metadata parsing
+    // =========================================================================
+
+    #[test]
+    fn load_repo_state_handles_missing_cargo_toml() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = Utf8Path::from_path(temp_dir.path()).unwrap();
+
+        let state = load_repo_state(root, &Config::default(), None).unwrap();
+        assert!(state.cargo_root.is_none());
+        assert!(!state.workspace.is_workspace);
+        assert!(!state.lockfile_exists);
+    }
+
+    #[test]
+    fn load_repo_state_reads_toolchain_and_tools() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+
+        std::fs::write(
+            root.join("Cargo.toml"),
+            r#"
+[package]
+name = "demo"
+version = "0.1.0"
+edition = "2021"
+"#,
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/lib.rs"), "").unwrap();
+        std::fs::write(
+            root.join("rust-toolchain.toml"),
+            r#"
+[toolchain]
+channel = "1.70.0"
+"#,
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.join("scripts")).unwrap();
+        std::fs::write(
+            root.join("scripts/tools.sha256"),
+            format!("{}  tool.bin\n", "a".repeat(64)),
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("scripts/tools.toml"),
+            r#"
+[[tool]]
+name = "tools"
+files = ["tool.bin"]
+"#,
+        )
+        .unwrap();
+        std::fs::write(root.join("Cargo.lock"), "").unwrap();
+
+        let state = load_repo_state(&root, &Config::default(), None).unwrap();
+        assert!(state.cargo_root.is_some());
+        assert!(state.toolchain.is_some());
+        assert_eq!(state.toolchain.as_ref().unwrap().channel, "1.70.0");
+        assert!(state.tools_checksums.is_some());
+        assert_eq!(state.tools_checksums.as_ref().unwrap().entries.len(), 1);
+        assert!(state.tools_manifest.is_some());
+        assert!(state.lockfile_exists);
+    }
+
+    #[test]
+    fn load_repo_state_cached_respects_disabled_config() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            r#"
+[package]
+name = "demo"
+version = "0.1.0"
+edition = "2021"
+"#,
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/lib.rs"), "").unwrap();
+
+        let config = Config::default();
+        let state = load_repo_state_cached(&root, &config, None, None).unwrap();
+        assert!(state.cargo_root.is_some());
+
+        let disabled = CacheConfig::disabled();
+        let state = load_repo_state_cached(&root, &config, None, Some(&disabled)).unwrap();
+        assert!(state.cargo_root.is_some());
+    }
+
+    #[test]
+    fn load_repo_state_cached_handles_cache_save_failure() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            r#"
+[package]
+name = "demo"
+version = "0.1.0"
+edition = "2021"
+"#,
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/lib.rs"), "").unwrap();
+
+        let cache_file = root.join("cache-file");
+        std::fs::write(&cache_file, "not a dir").unwrap();
+        let mut cache_cfg = CacheConfig::default();
+        cache_cfg.cache_dir = cache_file;
+
+        let config = Config::default();
+        let state = load_repo_state_cached(&root, &config, None, Some(&cache_cfg)).unwrap();
+        assert!(state.cargo_root.is_some());
+    }
+
+    #[test]
+    fn load_repo_state_cached_writes_cache_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+
+        std::fs::write(
+            root.join("Cargo.toml"),
+            r#"
+[workspace]
+members = ["crates/a"]
+
+[workspace.package]
+edition = "2021"
+"#,
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.join("crates/a/src")).unwrap();
+        std::fs::write(
+            root.join("crates/a/Cargo.toml"),
+            r#"
+[package]
+name = "a"
+version = "0.1.0"
+edition = "2021"
+"#,
+        )
+        .unwrap();
+        std::fs::write(root.join("crates/a/src/lib.rs"), "").unwrap();
+        std::fs::write(
+            root.join("rust-toolchain.toml"),
+            r#"
+[toolchain]
+channel = "1.70.0"
+"#,
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.join("scripts")).unwrap();
+        std::fs::write(
+            root.join("scripts/tools.sha256"),
+            format!("{}  tool.bin\n", "a".repeat(64)),
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("scripts/tools.toml"),
+            r#"
+[[tool]]
+name = "tools"
+files = ["tool.bin"]
+"#,
+        )
+        .unwrap();
+        std::fs::write(root.join("Cargo.lock"), "").unwrap();
+
+        let config = Config::default();
+        let cache_cfg = CacheConfig::default();
+        let _state = load_repo_state_cached(&root, &config, None, Some(&cache_cfg)).unwrap();
+
+        let cache_path = cache_cfg.cache_dir_abs(&root).join("repo-state.json");
+        assert!(cache_path.exists());
+    }
+
+    #[cfg(feature = "cache")]
+    #[test]
+    fn build_cache_from_state_records_cargo_root() {
+        let (_temp, root) = create_minimal_repo();
+        let config = Config::default();
+        let state = load_repo_state(&root, &config, None).unwrap();
+
+        let cache = build_cache_from_state(&root, &state, &config).unwrap();
+        assert!(cache.cargo_root.meta.is_some());
+    }
+
+    #[test]
+    fn repo_state_from_substrate_builds_members() {
+        let root = Utf8Path::new("/repo");
+        let substrate = builddiag_types::Substrate {
+            manifests: vec![builddiag_types::ManifestInfo {
+                path: "crates/demo/Cargo.toml".to_string(),
+                name: Some("demo".to_string()),
+                msrv: Some("1.70.0".to_string()),
+                edition: Some("2021".to_string()),
+            }],
+            has_toolchain: true,
+            toolchain_channel: Some("1.70.0".to_string()),
+            has_checksums: false,
+            has_lockfile: true,
+            workspace_msrv: Some("1.70.0".to_string()),
+        };
+
+        let state = repo_state_from_substrate(root, &substrate);
+        assert!(state.toolchain.is_some());
+        assert_eq!(state.workspace.members.len(), 1);
+        assert!(state.lockfile_exists);
+    }
+
+    #[test]
+    fn repo_state_from_substrate_without_toolchain() {
+        let root = Utf8Path::new("/repo");
+        let substrate = builddiag_types::Substrate {
+            manifests: vec![],
+            has_toolchain: false,
+            toolchain_channel: None,
+            has_checksums: false,
+            has_lockfile: false,
+            workspace_msrv: None,
+        };
+
+        let state = repo_state_from_substrate(root, &substrate);
+        assert!(state.toolchain.is_none());
+    }
+
+    #[test]
+    fn has_binary_target_detects_bin_and_main() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+        let manifest_path = root.join("Cargo.toml");
+
+        let manifest_bin = r#"
+[package]
+name = "bin-test"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "app"
+"#;
+        let value: toml::Value = toml::from_str(manifest_bin).unwrap();
+        std::fs::write(&manifest_path, manifest_bin).unwrap();
+        assert!(has_binary_target(&manifest_path, &value).unwrap());
+
+        let manifest_no_bin = r#"
+[package]
+name = "bin-test"
+version = "0.1.0"
+edition = "2021"
+"#;
+        let value: toml::Value = toml::from_str(manifest_no_bin).unwrap();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/main.rs"), "fn main() {}").unwrap();
+        assert!(has_binary_target(&manifest_path, &value).unwrap());
+
+        std::fs::remove_file(root.join("src/main.rs")).unwrap();
+        assert!(!has_binary_target(&manifest_path, &value).unwrap());
+    }
+
+    #[test]
+    fn parse_publish_metadata_captures_fields() {
+        let manifest = r#"
+[package]
+name = "meta"
+version = "0.1.0"
+publish = false
+description = "desc"
+license = "MIT"
+license-file = "LICENSE"
+repository = "https://example.com/repo"
+homepage = "https://example.com"
+documentation = "https://docs.example.com"
+readme = "README.md"
+keywords = ["a", "b"]
+categories = ["development-tools"]
+"#;
+        let value: toml::Value = toml::from_str(manifest).unwrap();
+        let meta = parse_publish_metadata(&value);
+
+        assert!(meta.publish_disabled);
+        assert_eq!(meta.description.as_deref(), Some("desc"));
+        assert_eq!(meta.license.as_deref(), Some("MIT"));
+        assert_eq!(meta.license_file.as_deref(), Some("LICENSE"));
+        assert_eq!(meta.repository.as_deref(), Some("https://example.com/repo"));
+        assert_eq!(meta.homepage.as_deref(), Some("https://example.com"));
+        assert_eq!(
+            meta.documentation.as_deref(),
+            Some("https://docs.example.com")
+        );
+        assert_eq!(meta.readme.as_deref(), Some("README.md"));
+        assert_eq!(meta.keywords, vec!["a".to_string(), "b".to_string()]);
+        assert_eq!(meta.categories, vec!["development-tools".to_string()]);
+    }
+
+    #[test]
+    fn parse_publish_metadata_defaults_without_package() {
+        let value: toml::Value = toml::from_str("").unwrap();
+        let meta = parse_publish_metadata(&value);
+        assert!(!meta.publish_disabled);
+        assert!(meta.description.is_none());
+    }
+
+    #[test]
+    fn parse_publish_metadata_disables_publish_for_empty_array() {
+        let manifest = r#"
+[package]
+name = "meta"
+version = "0.1.0"
+publish = []
+"#;
+        let value: toml::Value = toml::from_str(manifest).unwrap();
+        let meta = parse_publish_metadata(&value);
+        assert!(meta.publish_disabled);
+    }
+
+    #[test]
+    fn parse_package_inheritable_string_rejects_unsupported_type() {
+        let manifest = r#"
+[package]
+name = "demo"
+version = "0.1.0"
+rust-version = 1
+"#;
+        let value: toml::Value = toml::from_str(manifest).unwrap();
+        let err = parse_package_inheritable_string(&value, "rust-version").unwrap_err();
+        assert!(err.to_string().contains("unsupported type"));
     }
 }

@@ -646,57 +646,28 @@ mod tests {
         let codes = all_codes();
         let mut seen = std::collections::HashSet::new();
         for code in codes {
-            assert!(
-                seen.insert(code),
-                "Duplicate code in EXPLAIN_REGISTRY: '{}'",
-                code
-            );
+            assert!(seen.insert(code));
         }
     }
 
     #[test]
     fn test_all_entries_have_required_fields() {
         for entry in EXPLAIN_REGISTRY {
-            assert!(!entry.check_id.is_empty(), "Empty check_id found");
-            assert!(!entry.code.is_empty(), "Empty code found");
-            assert!(
-                !entry.name.is_empty(),
-                "Empty name found for {}",
-                entry.code
-            );
-            assert!(
-                !entry.what_it_means.is_empty(),
-                "Empty what_it_means for {}",
-                entry.code
-            );
-            assert!(
-                !entry.why_it_matters.is_empty(),
-                "Empty why_it_matters for {}",
-                entry.code
-            );
-            assert!(
-                !entry.how_to_fix.is_empty(),
-                "Empty how_to_fix for {}",
-                entry.code
-            );
+            assert!(!entry.check_id.is_empty());
+            assert!(!entry.code.is_empty());
+            assert!(!entry.name.is_empty());
+            assert!(!entry.what_it_means.is_empty());
+            assert!(!entry.why_it_matters.is_empty());
+            assert!(!entry.how_to_fix.is_empty());
         }
     }
 
     #[test]
     fn test_check_ids_follow_naming_convention() {
         for entry in EXPLAIN_REGISTRY {
-            assert!(
-                entry.check_id.contains('.'),
-                "Check ID '{}' doesn't follow 'module.check_name' convention",
-                entry.check_id
-            );
+            assert!(entry.check_id.contains('.'));
             let parts: Vec<&str> = entry.check_id.split('.').collect();
-            assert_eq!(
-                parts.len(),
-                2,
-                "Check ID '{}' should have exactly one '.' separator",
-                entry.check_id
-            );
+            assert_eq!(parts.len(), 2);
         }
     }
 
@@ -707,9 +678,7 @@ mod tests {
                 entry
                     .code
                     .chars()
-                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'),
-                "Code '{}' is not snake_case",
-                entry.code
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
             );
         }
     }

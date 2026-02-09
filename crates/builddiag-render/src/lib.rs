@@ -1043,6 +1043,39 @@ mod tests {
     }
 
     #[test]
+    fn test_diagnostics_sort_by_line() {
+        let mut report = create_test_report_empty();
+        report.findings = vec![
+            Finding {
+                check_id: "test.check".into(),
+                code: "warn".into(),
+                severity: Severity::Warn,
+                message: "later".into(),
+                location: Some(Location {
+                    path: "src/lib.rs".into(),
+                    line: Some(10),
+                    col: None,
+                }),
+            },
+            Finding {
+                check_id: "test.check".into(),
+                code: "warn".into(),
+                severity: Severity::Warn,
+                message: "earlier".into(),
+                location: Some(Location {
+                    path: "src/lib.rs".into(),
+                    line: Some(2),
+                    col: None,
+                }),
+            },
+        ];
+
+        let lines = render_diagnostics(&report);
+        assert!(lines[0].contains("src/lib.rs:2"));
+        assert!(lines[1].contains("src/lib.rs:10"));
+    }
+
+    #[test]
     fn test_diagnostics_no_location() {
         let mut report = create_test_report_empty();
         report.findings = vec![Finding {

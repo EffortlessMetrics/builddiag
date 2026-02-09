@@ -290,7 +290,10 @@ pub fn summarize(checks: &[CheckReport]) -> Summary {
 pub fn determine_verdict(checks: &[CheckReport]) -> Verdict {
     // Filter out non-participating checks (disabled by config or diff-aware).
     // Execution-level skips remain participating.
-    let active: Vec<_> = checks.iter().filter(|c| !c.is_non_participating()).collect();
+    let active: Vec<_> = checks
+        .iter()
+        .filter(|c| !c.is_non_participating())
+        .collect();
 
     if active.is_empty() {
         return Verdict::Pass; // All checks disabled → nothing to evaluate
@@ -948,6 +951,47 @@ mod tests {
     }
 
     #[test]
+    fn test_compare_location_path_ordering() {
+        use std::cmp::Ordering;
+
+        let some = Some(Location {
+            path: "a.rs".to_string(),
+            line: None,
+            col: None,
+        });
+        let none = None;
+
+        assert_eq!(compare_location_path(&some, &none), Ordering::Less);
+        assert_eq!(compare_location_path(&none, &some), Ordering::Greater);
+        assert_eq!(compare_location_path(&none, &none), Ordering::Equal);
+    }
+
+    #[test]
+    fn test_compare_location_line_ordering() {
+        use std::cmp::Ordering;
+
+        let some_line = Some(Location {
+            path: "a.rs".to_string(),
+            line: Some(1),
+            col: None,
+        });
+        let none_line = Some(Location {
+            path: "a.rs".to_string(),
+            line: None,
+            col: None,
+        });
+
+        assert_eq!(
+            compare_location_line(&some_line, &none_line),
+            Ordering::Less
+        );
+        assert_eq!(
+            compare_location_line(&none_line, &some_line),
+            Ordering::Greater
+        );
+    }
+
+    #[test]
     fn test_sort_findings_canonical_by_line() {
         let mut findings = vec![
             make_finding(
@@ -1063,12 +1107,8 @@ mod tests {
         let fp1 = compute_fingerprint(&finding);
         let fp2 = compute_fingerprint(&finding);
 
-        assert_eq!(fp1, fp2, "Fingerprint should be stable");
-        assert_eq!(
-            fp1.len(),
-            64,
-            "Fingerprint should be 64 hex chars (full SHA-256)"
-        );
+        assert_eq!(fp1, fp2);
+        assert_eq!(fp1.len(), 64);
     }
 
     #[test]
@@ -1094,10 +1134,7 @@ mod tests {
         let fp1 = compute_fingerprint(&finding1);
         let fp2 = compute_fingerprint(&finding2);
 
-        assert_ne!(
-            fp1, fp2,
-            "Different findings should have different fingerprints"
-        );
+        assert_ne!(fp1, fp2);
     }
 
     #[test]
@@ -1303,6 +1340,19 @@ mod tests {
     }
 
     #[test]
+    fn test_build_verdict_data_warn_without_fail_or_warn_returns_none() {
+        let checks = vec![CheckReport {
+            id: "check".to_string(),
+            status: CheckStatus::Pass,
+            findings: vec![],
+            skipped_reason: None,
+            skipped_detail: None,
+        }];
+
+        assert!(build_verdict_data(Verdict::Warn, &checks).is_none());
+    }
+
+    #[test]
     fn test_build_verdict_data_pass_returns_none() {
         let checks = vec![CheckReport {
             id: "check".to_string(),
@@ -1337,6 +1387,17 @@ mod tests {
         assert!(build_verdict_data(Verdict::Error, &empty).is_none());
     }
 
+    #[test]
+    fn test_exit_code_for_combinations() {
+        assert_eq!(exit_code_for(Verdict::Fail, FailOn::Error), 2);
+        assert_eq!(exit_code_for(Verdict::Error, FailOn::Never), 2);
+        assert_eq!(exit_code_for(Verdict::Warn, FailOn::Warn), 2);
+        assert_eq!(exit_code_for(Verdict::Warn, FailOn::Error), 0);
+        assert_eq!(exit_code_for(Verdict::Warn, FailOn::Never), 0);
+        assert_eq!(exit_code_for(Verdict::Pass, FailOn::Error), 0);
+        assert_eq!(exit_code_for(Verdict::Skip, FailOn::Error), 0);
+    }
+
     // ==========================================================================
     // determine_verdict tests
     // ==========================================================================
@@ -1367,6 +1428,19 @@ mod tests {
     fn test_determine_verdict_empty_checks_returns_pass() {
         let checks: Vec<CheckReport> = vec![];
         assert_eq!(determine_verdict(&checks), Verdict::Pass);
+    }
+
+    #[test]
+    fn test_determine_verdict_warn_when_warn_present() {
+        let checks = vec![CheckReport {
+            id: "check".to_string(),
+            status: CheckStatus::Warn,
+            findings: vec![],
+            skipped_reason: None,
+            skipped_detail: None,
+        }];
+
+        assert_eq!(determine_verdict(&checks), Verdict::Warn);
     }
 
     #[test]

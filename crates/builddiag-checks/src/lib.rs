@@ -641,15 +641,12 @@ fn check_msrv_defined(
             }
         }
         builddiag_types::MsrvSource::Any => {
-            let mut any_msrv: Option<String> = msrv.clone();
-            if any_msrv.is_none() {
-                for m in &repo.workspace.members {
-                    if m.rust_version.is_some() {
-                        any_msrv = m.rust_version.clone();
-                        break;
-                    }
-                }
-            }
+            let any_msrv = msrv.clone().or_else(|| {
+                repo.workspace
+                    .members
+                    .iter()
+                    .find_map(|m| m.rust_version.clone())
+            });
             if let Some(ref msrv_raw) = any_msrv {
                 // Validate that MSRV is parseable
                 if parse_rust_version(msrv_raw).is_err() {
@@ -663,7 +660,9 @@ fn check_msrv_defined(
                         None,
                     ));
                 }
-            } else if config.policy.msrv.require_defined {
+            }
+
+            if any_msrv.is_none() && config.policy.msrv.require_defined {
                 findings.push(mk_finding(
                     default_sev,
                     "rust.msrv_defined",
@@ -829,7 +828,7 @@ fn check_toolchain_pinning(
         ));
     }
 
-    if config.policy.toolchain.require_pinned {
+    config.policy.toolchain.require_pinned.then(|| {
         if channel.eq_ignore_ascii_case("stable")
             || channel.eq_ignore_ascii_case("beta")
             || channel.eq_ignore_ascii_case("nightly")
@@ -842,17 +841,24 @@ fn check_toolchain_pinning(
                 Some(rel_path(&repo.root, &tc.path)),
                 None,
             ));
-        } else if maybe_parse_numeric_version(channel)?.is_none() {
-            findings.push(mk_finding(
-                default_sev,
-                "rust.toolchain_pinning",
-                "invalid_toolchain_version",
-                format!("Toolchain channel '{channel}' is not a valid numeric Rust version"),
-                Some(rel_path(&repo.root, &tc.path)),
-                None,
-            ));
+        } else {
+            match maybe_parse_numeric_version(channel) {
+                Ok(Some(_)) => {}
+                Ok(None) | Err(_) => {
+                    findings.push(mk_finding(
+                        default_sev,
+                        "rust.toolchain_pinning",
+                        "invalid_toolchain_version",
+                        format!(
+                            "Toolchain channel '{channel}' is not a valid numeric Rust version"
+                        ),
+                        Some(rel_path(&repo.root, &tc.path)),
+                        None,
+                    ));
+                }
+            }
         }
-    }
+    });
 
     Ok(CheckReport {
         id: "rust.toolchain_pinning".to_string(),
@@ -1983,8 +1989,10 @@ fn check_security_advisory_impl(
 mod tests {
     use super::*;
     use builddiag_repo::{Member, PublishMetadata, RepoState, Toolchain, WorkspaceInfo};
-    use builddiag_types::{Config, MsrvSource, RelationToMsrv, Severity};
+    use builddiag_types::{CheckConfig, Config, MsrvSource, RelationToMsrv, Severity};
     use camino::Utf8PathBuf;
+    use std::collections::BTreeSet;
+    use tempfile::TempDir;
 
     /// Helper to create a minimal RepoState for testing
     fn mock_repo_state() -> RepoState {
@@ -2054,6 +2062,15 @@ mod tests {
             has_binary_target: false,
             publish_metadata: PublishMetadata::default(),
         }
+    }
+
+    fn repo_with_root(root: Utf8PathBuf) -> RepoState {
+        let mut repo = mock_repo_state();
+        repo.root = root.clone();
+        repo.cargo_root = Some(root.join("Cargo.toml"));
+        repo.workspace.is_workspace = false;
+        repo.workspace.members.clear();
+        repo
     }
 
     // =========================================================================
@@ -2129,11 +2146,26 @@ mod tests {
         let repo = mock_repo_with_members(None, members);
         let mut config = Config::default();
         config.policy.msrv.source = MsrvSource::Any;
+        config.policy.msrv.require_defined = true;
 
         // Act
         let report = check_msrv_defined(&repo, &config, Severity::Error).unwrap();
 
         // Assert: Fail because no MSRV defined anywhere
+        assert_eq!(report.status, CheckStatus::Fail);
+        assert_eq!(report.findings.len(), 1);
+        assert_eq!(report.findings[0].code, "missing_msrv");
+    }
+
+    #[test]
+    fn msrv_defined_with_any_source_requires_defined_when_missing_everywhere() {
+        let repo = mock_repo_with_members(None, Vec::new());
+        let mut config = Config::default();
+        config.policy.msrv.source = MsrvSource::Any;
+        config.policy.msrv.require_defined = true;
+
+        let report = check_msrv_defined(&repo, &config, Severity::Error).unwrap();
+
         assert_eq!(report.status, CheckStatus::Fail);
         assert_eq!(report.findings.len(), 1);
         assert_eq!(report.findings[0].code, "missing_msrv");
@@ -2290,6 +2322,34 @@ mod tests {
     }
 
     #[test]
+    fn msrv_consistent_fails_with_invalid_workspace_msrv() {
+        let repo = mock_repo_with_members(Some("not-a-version"), vec![]);
+        let config = Config::default();
+
+        let report = check_msrv_consistent(&repo, &config, Severity::Error).unwrap();
+
+        assert_eq!(report.status, CheckStatus::Fail);
+        assert!(report.findings.iter().any(|f| f.code == "invalid_msrv"));
+    }
+
+    #[test]
+    fn msrv_consistent_fails_with_invalid_member_msrv() {
+        let members = vec![mock_member("crate-a", Some("bogus"), false)];
+        let repo = mock_repo_with_members(Some("1.70.0"), members);
+        let config = Config::default();
+
+        let report = check_msrv_consistent(&repo, &config, Severity::Error).unwrap();
+
+        assert_eq!(report.status, CheckStatus::Fail);
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|f| f.code == "invalid_member_msrv")
+        );
+    }
+
+    #[test]
     fn msrv_consistent_fails_when_member_missing_msrv_and_not_inheriting() {
         // Arrange: Workspace MSRV set, member has no MSRV and doesn't inherit
         let members = vec![mock_member("crate-a", None, false)]; // no MSRV, not inheriting
@@ -2334,7 +2394,8 @@ mod tests {
     fn toolchain_pinning_passes_when_pinned_to_specific_version() {
         // Arrange: Toolchain pinned to specific version like "1.75.0"
         let repo = mock_repo_with_toolchain("1.75.0");
-        let config = Config::default();
+        let mut config = Config::default();
+        config.policy.toolchain.require_pinned = true;
 
         // Act
         let report = check_toolchain_pinning(&repo, &config, Severity::Error).unwrap();
@@ -2654,11 +2715,7 @@ mod tests {
         // Every check ID in BUILTIN_CHECKS must have a corresponding entry in CHECK_DOCS
         for def in super::BUILTIN_CHECKS {
             let doc = super::CHECK_DOCS.iter().find(|d| d.id == def.id);
-            assert!(
-                doc.is_some(),
-                "Check '{}' is in BUILTIN_CHECKS but missing from CHECK_DOCS",
-                def.id
-            );
+            assert!(doc.is_some());
         }
     }
 
@@ -2667,11 +2724,7 @@ mod tests {
         // Every check ID in CHECK_DOCS must have a corresponding entry in BUILTIN_CHECKS
         for doc in super::CHECK_DOCS {
             let def = super::BUILTIN_CHECKS.iter().find(|d| d.id == doc.id);
-            assert!(
-                def.is_some(),
-                "Check '{}' is in CHECK_DOCS but missing from BUILTIN_CHECKS",
-                doc.id
-            );
+            assert!(def.is_some());
         }
     }
 
@@ -2680,11 +2733,7 @@ mod tests {
         // No duplicate check IDs in BUILTIN_CHECKS
         let mut seen = std::collections::HashSet::new();
         for def in super::BUILTIN_CHECKS {
-            assert!(
-                seen.insert(def.id),
-                "Duplicate check ID in BUILTIN_CHECKS: '{}'",
-                def.id
-            );
+            assert!(seen.insert(def.id));
         }
     }
 
@@ -2694,12 +2743,7 @@ mod tests {
         let mut seen = std::collections::HashSet::new();
         for doc in super::CHECK_DOCS {
             for code in doc.codes {
-                assert!(
-                    seen.insert(*code),
-                    "Duplicate finding code '{}' found in check '{}'",
-                    code,
-                    doc.id
-                );
+                assert!(seen.insert(*code));
             }
         }
     }
@@ -2709,11 +2753,7 @@ mod tests {
         // explain_check should resolve every check ID
         for def in super::BUILTIN_CHECKS {
             let result = super::explain_check(def.id);
-            assert!(
-                result.is_some(),
-                "explain_check('{}') returned None",
-                def.id
-            );
+            assert!(result.is_some());
         }
     }
 
@@ -2723,21 +2763,9 @@ mod tests {
         for doc in super::CHECK_DOCS {
             for code in doc.codes {
                 let result = super::explain_check(code);
-                assert!(
-                    result.is_some(),
-                    "explain_check('{}') returned None for code from check '{}'",
-                    code,
-                    doc.id
-                );
+                assert!(result.is_some());
                 // Verify it resolves to the correct check
-                assert_eq!(
-                    result.unwrap().id,
-                    doc.id,
-                    "explain_check('{}') resolved to '{}', expected '{}'",
-                    code,
-                    result.unwrap().id,
-                    doc.id
-                );
+                assert_eq!(result.unwrap().id, doc.id);
             }
         }
     }
@@ -2746,11 +2774,7 @@ mod tests {
     fn contract_all_checks_have_nonempty_codes() {
         // Every documented check should have at least one finding code
         for doc in super::CHECK_DOCS {
-            assert!(
-                !doc.codes.is_empty(),
-                "Check '{}' has no finding codes defined",
-                doc.id
-            );
+            assert!(!doc.codes.is_empty());
         }
     }
 
@@ -2758,23 +2782,10 @@ mod tests {
     fn contract_check_ids_follow_naming_convention() {
         // Check IDs should follow the pattern "module.check_name"
         for def in super::BUILTIN_CHECKS {
-            assert!(
-                def.id.contains('.'),
-                "Check ID '{}' doesn't follow 'module.check_name' convention",
-                def.id
-            );
+            assert!(def.id.contains('.'));
             let parts: Vec<&str> = def.id.split('.').collect();
-            assert_eq!(
-                parts.len(),
-                2,
-                "Check ID '{}' should have exactly one '.' separator",
-                def.id
-            );
-            assert!(
-                !parts[0].is_empty() && !parts[1].is_empty(),
-                "Check ID '{}' has empty module or check name",
-                def.id
-            );
+            assert_eq!(parts.len(), 2);
+            assert!(!parts[0].is_empty() && !parts[1].is_empty());
         }
     }
 
@@ -2785,18 +2796,10 @@ mod tests {
             for code in doc.codes {
                 assert!(
                     code.chars()
-                        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'),
-                    "Finding code '{}' in check '{}' is not snake_case",
-                    code,
-                    doc.id
+                        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
                 );
                 // Should not start with a digit
-                assert!(
-                    !code.chars().next().unwrap_or('0').is_ascii_digit(),
-                    "Finding code '{}' in check '{}' starts with a digit",
-                    code,
-                    doc.id
-                );
+                assert!(!code.chars().next().unwrap_or('0').is_ascii_digit());
             }
         }
     }
@@ -3004,6 +3007,25 @@ mod tests {
         );
     }
 
+    #[test]
+    fn edition_deprecations_handles_member_without_edition() {
+        let mut repo = mock_repo_state();
+        repo.workspace.workspace_edition = None;
+        repo.workspace.members = vec![Member {
+            name: "no-edition".to_string(),
+            manifest_path: Utf8PathBuf::from("/test/repo/no-edition/Cargo.toml"),
+            rust_version: None,
+            rust_version_workspace: false,
+            edition: None,
+            edition_workspace: false,
+            has_binary_target: false,
+            publish_metadata: PublishMetadata::default(),
+        }];
+
+        let report = check_edition_deprecations(&repo, &Config::default(), Severity::Info).unwrap();
+        assert!(report.findings.is_empty());
+    }
+
     // =========================================================================
     // Tests for check_duplicate_versions
     // =========================================================================
@@ -3017,6 +3039,83 @@ mod tests {
 
         // No members means no duplicates
         assert_eq!(report.status, CheckStatus::Pass);
+        assert!(report.findings.is_empty());
+    }
+
+    #[test]
+    fn duplicate_versions_skips_unreadable_manifests() {
+        let temp = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).unwrap();
+
+        let invalid_dir = root.join("invalid");
+        std::fs::create_dir_all(&invalid_dir).unwrap();
+        std::fs::write(invalid_dir.join("Cargo.toml"), "not = [valid").unwrap();
+
+        let mut repo = mock_repo_state();
+        repo.root = root.clone();
+        repo.workspace.members = vec![
+            Member {
+                name: "missing".to_string(),
+                manifest_path: root.join("missing/Cargo.toml"),
+                rust_version: None,
+                rust_version_workspace: false,
+                edition: None,
+                edition_workspace: false,
+                has_binary_target: false,
+                publish_metadata: PublishMetadata::default(),
+            },
+            Member {
+                name: "invalid".to_string(),
+                manifest_path: invalid_dir.join("Cargo.toml"),
+                rust_version: None,
+                rust_version_workspace: false,
+                edition: None,
+                edition_workspace: false,
+                has_binary_target: false,
+                publish_metadata: PublishMetadata::default(),
+            },
+        ];
+
+        let report = check_duplicate_versions(&repo, &Config::default(), Severity::Warn).unwrap();
+        assert!(report.findings.is_empty());
+    }
+
+    #[test]
+    fn duplicate_versions_ignores_workspace_inherited_deps() {
+        let temp = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).unwrap();
+        let member_dir = root.join("crates/a");
+        std::fs::create_dir_all(&member_dir).unwrap();
+        std::fs::write(
+            member_dir.join("Cargo.toml"),
+            r#"
+[package]
+name = "a"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { workspace = true }
+anyhow = { version = "1.0" }
+weird = 1
+"#,
+        )
+        .unwrap();
+
+        let mut repo = mock_repo_state();
+        repo.root = root.clone();
+        repo.workspace.members = vec![Member {
+            name: "a".to_string(),
+            manifest_path: member_dir.join("Cargo.toml"),
+            rust_version: None,
+            rust_version_workspace: false,
+            edition: Some("2021".to_string()),
+            edition_workspace: false,
+            has_binary_target: false,
+            publish_metadata: PublishMetadata::default(),
+        }];
+
+        let report = check_duplicate_versions(&repo, &Config::default(), Severity::Warn).unwrap();
         assert!(report.findings.is_empty());
     }
 
@@ -3050,5 +3149,757 @@ mod tests {
         // Without the 'security' feature, check should skip
         assert_eq!(report.status, CheckStatus::Skip);
         assert!(report.skipped_reason.is_some());
+    }
+
+    // =========================================================================
+    // Additional coverage for task preparation and diff-aware handling
+    // =========================================================================
+
+    #[test]
+    fn prepare_check_tasks_respects_disabled_and_diff_aware() {
+        let mut config = Config::default();
+        config.checks = vec![CheckConfig {
+            id: "rust.msrv_defined".to_string(),
+            severity: Severity::Warn,
+            enabled: false,
+            triggers: Vec::new(),
+        }];
+
+        let changed: BTreeSet<String> = ["docs/README.md".to_string()].into_iter().collect();
+        let tasks = prepare_check_tasks(&config, Some(&changed), false);
+
+        let msrv = tasks
+            .iter()
+            .find(|t| t.def.id == "rust.msrv_defined")
+            .unwrap();
+        assert_eq!(
+            msrv.skip_reason.as_deref(),
+            Some(check_skip_reasons::DISABLED_BY_CONFIG)
+        );
+
+        let resolver = tasks
+            .iter()
+            .find(|t| t.def.id == "workspace.resolver_v2")
+            .unwrap();
+        assert_eq!(
+            resolver.skip_reason.as_deref(),
+            Some(check_skip_reasons::DIFF_AWARE_NO_MATCH)
+        );
+
+        let tasks_allow_all = prepare_check_tasks(&config, Some(&changed), true);
+        let resolver_allow_all = tasks_allow_all
+            .iter()
+            .find(|t| t.def.id == "workspace.resolver_v2")
+            .unwrap();
+        assert!(resolver_allow_all.skip_reason.is_none());
+    }
+
+    #[test]
+    fn execute_check_returns_error_for_unknown_check_id() {
+        let def = CheckDef {
+            id: "unknown.check",
+            default_severity: Severity::Warn,
+            default_triggers: &[],
+        };
+        let task = CheckTask {
+            def: &def,
+            effective_severity: Severity::Warn,
+            skip_reason: None,
+        };
+        let repo = mock_repo_state();
+        let config = Config::default();
+
+        let err = execute_check(&task, &repo, &config).unwrap_err();
+        assert!(err.to_string().contains("unknown check id"));
+    }
+
+    #[test]
+    fn effective_triggers_uses_override_when_present() {
+        let def = BUILTIN_CHECKS
+            .iter()
+            .find(|d| d.id == "rust.msrv_defined")
+            .unwrap();
+        let ov = CheckConfig {
+            id: def.id.to_string(),
+            severity: Severity::Warn,
+            enabled: true,
+            triggers: vec!["custom.trigger".to_string()],
+        };
+
+        let triggers = effective_triggers(def, Some(&ov));
+        assert_eq!(triggers, vec!["custom.trigger".to_string()]);
+    }
+
+    #[test]
+    fn should_run_handles_invalid_globs_and_matches() {
+        let changed: BTreeSet<String> = ["src/lib.rs".to_string()].into_iter().collect();
+        assert!(should_run(Some(&changed), &[]));
+        assert!(should_run(Some(&changed), &["[".to_string()])); // invalid glob -> fail open
+        assert!(should_run(Some(&changed), &["src/**".to_string()]));
+        assert!(!should_run(Some(&changed), &["Cargo.toml".to_string()]));
+    }
+
+    // =========================================================================
+    // Toolchain policy coverage
+    // =========================================================================
+
+    #[test]
+    fn toolchain_pinning_flags_nightly_and_unpinned() {
+        let repo = mock_repo_with_toolchain("nightly");
+        let config = Config::default();
+
+        let report = check_toolchain_pinning(&repo, &config, Severity::Error).unwrap();
+
+        let codes: Vec<&str> = report.findings.iter().map(|f| f.code.as_str()).collect();
+        assert!(codes.contains(&"nightly_disallowed"));
+        assert!(codes.contains(&"unpinned_channel"));
+    }
+
+    #[test]
+    fn toolchain_pinning_invalid_version_reports_finding() {
+        let repo = mock_repo_with_toolchain("1.x");
+        let config = Config::default();
+
+        let report = check_toolchain_pinning(&repo, &config, Severity::Error).unwrap();
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|f| f.code == "invalid_toolchain_version")
+        );
+    }
+
+    #[test]
+    fn toolchain_msrv_relation_mismatch_equals() {
+        let repo = mock_repo_with_msrv_and_toolchain("1.70.0", "1.71.0");
+        let mut config = Config::default();
+        config.policy.toolchain.relation_to_msrv = RelationToMsrv::Equals;
+
+        let report = check_toolchain_msrv_relation(&repo, &config, Severity::Error).unwrap();
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|f| f.code == "toolchain_msrv_mismatch")
+        );
+    }
+
+    #[test]
+    fn toolchain_msrv_relation_at_least_passes() {
+        let repo = mock_repo_with_msrv_and_toolchain("1.70.0", "1.71.0");
+        let mut config = Config::default();
+        config.policy.toolchain.relation_to_msrv = RelationToMsrv::AtLeast;
+
+        let report = check_toolchain_msrv_relation(&repo, &config, Severity::Error).unwrap();
+        assert_eq!(report.status, CheckStatus::Pass);
+    }
+
+    // =========================================================================
+    // Checksums coverage
+    // =========================================================================
+
+    #[test]
+    fn checksums_file_exists_reports_missing_when_required() {
+        let repo = mock_repo_state();
+        let config = Config::default();
+
+        let report = check_checksums_file_exists(&repo, &config, Severity::Error).unwrap();
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|f| f.code == "missing_checksums")
+        );
+    }
+
+    #[test]
+    fn checksums_format_skips_without_checksums_file() {
+        let repo = mock_repo_state();
+
+        let report = check_checksums_format(&repo, &Config::default(), Severity::Error).unwrap();
+        assert_eq!(report.status, CheckStatus::Skip);
+        assert_eq!(
+            report.skipped_reason.as_deref(),
+            Some(check_skip_reasons::MISSING_PREREQUISITE)
+        );
+    }
+
+    #[test]
+    fn checksums_format_reports_invalid_missing_duplicate() {
+        let mut repo = mock_repo_state();
+        let valid_hash = "a".repeat(64);
+        repo.tools_checksums = Some(builddiag_repo::ToolsChecksums {
+            path: Utf8PathBuf::from("/test/repo/scripts/tools.sha256"),
+            entries: vec![
+                builddiag_repo::ChecksumEntry {
+                    line: 1,
+                    hash: "abc".to_string(),
+                    path: "tool.bin".to_string(),
+                },
+                builddiag_repo::ChecksumEntry {
+                    line: 2,
+                    hash: valid_hash.clone(),
+                    path: "".to_string(),
+                },
+                builddiag_repo::ChecksumEntry {
+                    line: 3,
+                    hash: valid_hash,
+                    path: "tool.bin".to_string(),
+                },
+            ],
+        });
+
+        let report = check_checksums_format(&repo, &Config::default(), Severity::Error).unwrap();
+        let codes: Vec<&str> = report.findings.iter().map(|f| f.code.as_str()).collect();
+        assert!(codes.contains(&"invalid_hash"));
+        assert!(codes.contains(&"missing_path"));
+        assert!(codes.contains(&"duplicate_path"));
+    }
+
+    #[test]
+    fn checksums_coverage_skips_when_policy_disabled() {
+        let repo = mock_repo_state();
+        let config = Config::default();
+
+        let report = check_checksums_coverage(&repo, &config, Severity::Error).unwrap();
+        assert_eq!(report.status, CheckStatus::Skip);
+        assert_eq!(
+            report.skipped_reason.as_deref(),
+            Some(check_skip_reasons::DISABLED_BY_POLICY)
+        );
+    }
+
+    #[test]
+    fn checksums_coverage_skips_without_checksums_file() {
+        let repo = mock_repo_state();
+        let mut config = Config::default();
+        config.policy.checksums.require_coverage = true;
+
+        let report = check_checksums_coverage(&repo, &config, Severity::Error).unwrap();
+        assert_eq!(report.status, CheckStatus::Skip);
+        assert_eq!(
+            report.skipped_reason.as_deref(),
+            Some(check_skip_reasons::MISSING_PREREQUISITE)
+        );
+    }
+
+    #[test]
+    fn checksums_coverage_skips_without_tools_manifest() {
+        let mut repo = mock_repo_state();
+        let mut config = Config::default();
+        config.policy.checksums.require_coverage = true;
+        repo.tools_checksums = Some(builddiag_repo::ToolsChecksums {
+            path: Utf8PathBuf::from("/test/repo/scripts/tools.sha256"),
+            entries: Vec::new(),
+        });
+
+        let report = check_checksums_coverage(&repo, &config, Severity::Error).unwrap();
+        assert_eq!(report.status, CheckStatus::Skip);
+        assert_eq!(
+            report.skipped_reason.as_deref(),
+            Some(check_skip_reasons::MISSING_PREREQUISITE)
+        );
+    }
+
+    #[test]
+    fn checksums_coverage_reports_missing_and_unexpected() {
+        let mut repo = mock_repo_state();
+        let mut config = Config::default();
+        config.policy.checksums.require_coverage = true;
+
+        repo.tools_checksums = Some(builddiag_repo::ToolsChecksums {
+            path: Utf8PathBuf::from("/test/repo/scripts/tools.sha256"),
+            entries: vec![
+                builddiag_repo::ChecksumEntry {
+                    line: 1,
+                    hash: "a".repeat(64),
+                    path: "tool_a.bin".to_string(),
+                },
+                builddiag_repo::ChecksumEntry {
+                    line: 2,
+                    hash: "b".repeat(64),
+                    path: "extra.bin".to_string(),
+                },
+            ],
+        });
+
+        repo.tools_manifest = Some((
+            Utf8PathBuf::from("/test/repo/scripts/tools.toml"),
+            builddiag_repo::ToolsManifest {
+                tool: vec![builddiag_repo::ToolDecl {
+                    name: "tools".to_string(),
+                    version: None,
+                    files: vec!["tool_a.bin".to_string(), "tool_b.bin".to_string()],
+                }],
+            },
+        ));
+
+        let report = check_checksums_coverage(&repo, &config, Severity::Error).unwrap();
+        let codes: Vec<&str> = report.findings.iter().map(|f| f.code.as_str()).collect();
+        assert!(codes.contains(&"missing_checksum"));
+        assert!(codes.contains(&"unexpected_checksum"));
+    }
+
+    #[test]
+    fn checksums_verify_local_skips_when_policy_disabled() {
+        let repo = mock_repo_state();
+        let config = Config::default();
+
+        let report = check_checksums_verify_local(&repo, &config, Severity::Error).unwrap();
+        assert_eq!(report.status, CheckStatus::Skip);
+        assert_eq!(
+            report.skipped_reason.as_deref(),
+            Some(check_skip_reasons::DISABLED_BY_POLICY)
+        );
+    }
+
+    #[test]
+    fn checksums_verify_local_skips_without_checksums_file() {
+        let repo = mock_repo_state();
+        let mut config = Config::default();
+        config.policy.checksums.verify_local_files = true;
+
+        let report = check_checksums_verify_local(&repo, &config, Severity::Error).unwrap();
+        assert_eq!(report.status, CheckStatus::Skip);
+        assert_eq!(
+            report.skipped_reason.as_deref(),
+            Some(check_skip_reasons::MISSING_PREREQUISITE)
+        );
+    }
+
+    #[test]
+    fn checksums_verify_local_reports_missing_and_mismatch() {
+        let temp = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).unwrap();
+        let file_path = root.join("tool.bin");
+        std::fs::write(&file_path, b"data").unwrap();
+
+        let mut repo = mock_repo_state();
+        repo.root = root.clone();
+        repo.tools_checksums = Some(builddiag_repo::ToolsChecksums {
+            path: root.join("scripts/tools.sha256"),
+            entries: vec![
+                builddiag_repo::ChecksumEntry {
+                    line: 1,
+                    hash: "0".repeat(64),
+                    path: "missing.bin".to_string(),
+                },
+                builddiag_repo::ChecksumEntry {
+                    line: 2,
+                    hash: "0".repeat(64),
+                    path: "tool.bin".to_string(),
+                },
+            ],
+        });
+
+        let mut config = Config::default();
+        config.policy.checksums.verify_local_files = true;
+
+        let report = check_checksums_verify_local(&repo, &config, Severity::Error).unwrap();
+        let codes: Vec<&str> = report.findings.iter().map(|f| f.code.as_str()).collect();
+        assert!(codes.contains(&"missing_tool_file"));
+        assert!(codes.contains(&"hash_mismatch"));
+    }
+
+    // =========================================================================
+    // Workspace resolver and edition consistency coverage
+    // =========================================================================
+
+    #[test]
+    fn workspace_resolver_skips_for_non_workspace() {
+        let mut repo = mock_repo_state();
+        repo.workspace.is_workspace = false;
+        let report = check_workspace_resolver(&repo, &Config::default(), Severity::Warn).unwrap();
+        assert_eq!(report.status, CheckStatus::Skip);
+        assert_eq!(
+            report.skipped_reason.as_deref(),
+            Some(check_skip_reasons::NOT_APPLICABLE)
+        );
+    }
+
+    #[test]
+    fn workspace_resolver_reports_non_v2() {
+        let mut repo = mock_repo_state();
+        repo.workspace.workspace_resolver = Some("1".to_string());
+        let report = check_workspace_resolver(&repo, &Config::default(), Severity::Warn).unwrap();
+        assert!(report.findings.iter().any(|f| f.code == "resolver_not_v2"));
+    }
+
+    #[test]
+    fn edition_consistent_skips_without_workspace_edition() {
+        let mut repo = mock_repo_state();
+        repo.workspace.workspace_edition = None;
+        let report = check_edition_consistent(&repo, &Config::default(), Severity::Error).unwrap();
+        assert_eq!(report.status, CheckStatus::Skip);
+    }
+
+    #[test]
+    fn edition_consistent_reports_invalid_and_missing_members() {
+        let mut repo = mock_repo_state();
+        repo.workspace.workspace_edition = Some("2099".to_string());
+        let report = check_edition_consistent(&repo, &Config::default(), Severity::Error).unwrap();
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|f| f.code == "invalid_workspace_edition")
+        );
+
+        repo.workspace.workspace_edition = Some("2021".to_string());
+        repo.workspace.members = vec![
+            Member {
+                name: "no-edition".to_string(),
+                manifest_path: Utf8PathBuf::from("/test/repo/no-edition/Cargo.toml"),
+                rust_version: None,
+                rust_version_workspace: false,
+                edition: None,
+                edition_workspace: false,
+                has_binary_target: false,
+                publish_metadata: PublishMetadata::default(),
+            },
+            Member {
+                name: "bad-edition".to_string(),
+                manifest_path: Utf8PathBuf::from("/test/repo/bad-edition/Cargo.toml"),
+                rust_version: None,
+                rust_version_workspace: false,
+                edition: Some("2099".to_string()),
+                edition_workspace: false,
+                has_binary_target: false,
+                publish_metadata: PublishMetadata::default(),
+            },
+            Member {
+                name: "mismatch".to_string(),
+                manifest_path: Utf8PathBuf::from("/test/repo/mismatch/Cargo.toml"),
+                rust_version: None,
+                rust_version_workspace: false,
+                edition: Some("2018".to_string()),
+                edition_workspace: false,
+                has_binary_target: false,
+                publish_metadata: PublishMetadata::default(),
+            },
+        ];
+
+        let report = check_edition_consistent(&repo, &Config::default(), Severity::Error).unwrap();
+        let codes: Vec<&str> = report.findings.iter().map(|f| f.code.as_str()).collect();
+        assert!(codes.contains(&"missing_member_edition"));
+        assert!(codes.contains(&"invalid_member_edition"));
+        assert!(codes.contains(&"edition_mismatch"));
+    }
+
+    #[test]
+    fn edition_consistent_allows_override() {
+        let mut repo = mock_repo_state();
+        repo.workspace.workspace_edition = Some("2021".to_string());
+        repo.workspace.members = vec![Member {
+            name: "override".to_string(),
+            manifest_path: Utf8PathBuf::from("/test/repo/override/Cargo.toml"),
+            rust_version: None,
+            rust_version_workspace: false,
+            edition: Some("2018".to_string()),
+            edition_workspace: false,
+            has_binary_target: false,
+            publish_metadata: PublishMetadata::default(),
+        }];
+
+        let mut config = Config::default();
+        config.policy.edition.allow_per_crate_override = true;
+
+        let report = check_edition_consistent(&repo, &config, Severity::Error).unwrap();
+        assert_eq!(report.status, CheckStatus::Pass);
+    }
+
+    // =========================================================================
+    // Member ordering coverage
+    // =========================================================================
+
+    #[test]
+    fn member_ordering_reports_unsorted_patterns() {
+        let mut repo = mock_repo_state();
+        repo.workspace.is_workspace = true;
+        repo.workspace_model = Some(builddiag_repo::WorkspaceModel {
+            root_manifest: builddiag_repo::ParsedManifest {
+                value: toml::Value::Table(toml::map::Map::new()),
+                package_name: None,
+                rust_version: None,
+                rust_version_workspace: false,
+                edition: None,
+                edition_workspace: false,
+            },
+            member_manifests: BTreeMap::new(),
+            is_virtual: false,
+            workspace_msrv: None,
+            workspace_edition: None,
+            workspace_resolver: None,
+            member_patterns: vec!["b".to_string(), "a".to_string()],
+            exclude_patterns: Vec::new(),
+        });
+
+        let report = check_member_ordering(&repo, &Config::default(), Severity::Info).unwrap();
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|f| f.code == "members_not_sorted")
+        );
+    }
+
+    #[test]
+    fn member_ordering_skips_when_policy_disabled() {
+        let mut repo = mock_repo_state();
+        repo.workspace.is_workspace = true;
+        let mut config = Config::default();
+        config.policy.member_ordering.require_sorted = false;
+
+        let report = check_member_ordering(&repo, &config, Severity::Info).unwrap();
+        assert_eq!(report.status, CheckStatus::Skip);
+        assert_eq!(
+            report.skipped_reason.as_deref(),
+            Some(check_skip_reasons::DISABLED_BY_POLICY)
+        );
+    }
+
+    #[test]
+    fn member_ordering_skips_without_workspace_model() {
+        let mut repo = mock_repo_state();
+        repo.workspace.is_workspace = true;
+        repo.workspace_model = None;
+        repo.cargo_root = None;
+
+        let report = check_member_ordering(&repo, &Config::default(), Severity::Info).unwrap();
+        assert_eq!(report.status, CheckStatus::Skip);
+        assert_eq!(
+            report.skipped_reason.as_deref(),
+            Some(check_skip_reasons::MISSING_PREREQUISITE)
+        );
+    }
+
+    // =========================================================================
+    // Dependency checks (depguard integration)
+    // =========================================================================
+
+    #[test]
+    fn lockfile_present_reports_missing_for_single_binary() {
+        let mut repo = mock_repo_state();
+        repo.lockfile_exists = false;
+        let mut member = mock_member("app", None, false);
+        member.has_binary_target = true;
+        repo.workspace.members = vec![member];
+
+        let report = check_lockfile_present(&repo, &Config::default(), Severity::Warn).unwrap();
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|f| f.code == "missing_lockfile_for_binary")
+        );
+    }
+
+    #[test]
+    fn lockfile_present_reports_missing_for_multiple_binaries() {
+        let mut repo = mock_repo_state();
+        repo.lockfile_exists = false;
+        let mut member_a = mock_member("app-a", None, false);
+        member_a.has_binary_target = true;
+        let mut member_b = mock_member("app-b", None, false);
+        member_b.has_binary_target = true;
+        repo.workspace.members = vec![member_a, member_b];
+
+        let report = check_lockfile_present(&repo, &Config::default(), Severity::Warn).unwrap();
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|f| f.code == "missing_lockfile_for_binary")
+        );
+    }
+
+    #[test]
+    fn deps_checks_use_depguard_findings() {
+        let temp = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            r#"
+[package]
+name = "dep-test"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = "*"
+path_dep = { path = "../path_dep" }
+"#,
+        )
+        .unwrap();
+
+        let repo = repo_with_root(root);
+        let report = check_deps_wildcard(&repo, &Config::default(), Severity::Warn).unwrap();
+        assert!(report.findings.iter().any(|f| f.code == "wildcard_version"));
+
+        let report = check_deps_path_version(&repo, &Config::default(), Severity::Warn).unwrap();
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|f| f.code == "path_missing_version")
+        );
+    }
+
+    #[test]
+    fn deps_workspace_inheritance_reports_suggestions() {
+        let temp = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            r#"
+[workspace]
+members = []
+
+[workspace.dependencies]
+serde = "1.0"
+
+[package]
+name = "dep-test"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = "1.0"
+"#,
+        )
+        .unwrap();
+
+        let repo = repo_with_root(root);
+        let report =
+            check_deps_workspace_inheritance(&repo, &Config::default(), Severity::Info).unwrap();
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|f| f.code == "missing_workspace_inheritance")
+        );
+    }
+
+    // =========================================================================
+    // Publish readiness and edition deprecations
+    // =========================================================================
+
+    #[test]
+    fn publish_ready_reports_missing_fields() {
+        let mut repo = mock_repo_state();
+        repo.workspace.members = vec![Member {
+            name: "publish-me".to_string(),
+            manifest_path: Utf8PathBuf::from("/test/repo/publish-me/Cargo.toml"),
+            rust_version: None,
+            rust_version_workspace: false,
+            edition: Some("2021".to_string()),
+            edition_workspace: false,
+            has_binary_target: false,
+            publish_metadata: PublishMetadata::default(),
+        }];
+
+        let report = check_publish_ready(&repo, &Config::default(), Severity::Warn).unwrap();
+        let codes: Vec<&str> = report.findings.iter().map(|f| f.code.as_str()).collect();
+        assert!(codes.contains(&"missing_description"));
+        assert!(codes.contains(&"missing_license"));
+        assert!(codes.contains(&"missing_repository"));
+        assert!(codes.contains(&"missing_documentation"));
+        assert!(codes.contains(&"missing_readme"));
+    }
+
+    #[test]
+    fn edition_deprecations_reports_deprecated_and_migration() {
+        let mut repo = mock_repo_state();
+        repo.workspace.workspace_edition = Some("2015".to_string());
+        repo.workspace.members = vec![Member {
+            name: "legacy".to_string(),
+            manifest_path: Utf8PathBuf::from("/test/repo/legacy/Cargo.toml"),
+            rust_version: None,
+            rust_version_workspace: false,
+            edition: Some("2015".to_string()),
+            edition_workspace: false,
+            has_binary_target: false,
+            publish_metadata: PublishMetadata::default(),
+        }];
+
+        let report = check_edition_deprecations(&repo, &Config::default(), Severity::Info).unwrap();
+        let codes: Vec<&str> = report.findings.iter().map(|f| f.code.as_str()).collect();
+        assert!(codes.contains(&"deprecated_edition"));
+        assert!(codes.contains(&"edition_migration_available"));
+    }
+
+    // =========================================================================
+    // Duplicate dependency version coverage
+    // =========================================================================
+
+    #[test]
+    fn duplicate_versions_reports_multiple_versions() {
+        let temp = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).unwrap();
+
+        let member_a = root.join("crates/a");
+        let member_b = root.join("crates/b");
+        std::fs::create_dir_all(&member_a).unwrap();
+        std::fs::create_dir_all(&member_b).unwrap();
+
+        std::fs::write(
+            member_a.join("Cargo.toml"),
+            r#"
+[package]
+name = "a"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = "1.0"
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            member_b.join("Cargo.toml"),
+            r#"
+[package]
+name = "b"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = "1.1"
+"#,
+        )
+        .unwrap();
+
+        let mut repo = mock_repo_state();
+        repo.root = root.clone();
+        repo.workspace.members = vec![
+            Member {
+                name: "a".to_string(),
+                manifest_path: member_a.join("Cargo.toml"),
+                rust_version: None,
+                rust_version_workspace: false,
+                edition: Some("2021".to_string()),
+                edition_workspace: false,
+                has_binary_target: false,
+                publish_metadata: PublishMetadata::default(),
+            },
+            Member {
+                name: "b".to_string(),
+                manifest_path: member_b.join("Cargo.toml"),
+                rust_version: None,
+                rust_version_workspace: false,
+                edition: Some("2021".to_string()),
+                edition_workspace: false,
+                has_binary_target: false,
+                publish_metadata: PublishMetadata::default(),
+            },
+        ];
+
+        let report = check_duplicate_versions(&repo, &Config::default(), Severity::Warn).unwrap();
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|f| f.code == "duplicate_dependency_version")
+        );
     }
 }

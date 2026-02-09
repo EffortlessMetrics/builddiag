@@ -2433,6 +2433,12 @@ mod tests {
             );
         }
 
+        #[test]
+        fn team_profile_unknown_check_is_warn() {
+            let state = Profile::Team.check_state("unknown.check");
+            assert_eq!(state, ProfileCheckState::Enabled(Severity::Warn));
+        }
+
         // Strict profile severity tests
         #[test]
         fn strict_profile_all_checks_are_error() {
@@ -2450,12 +2456,7 @@ mod tests {
 
             for check_id in &checks {
                 let state = Profile::Strict.check_state(check_id);
-                assert_eq!(
-                    state,
-                    ProfileCheckState::Enabled(Severity::Error),
-                    "Strict profile should have {} at error severity",
-                    check_id
-                );
+                assert_eq!(state, ProfileCheckState::Enabled(Severity::Error));
             }
         }
 
@@ -2768,6 +2769,42 @@ mod tests {
             assert_eq!(parsed.schema, report.schema);
             assert_eq!(parsed.verdict.status, VerdictStatus::Warn);
             assert_eq!(parsed.findings.len(), 1);
+        }
+    }
+
+    /// Tests for CheckReport skip participation helpers
+    mod check_report_participation_tests {
+        use super::*;
+
+        #[test]
+        fn check_report_is_non_participating_for_config_and_diff_aware() {
+            let base = CheckReport {
+                id: "check".to_string(),
+                status: CheckStatus::Skip,
+                findings: vec![],
+                skipped_reason: Some(check_skip_reasons::DISABLED_BY_CONFIG.to_string()),
+                skipped_detail: None,
+            };
+
+            assert!(base.is_non_participating());
+
+            let diff = CheckReport {
+                skipped_reason: Some(check_skip_reasons::DIFF_AWARE_NO_MATCH.to_string()),
+                ..base.clone()
+            };
+            assert!(diff.is_non_participating());
+
+            let exec_skip = CheckReport {
+                skipped_reason: Some(check_skip_reasons::MISSING_PREREQUISITE.to_string()),
+                ..base.clone()
+            };
+            assert!(!exec_skip.is_non_participating());
+
+            let no_reason = CheckReport {
+                skipped_reason: None,
+                ..base
+            };
+            assert!(!no_reason.is_non_participating());
         }
     }
 }

@@ -144,7 +144,7 @@ pub fn run(settings: &Settings) -> Result<RunResult> {
             &settings.config,
             settings.allow_all,
             repo_state,
-        )?
+        )
     } else {
         // Standard path: discover repo from disk
         run_check_with_sensor(
@@ -154,8 +154,9 @@ pub fn run(settings: &Settings) -> Result<RunResult> {
             settings.changed_files.clone(),
             #[cfg(feature = "cache")]
             settings.cache_config.as_ref(),
-        )?
+        )
     };
+    let sr = sr?;
 
     Ok(RunResult {
         report: sr.check_run.report,
@@ -181,6 +182,7 @@ pub fn load_config(path: Option<&Utf8Path>) -> Result<Config> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
 
     #[test]
     fn settings_default_is_current_dir() {
@@ -194,6 +196,17 @@ mod tests {
     fn load_config_none_returns_defaults() {
         let cfg = load_config(None).unwrap();
         assert_eq!(cfg.defaults.out_dir, "artifacts/builddiag");
+    }
+
+    #[test]
+    fn load_config_invalid_toml_returns_error() {
+        let temp = TempDir::new().unwrap();
+        let path = temp.path().join("bad.toml");
+        std::fs::write(&path, "[defaults").unwrap();
+
+        let utf8 = Utf8PathBuf::from_path_buf(path).unwrap();
+        let err = load_config(Some(&utf8)).unwrap_err();
+        assert!(err.to_string().contains("parse config"));
     }
 
     #[test]
@@ -225,9 +238,7 @@ mod tests {
             .join("valid-workspace");
         let root = camino::Utf8PathBuf::from_path_buf(fixture_dir).unwrap();
 
-        if !root.exists() {
-            return; // Skip if fixture not available
-        }
+        assert!(root.exists());
 
         let substrate = Substrate {
             manifests: vec![ManifestInfo {
@@ -257,5 +268,29 @@ mod tests {
         // Should produce a valid report
         assert_eq!(result.report.schema, "builddiag.report.v1");
         assert!(!result.sensor_report.schema.is_empty());
+    }
+
+    #[test]
+    fn run_without_substrate_produces_result() {
+        let temp = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).unwrap();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            r#"[package]
+name = "fixture"
+version = "0.1.0"
+edition = "2021"
+"#,
+        )
+        .unwrap();
+        std::fs::write(root.join("src/lib.rs"), "pub fn demo() {}").unwrap();
+
+        let settings = Settings {
+            root,
+            ..Default::default()
+        };
+        let result = run(&settings).expect("run should succeed");
+        assert_eq!(result.report.schema, "builddiag.report.v1");
     }
 }

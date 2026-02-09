@@ -150,24 +150,22 @@ pub fn check_workspace(root: &Utf8Path, config: &Config) -> Result<Vec<Finding>>
 
     if members.is_empty() {
         // Single crate, check it directly
-        check_manifest(
-            &root_toml_path,
-            &root_doc,
-            &workspace_info,
-            config,
-            &mut findings,
-        )?;
+        let root_path = &root_toml_path;
+        let root_doc = &root_doc;
+        let workspace_info = &workspace_info;
+        check_manifest(root_path, root_doc, workspace_info, config, &mut findings)?;
     } else {
         // Check each member
         for member_path in members {
             let manifest_path = member_path.join("Cargo.toml");
-            if manifest_path.exists() {
-                let content = std::fs::read_to_string(&manifest_path)
-                    .with_context(|| format!("read {}", manifest_path))?;
-                let doc: toml::Value =
-                    toml::from_str(&content).with_context(|| format!("parse {}", manifest_path))?;
-                check_manifest(&manifest_path, &doc, &workspace_info, config, &mut findings)?;
+            if !manifest_path.exists() {
+                continue;
             }
+            let content = std::fs::read_to_string(&manifest_path)
+                .with_context(|| format!("read {}", manifest_path))?;
+            let doc: toml::Value =
+                toml::from_str(&content).with_context(|| format!("parse {}", manifest_path))?;
+            check_manifest(&manifest_path, &doc, &workspace_info, config, &mut findings)?;
         }
     }
 
@@ -255,16 +253,19 @@ fn walkdir(root: &Utf8Path) -> Result<Vec<Utf8PathBuf>> {
         }
         dirs.push(dir.clone());
 
-        if let Ok(entries) = std::fs::read_dir(&dir) {
-            for entry in entries.flatten() {
-                if let Ok(path) = Utf8PathBuf::try_from(entry.path())
-                    && path.is_dir()
-                {
-                    // Skip hidden dirs and target
-                    let name = path.file_name().unwrap_or("");
-                    if !name.starts_with('.') && name != "target" {
-                        stack.push(path);
-                    }
+        for entry in std::fs::read_dir(&dir)
+            .ok()
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+        {
+            if let Ok(path) = Utf8PathBuf::try_from(entry.path())
+                && path.is_dir()
+            {
+                // Skip hidden dirs and target
+                let name = path.file_name().unwrap_or("");
+                if !name.starts_with('.') && name != "target" {
+                    stack.push(path);
                 }
             }
         }
@@ -513,6 +514,99 @@ serde = "*"
     }
 
     #[test]
+    fn test_workspace_inheritance_with_table_dependency() {
+        let (_temp, root) = create_test_workspace(
+            r#"
+            [workspace]
+            members = ["crates/foo"]
+
+            [workspace.dependencies]
+            serde = { version = "1.0" }
+            "#,
+            &[(
+                "crates/foo",
+                r#"
+                [package]
+                name = "foo"
+                version = "0.1.0"
+
+                [dependencies]
+                serde = "1.0"
+                "#,
+            )],
+        );
+
+        let findings = check_workspace(&root, &Config::default()).unwrap();
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.code == "missing_workspace_inheritance")
+        );
+    }
+
+    #[test]
+    fn test_check_workspace_with_members() {
+        let (_temp, root) = create_test_workspace(
+            r#"
+            [workspace]
+            members = ["crates/foo"]
+            "#,
+            &[(
+                "crates/foo",
+                r#"
+                [package]
+                name = "foo"
+                version = "0.1.0"
+
+                [dependencies]
+                serde = "*"
+                "#,
+            )],
+        );
+
+        let findings = check_workspace(&root, &Config::default()).unwrap();
+        assert!(findings.iter().any(|f| f.code == "wildcard_version"));
+    }
+
+    #[test]
+    fn test_check_workspace_skips_missing_member_manifest() {
+        let temp = TempDir::new().unwrap();
+        let root = Utf8PathBuf::try_from(temp.path().to_path_buf()).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            r#"
+            [workspace]
+            members = ["crates/missing"]
+            "#,
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.join("crates/missing")).unwrap();
+
+        let findings = check_workspace(&root, &Config::default()).unwrap();
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn test_parse_dependency_non_string_value() {
+        let dep = parse_dependency("weird", &toml::Value::Integer(1));
+        assert_eq!(dep.name, "weird");
+        assert!(dep.version.is_none());
+        assert!(dep.path.is_none());
+        assert!(!dep.workspace);
+    }
+
+    #[test]
+    fn test_walkdir_non_directory_root() {
+        let temp = TempDir::new().unwrap();
+        let root = Utf8PathBuf::try_from(temp.path().to_path_buf()).unwrap();
+        let file_path = root.join("file.txt");
+        std::fs::write(&file_path, "data").unwrap();
+
+        let dirs = walkdir(&file_path).unwrap();
+        assert!(dirs.is_empty());
+    }
+
+    #[test]
     fn test_ignore_list() {
         let (_temp, root) = create_test_workspace(
             r#"
@@ -533,5 +627,132 @@ serde = "*"
 
         let findings = check_workspace(&root, &config).unwrap();
         assert!(!findings.iter().any(|f| f.code == "wildcard_version"));
+    }
+
+    #[test]
+    fn test_workspace_members_glob_pattern() {
+        let (_temp, root) = create_test_workspace(
+            r#"
+[workspace]
+members = ["crates/*"]
+            "#,
+            &[
+                (
+                    "crates/foo",
+                    r#"
+[package]
+name = "foo"
+version = "0.1.0"
+
+[dependencies]
+serde = "*"
+                    "#,
+                ),
+                (
+                    "crates/bar",
+                    r#"
+[package]
+name = "bar"
+version = "0.1.0"
+
+[dependencies]
+anyhow = "1.0"
+                    "#,
+                ),
+            ],
+        );
+
+        let findings = check_workspace(&root, &Config::default()).unwrap();
+        assert!(findings.iter().any(|f| f.code == "wildcard_version"));
+    }
+
+    #[test]
+    fn test_check_workspace_single_crate_runs() {
+        let (_temp, root) = create_test_workspace(
+            r#"
+[package]
+name = "single"
+version = "0.1.0"
+edition = "2021"
+"#,
+            &[],
+        );
+
+        let findings = check_workspace(&root, &Config::default()).unwrap();
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn test_parse_workspace_info_handles_non_string_dependency() {
+        let doc: toml::Value = toml::from_str(
+            r#"
+[workspace.dependencies]
+serde = 1
+            "#,
+        )
+        .unwrap();
+
+        let info = parse_workspace_info(&doc);
+        assert!(info.dependencies.contains_key("serde"));
+        assert!(info.dependencies.get("serde").unwrap().version.is_none());
+    }
+
+    #[test]
+    fn test_get_workspace_members_skips_non_string_entries() {
+        let temp = TempDir::new().unwrap();
+        let root = Utf8PathBuf::try_from(temp.path().to_path_buf()).unwrap();
+        let doc: toml::Value = toml::from_str(
+            r#"
+[workspace]
+members = [1]
+            "#,
+        )
+        .unwrap();
+
+        let members = get_workspace_members(&doc, &root).unwrap();
+        assert!(members.is_empty());
+    }
+
+    #[test]
+    fn test_walkdir_collects_directories() {
+        let temp = TempDir::new().unwrap();
+        let root = Utf8PathBuf::try_from(temp.path().to_path_buf()).unwrap();
+        std::fs::create_dir_all(root.join("crates/foo")).unwrap();
+
+        let dirs = walkdir(&root).unwrap();
+        assert!(dirs.iter().any(|d| d.ends_with("crates/foo")));
+    }
+
+    #[test]
+    fn test_parse_workspace_info_captures_dependencies_and_package_fields() {
+        let doc: toml::Value = toml::from_str(
+            r#"
+[workspace.dependencies]
+serde = "1.0"
+
+[workspace.package]
+edition = "2021"
+            "#,
+        )
+        .unwrap();
+
+        let info = parse_workspace_info(&doc);
+        assert!(info.dependencies.contains_key("serde"));
+        assert!(info.package_fields.contains(&"edition".to_string()));
+    }
+
+    #[test]
+    fn test_walkdir_skips_hidden_and_target() {
+        let temp = TempDir::new().unwrap();
+        let root = Utf8PathBuf::try_from(temp.path().to_path_buf()).unwrap();
+
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        std::fs::create_dir_all(root.join("target")).unwrap();
+        std::fs::create_dir_all(root.join("crates/foo")).unwrap();
+
+        let dirs = walkdir(&root).unwrap();
+        let dir_strs: Vec<String> = dirs.iter().map(|d| d.to_string()).collect();
+        assert!(!dir_strs.iter().any(|d| d.contains(".git")));
+        assert!(!dir_strs.iter().any(|d| d.ends_with("target")));
     }
 }

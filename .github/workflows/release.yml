@@ -293,23 +293,30 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
-          cargo publish -p builddiag-types
-          sleep 30
-          cargo publish -p depguard
-          sleep 30
-          cargo publish -p builddiag-domain
-          sleep 30
-          cargo publish -p builddiag-repo
-          sleep 30
-          cargo publish -p builddiag-render
-          sleep 30
-          cargo publish -p builddiag-checks
-          sleep 30
-          cargo publish -p builddiag-app
-          sleep 30
-          cargo publish -p builddiag-core
-          sleep 30
-          cargo publish -p builddiag
+          publish() {
+            local crate="$1"
+            for attempt in 1 2 3 4 5; do
+              echo "Publishing $crate (attempt $attempt)..."
+              if cargo publish -p "$crate"; then
+                echo "$crate published successfully."
+                return 0
+              fi
+              echo "$crate publish failed, retrying in 30s..."
+              sleep 30
+            done
+            echo "ERROR: Failed to publish $crate after 5 attempts"
+            return 1
+          }
+
+          publish builddiag-types
+          publish depguard
+          publish builddiag-domain
+          publish builddiag-repo
+          publish builddiag-render
+          publish builddiag-checks
+          publish builddiag-app
+          publish builddiag-core
+          publish builddiag
 
   announce:
     needs:

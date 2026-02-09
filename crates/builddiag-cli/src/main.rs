@@ -10,7 +10,9 @@ use builddiag_types::{Config, Profile, ProfileCheckState};
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::Utc;
 use clap::{Parser, Subcommand, ValueEnum};
-use std::process;
+use std::fmt::Write as _;
+#[cfg(test)]
+use std::sync::Mutex;
 
 /// CLI-compatible profile enum for clap value parsing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -191,16 +193,45 @@ enum ListFormat {
     Json,
 }
 
-fn main() {
-    if let Err(e) = try_main() {
-        eprintln!("builddiag: {e:#}");
-        process::exit(1);
+#[cfg(test)]
+static MAIN_ARGS: Mutex<Option<Vec<std::ffi::OsString>>> = Mutex::new(None);
+
+fn main() -> std::process::ExitCode {
+    let cli = Cli::parse_from(main_args());
+    let code = run_main(cli);
+    std::process::ExitCode::from(code as u8)
+}
+
+fn main_args() -> Vec<std::ffi::OsString> {
+    #[cfg(test)]
+    {
+        if let Some(args) = MAIN_ARGS.lock().unwrap().take() {
+            return args;
+        }
+    }
+    std::env::args_os().collect()
+}
+
+fn run_main(cli: Cli) -> i32 {
+    match run_cli(cli) {
+        Ok(code) => code,
+        Err(e) => {
+            eprintln!("builddiag: {e:#}");
+            1
+        }
     }
 }
 
-fn try_main() -> Result<()> {
-    let cli = Cli::parse();
+#[cfg(test)]
+fn try_main_from<I>(args: I) -> Result<i32>
+where
+    I: IntoIterator<Item = std::ffi::OsString>,
+{
+    let cli = Cli::try_parse_from(args)?;
+    run_cli(cli)
+}
 
+fn run_cli(cli: Cli) -> Result<i32> {
     match cli.cmd {
         Command::Check {
             root,
@@ -218,116 +249,23 @@ fn try_main() -> Result<()> {
             always,
             no_cache,
             cache_dir,
-        } => {
-            let start = Utc::now();
-
-            // Cockpit mode defaults to artifacts-dir when no output flags are specified
-            let artifacts_dir = if mode == Mode::Cockpit
-                && artifacts_dir.is_none()
-                && out.is_none()
-                && md.is_none()
-            {
-                Some(root.join("artifacts/builddiag"))
-            } else {
-                artifacts_dir
-            };
-
-            // --artifacts-dir forces sensor format and overrides out/md paths
-            let (effective_out, effective_md, effective_format) =
-                if let Some(ref dir) = artifacts_dir {
-                    (
-                        Some(dir.join("report.json")),
-                        Some(dir.join("comment.md")),
-                        OutputFormat::Sensor,
-                    )
-                } else {
-                    (out.clone(), md.clone(), format)
-                };
-
-            // In cockpit mode, wrap everything including config loading in error handling
-            let result = run_check_command(
-                &root,
-                config.as_deref(),
-                profile,
-                effective_out.as_deref(),
-                effective_md.as_deref(),
-                annotations,
-                effective_format,
-                diff_aware,
-                base.as_deref(),
-                head.as_deref(),
-                always,
-                no_cache,
-                cache_dir.as_deref(),
-            );
-
-            match (result, mode) {
-                (Ok(cmd_result), Mode::Standard) => {
-                    // Write outputs
-                    finish_check_output(
-                        &cmd_result.run,
-                        cmd_result.sensor_report.as_ref(),
-                        &cmd_result.out_json,
-                        cmd_result.out_md.as_deref(),
-                        annotations,
-                        effective_format,
-                        artifacts_dir.as_deref(),
-                    )?;
-                    process::exit(cmd_result.run.exit_code);
-                }
-                (Ok(cmd_result), Mode::Cockpit) => {
-                    // Write outputs
-                    finish_check_output(
-                        &cmd_result.run,
-                        cmd_result.sensor_report.as_ref(),
-                        &cmd_result.out_json,
-                        cmd_result.out_md.as_deref(),
-                        annotations,
-                        effective_format,
-                        artifacts_dir.as_deref(),
-                    )?;
-                    process::exit(0); // Report written successfully
-                }
-                (Err(e), Mode::Standard) => {
-                    return Err(e);
-                }
-                (Err(e), Mode::Cockpit) => {
-                    // Create error receipt and try to write it
-                    // Use artifacts-dir or --out, falling back to default path
-                    let out_json = if let Some(ref dir) = artifacts_dir {
-                        dir.join("report.json")
-                    } else {
-                        effective_out
-                            .unwrap_or_else(|| root.join("artifacts/builddiag/report.json"))
-                    };
-
-                    let receipt = create_error_receipt(start, &e);
-                    let json = serde_json::to_vec_pretty(&receipt)?;
-
-                    // Ensure parent directory exists
-                    if let Some(parent) = out_json.parent() {
-                        let _ = std::fs::create_dir_all(parent);
-                    }
-
-                    match write_atomic(&out_json, &json) {
-                        Ok(()) => {
-                            eprintln!(
-                                "builddiag: internal error occurred, error receipt written to {}",
-                                out_json
-                            );
-                            eprintln!("  Error: {e:#}");
-                            process::exit(0); // Report written (even if error)
-                        }
-                        Err(write_err) => {
-                            eprintln!("builddiag: catastrophic failure");
-                            eprintln!("  Original error: {e:#}");
-                            eprintln!("  Could not write error receipt: {write_err:#}");
-                            process::exit(1);
-                        }
-                    }
-                }
-            }
-        }
+        } => run_check_cli(
+            &root,
+            config.as_deref(),
+            profile,
+            out.as_deref(),
+            md.as_deref(),
+            artifacts_dir.as_deref(),
+            annotations,
+            format,
+            mode,
+            diff_aware,
+            base.as_deref(),
+            head.as_deref(),
+            always,
+            no_cache,
+            cache_dir.as_deref(),
+        ),
         Command::Md { report, out } => {
             let bytes = std::fs::read(&report).with_context(|| format!("read {report}"))?;
             let report: builddiag_types::Report =
@@ -338,6 +276,7 @@ fn try_main() -> Result<()> {
             } else {
                 print!("{md}");
             }
+            Ok(0)
         }
         Command::Annotations { report } => {
             let bytes = std::fs::read(&report).with_context(|| format!("read {report}"))?;
@@ -346,19 +285,35 @@ fn try_main() -> Result<()> {
             for line in render_github_annotations(&report) {
                 println!("{line}");
             }
+            Ok(0)
         }
-        Command::Explain { check_or_code } => {
-            run_explain(&check_or_code);
-        }
+        Command::Explain { check_or_code } => match run_explain(&check_or_code) {
+            Ok(()) => Ok(0),
+            Err(err) => {
+                eprintln!("{err}");
+                Ok(1)
+            }
+        },
         Command::ListChecks { profile, format } => {
             list_checks(profile.map(Profile::from), format);
+            Ok(0)
         }
     }
-
-    Ok(())
 }
 
-fn run_explain(check_or_code: &str) {
+fn run_explain(check_or_code: &str) -> Result<()> {
+    match explain_output(check_or_code) {
+        Ok(output) => {
+            print!("{output}");
+            Ok(())
+        }
+        Err(err) => Err(err),
+    }
+}
+
+fn explain_output(check_or_code: &str) -> Result<String> {
+    let mut out = String::new();
+
     // Check if this is a check ID (contains a dot like "rust.msrv_defined")
     if check_or_code.contains('.') {
         // Show all codes for this check
@@ -366,105 +321,113 @@ fn run_explain(check_or_code: &str) {
         if entries.is_empty() {
             // Fall back to old CHECK_DOCS for backward compatibility
             if let Some(doc) = explain_check(check_or_code) {
-                print_legacy_doc(doc);
-                return;
+                write_legacy_doc(&mut out, doc)?;
+                return Ok(out);
             }
-            eprintln!("Unknown check: '{}'\n\nAvailable checks:", check_or_code);
+            let mut err = String::new();
+            let header = format!("Unknown check: '{}'\n\nAvailable checks:", check_or_code);
+            writeln!(&mut err, "{header}")?;
             for id in all_check_ids() {
-                eprintln!("  - {}", id);
+                writeln!(&mut err, "  - {id}")?;
             }
-            eprintln!("\nRun 'builddiag list-checks' for a full list.");
-            process::exit(1);
+            writeln!(&mut err, "\nRun 'builddiag list-checks' for a full list.")?;
+            return Err(anyhow::anyhow!(err));
         }
 
         // Print check header
-        println!("Check: {}", check_or_code);
-        println!("{}", "=".repeat(7 + check_or_code.len()));
-        println!();
+        writeln!(&mut out, "Check: {}", check_or_code)?;
+        writeln!(&mut out, "{}", "=".repeat(7 + check_or_code.len()))?;
+        writeln!(&mut out)?;
 
         // Print each code's explanation
         for (i, entry) in entries.iter().enumerate() {
             if i > 0 {
-                println!();
-                println!("{}", "-".repeat(60));
-                println!();
+                writeln!(&mut out)?;
+                writeln!(&mut out, "{}", "-".repeat(60))?;
+                writeln!(&mut out)?;
             }
-            print_explain_entry(entry);
+            write_explain_entry(&mut out, entry)?;
         }
     } else {
         // This is a finding code, show specific explanation
         if let Some(entry) = explain(check_or_code) {
-            println!("Check: {} / Code: {}", entry.check_id, entry.code);
-            println!(
-                "{}",
-                "=".repeat(15 + entry.check_id.len() + entry.code.len())
-            );
-            println!();
-            print_explain_entry(entry);
+            writeln!(&mut out, "Check: {} / Code: {}", entry.check_id, entry.code)?;
+            let underline = "=".repeat(15 + entry.check_id.len() + entry.code.len());
+            writeln!(&mut out, "{underline}")?;
+            writeln!(&mut out)?;
+            write_explain_entry(&mut out, entry)?;
         } else {
             // Fall back to old CHECK_DOCS
             if let Some(doc) = explain_check(check_or_code) {
-                print_legacy_doc(doc);
-                return;
+                write_legacy_doc(&mut out, doc)?;
+                return Ok(out);
             }
-            eprintln!(
+            let err = format!(
                 "Unknown check or finding code: '{}'\n\nRun 'builddiag list-checks' to see available checks.",
                 check_or_code
             );
-            process::exit(1);
+            return Err(anyhow::anyhow!(err));
         }
     }
+
+    Ok(out)
 }
 
-fn print_explain_entry(entry: &builddiag_domain::explain::ExplainEntry) {
-    println!("{}", entry.name);
-    println!("{}", "-".repeat(entry.name.len()));
-    println!();
-    println!("Code: {}", entry.code);
-    println!();
-    println!("What it means:");
-    println!("  {}", entry.what_it_means.replace('\n', "\n  "));
-    println!();
-    println!("Why it matters:");
-    println!("  {}", entry.why_it_matters.replace('\n', "\n  "));
-    println!();
-    println!("How to fix:");
-    println!("  {}", entry.how_to_fix.replace('\n', "\n  "));
+fn write_explain_entry(
+    out: &mut String,
+    entry: &builddiag_domain::explain::ExplainEntry,
+) -> Result<()> {
+    writeln!(out, "{}", entry.name)?;
+    writeln!(out, "{}", "-".repeat(entry.name.len()))?;
+    writeln!(out)?;
+    writeln!(out, "Code: {}", entry.code)?;
+    writeln!(out)?;
+    writeln!(out, "What it means:")?;
+    writeln!(out, "  {}", entry.what_it_means.replace('\n', "\n  "))?;
+    writeln!(out)?;
+    writeln!(out, "Why it matters:")?;
+    writeln!(out, "  {}", entry.why_it_matters.replace('\n', "\n  "))?;
+    writeln!(out)?;
+    writeln!(out, "How to fix:")?;
+    writeln!(out, "  {}", entry.how_to_fix.replace('\n', "\n  "))?;
 
     if !entry.links.is_empty() {
-        println!();
-        println!("Links:");
+        writeln!(out)?;
+        writeln!(out, "Links:")?;
         for link in entry.links {
-            println!("  - {}", link);
+            writeln!(out, "  - {}", link)?;
         }
     }
+    Ok(())
 }
 
-fn print_legacy_doc(doc: &builddiag_checks::CheckDocumentation) {
-    println!("{}", doc.name);
-    println!("{}", "=".repeat(doc.name.len()));
-    println!();
-    println!("{}", doc.description);
-    println!();
-    println!("Help: {}", doc.help);
+fn write_legacy_doc(out: &mut String, doc: &builddiag_checks::CheckDocumentation) -> Result<()> {
+    writeln!(out, "{}", doc.name)?;
+    writeln!(out, "{}", "=".repeat(doc.name.len()))?;
+    writeln!(out)?;
+    writeln!(out, "{}", doc.description)?;
+    writeln!(out)?;
+    writeln!(out, "Help: {}", doc.help)?;
     if let Some(url) = &doc.url {
-        println!("Documentation: {}", url);
+        writeln!(out, "Documentation: {}", url)?;
     }
-    println!();
-    println!("Finding codes:");
+    writeln!(out)?;
+    writeln!(out, "Finding codes:")?;
     for code in doc.codes {
-        println!("  - {}", code);
+        writeln!(out, "  - {}", code)?;
     }
+    Ok(())
 }
 
 fn list_checks(profile_filter: Option<Profile>, format: ListFormat) {
-    match format {
+    let output = match format {
         ListFormat::Json => list_checks_json(profile_filter),
         ListFormat::Table => list_checks_table(profile_filter),
-    }
+    };
+    print!("{output}");
 }
 
-fn list_checks_json(profile_filter: Option<Profile>) {
+fn list_checks_json(profile_filter: Option<Profile>) -> String {
     #[derive(serde::Serialize)]
     struct CheckInfo {
         id: &'static str,
@@ -531,10 +494,11 @@ fn list_checks_json(profile_filter: Option<Profile>) {
         })
         .collect();
 
-    println!("{}", serde_json::to_string_pretty(&checks).unwrap());
+    let json = serde_json::to_string_pretty(&checks).unwrap();
+    format!("{json}\n")
 }
 
-fn list_checks_table(profile_filter: Option<Profile>) {
+fn list_checks_table(profile_filter: Option<Profile>) -> String {
     fn severity_str(state: ProfileCheckState) -> &'static str {
         match state {
             ProfileCheckState::Skip => "skip",
@@ -546,19 +510,27 @@ fn list_checks_table(profile_filter: Option<Profile>) {
         }
     }
 
-    println!("Available checks:");
-    println!();
+    let mut out = String::new();
+    writeln!(&mut out, "Available checks:").unwrap();
+    writeln!(&mut out).unwrap();
 
     // Header
     if profile_filter.is_some() {
-        println!("{:<35} {:<25} {:>8}", "CHECK ID", "NAME", "SEVERITY");
-        println!("{}", "-".repeat(70));
+        writeln!(
+            &mut out,
+            "{:<35} {:<25} {:>8}",
+            "CHECK ID", "NAME", "SEVERITY"
+        )
+        .unwrap();
+        writeln!(&mut out, "{}", "-".repeat(70)).unwrap();
     } else {
-        println!(
+        writeln!(
+            &mut out,
             "{:<35} {:<25} {:>6} {:>6} {:>6}",
             "CHECK ID", "NAME", "OSS", "TEAM", "STRICT"
-        );
-        println!("{}", "-".repeat(82));
+        )
+        .unwrap();
+        writeln!(&mut out, "{}", "-".repeat(82)).unwrap();
     }
 
     for def in BUILTIN_CHECKS {
@@ -571,21 +543,35 @@ fn list_checks_table(profile_filter: Option<Profile>) {
             if matches!(state, ProfileCheckState::Skip) {
                 continue;
             }
-            println!("{:<35} {:<25} {:>8}", def.id, name, severity_str(state));
+            writeln!(
+                &mut out,
+                "{:<35} {:<25} {:>8}",
+                def.id,
+                name,
+                severity_str(state)
+            )
+            .unwrap();
         } else {
-            println!(
+            writeln!(
+                &mut out,
                 "{:<35} {:<25} {:>6} {:>6} {:>6}",
                 def.id,
                 name,
                 severity_str(Profile::Oss.check_state(def.id)),
                 severity_str(Profile::Team.check_state(def.id)),
                 severity_str(Profile::Strict.check_state(def.id)),
-            );
+            )
+            .unwrap();
         }
     }
 
-    println!();
-    println!("Use 'builddiag explain <check-id>' for detailed documentation.");
+    writeln!(&mut out).unwrap();
+    writeln!(
+        &mut out,
+        "Use 'builddiag explain <check-id>' for detailed documentation."
+    )
+    .unwrap();
+    out
 }
 
 fn default_report_path(cfg: &Config, root: &Utf8Path) -> Utf8PathBuf {
@@ -594,6 +580,132 @@ fn default_report_path(cfg: &Config, root: &Utf8Path) -> Utf8PathBuf {
 
 fn default_md_path(cfg: &Config, root: &Utf8Path) -> Utf8PathBuf {
     root.join(&cfg.defaults.out_dir).join("comment.md")
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_check_cli(
+    root: &Utf8Path,
+    config: Option<&Utf8Path>,
+    profile: Option<ProfileArg>,
+    out: Option<&Utf8Path>,
+    md: Option<&Utf8Path>,
+    artifacts_dir: Option<&Utf8Path>,
+    annotations: AnnotationFormat,
+    format: OutputFormat,
+    mode: Mode,
+    diff_aware: bool,
+    base: Option<&str>,
+    head: Option<&str>,
+    always: bool,
+    no_cache: bool,
+    cache_dir: Option<&Utf8Path>,
+) -> Result<i32> {
+    let start = Utc::now();
+
+    // Cockpit mode defaults to artifacts-dir when no output flags are specified
+    let artifacts_dir =
+        if mode == Mode::Cockpit && artifacts_dir.is_none() && out.is_none() && md.is_none() {
+            Some(root.join("artifacts/builddiag"))
+        } else {
+            artifacts_dir.map(Utf8PathBuf::from)
+        };
+
+    // --artifacts-dir forces sensor format and overrides out/md paths
+    let (effective_out, effective_md, effective_format) = if let Some(ref dir) = artifacts_dir {
+        (
+            Some(dir.join("report.json")),
+            Some(dir.join("comment.md")),
+            OutputFormat::Sensor,
+        )
+    } else {
+        (
+            out.map(Utf8PathBuf::from),
+            md.map(Utf8PathBuf::from),
+            format,
+        )
+    };
+
+    // In cockpit mode, wrap everything including config loading in error handling
+    let result = run_check_command(
+        root,
+        config,
+        profile,
+        effective_out.as_deref(),
+        effective_md.as_deref(),
+        annotations,
+        effective_format,
+        diff_aware,
+        base,
+        head,
+        always,
+        no_cache,
+        cache_dir,
+    );
+
+    match (result, mode) {
+        (Ok(cmd_result), Mode::Standard) => {
+            let artifacts = artifacts_dir.as_deref();
+            finish_check_output_for(&cmd_result, annotations, effective_format, artifacts)?;
+            Ok(cmd_result.run.exit_code)
+        }
+        (Ok(cmd_result), Mode::Cockpit) => {
+            let artifacts = artifacts_dir.as_deref();
+            finish_check_output_for(&cmd_result, annotations, effective_format, artifacts)?;
+            Ok(0)
+        }
+        (Err(e), Mode::Standard) => Err(e),
+        (Err(e), Mode::Cockpit) => {
+            // Create error receipt and try to write it
+            // Use artifacts-dir or --out, falling back to default path
+            let out_json = if let Some(ref dir) = artifacts_dir {
+                dir.join("report.json")
+            } else {
+                effective_out.unwrap_or_else(|| root.join("artifacts/builddiag/report.json"))
+            };
+
+            let receipt = create_error_receipt(start, &e);
+            let json = serde_json::to_vec_pretty(&receipt)?;
+
+            // Ensure parent directory exists
+            if let Some(parent) = out_json.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+
+            match write_atomic(&out_json, &json) {
+                Ok(()) => {
+                    eprintln!(
+                        "builddiag: internal error occurred, error receipt written to {}",
+                        out_json
+                    );
+                    eprintln!("  Error: {e:#}");
+                    Ok(0)
+                }
+                Err(write_err) => {
+                    eprintln!("builddiag: catastrophic failure");
+                    eprintln!("  Original error: {e:#}");
+                    eprintln!("  Could not write error receipt: {write_err:#}");
+                    Ok(1)
+                }
+            }
+        }
+    }
+}
+
+fn finish_check_output_for(
+    cmd_result: &CheckCommandResult,
+    annotations: AnnotationFormat,
+    format: OutputFormat,
+    artifacts_dir: Option<&Utf8Path>,
+) -> Result<()> {
+    finish_check_output(
+        &cmd_result.run,
+        cmd_result.sensor_report.as_ref(),
+        &cmd_result.out_json,
+        cmd_result.out_md.as_deref(),
+        annotations,
+        format,
+        artifacts_dir,
+    )
 }
 
 /// Result from running the check command, including output paths.
@@ -741,9 +853,8 @@ fn finish_check_output(
 
             let json = serde_json::to_vec_pretty(&sensor)?;
             write_atomic(out_json, &json)?;
-            if let Some(md_path) = md {
-                write_atomic(md_path, run.markdown.as_bytes())?;
-            }
+            md.map(|md_path| write_atomic(md_path, run.markdown.as_bytes()))
+                .transpose()?;
         }
         OutputFormat::Diagnostics => {
             // Diagnostics format outputs to stdout for IDE integration
@@ -764,4 +875,829 @@ fn finish_check_output(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use builddiag_types::{Finding, Location, SensorReport, SensorVerdict, Severity, Verdict};
+    use tempfile::TempDir;
+
+    fn create_minimal_repo() -> (TempDir, Utf8PathBuf) {
+        let temp = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).unwrap();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            r#"[package]
+name = "fixture"
+version = "0.1.0"
+edition = "2021"
+"#,
+        )
+        .unwrap();
+        std::fs::write(root.join("src/lib.rs"), "pub fn demo() {}").unwrap();
+        (temp, root)
+    }
+
+    fn minimal_report() -> builddiag_types::Report {
+        builddiag_types::Report {
+            schema: builddiag_app::REPORT_SCHEMA_V1.to_string(),
+            tool: None,
+            run: None,
+            verdict: Verdict::Pass,
+            findings: Vec::new(),
+            summary: None,
+            data: None,
+        }
+    }
+
+    fn minimal_run() -> builddiag_app::CheckRun {
+        builddiag_app::CheckRun {
+            report: minimal_report(),
+            markdown: "ok".to_string(),
+            annotations: vec!["::notice::ok".to_string()],
+            exit_code: 0,
+        }
+    }
+
+    fn write_report(path: &Utf8Path, report: &builddiag_types::Report) {
+        let bytes = serde_json::to_vec_pretty(report).unwrap();
+        std::fs::write(path, bytes).unwrap();
+    }
+
+    #[test]
+    fn test_default_paths_use_config_defaults() {
+        let cfg = Config::default();
+        let root = Utf8Path::new("repo");
+        let report = default_report_path(&cfg, root).as_str().replace('\\', "/");
+        let md = default_md_path(&cfg, root).as_str().replace('\\', "/");
+        assert_eq!(report, "repo/artifacts/builddiag/report.json");
+        assert_eq!(md, "repo/artifacts/builddiag/comment.md");
+    }
+
+    #[test]
+    fn test_profile_arg_conversion() {
+        assert_eq!(Profile::from(ProfileArg::Oss), Profile::Oss);
+        assert_eq!(Profile::from(ProfileArg::Team), Profile::Team);
+        assert_eq!(Profile::from(ProfileArg::Strict), Profile::Strict);
+    }
+
+    #[test]
+    fn test_finish_check_output_builddiag_writes_files() {
+        let temp = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).unwrap();
+        let out_json = root.join("report.json");
+        let out_md = root.join("comment.md");
+
+        let run = minimal_run();
+        finish_check_output(
+            &run,
+            None,
+            &out_json,
+            Some(&out_md),
+            AnnotationFormat::None,
+            OutputFormat::Builddiag,
+            None,
+        )
+        .unwrap();
+
+        assert!(out_json.exists());
+        assert!(out_md.exists());
+    }
+
+    #[test]
+    fn test_finish_check_output_sensor_with_artifacts_dir_writes_payload() {
+        let temp = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).unwrap();
+        let artifacts_dir = root.join("artifacts");
+        let out_json = artifacts_dir.join("report.json");
+        let out_md = artifacts_dir.join("comment.md");
+
+        let run = minimal_run();
+        let sensor = SensorReport {
+            schema: builddiag_types::SENSOR_REPORT_SCHEMA_V1.to_string(),
+            tool: None,
+            run: None,
+            verdict: SensorVerdict::default(),
+            findings: Vec::new(),
+            artifacts: Vec::new(),
+            data: None,
+        };
+
+        finish_check_output(
+            &run,
+            Some(&sensor),
+            &out_json,
+            Some(&out_md),
+            AnnotationFormat::Github,
+            OutputFormat::Sensor,
+            Some(&artifacts_dir),
+        )
+        .unwrap();
+
+        let report_txt = std::fs::read_to_string(&out_json).unwrap();
+        let report: serde_json::Value = serde_json::from_str(&report_txt).unwrap();
+        let artifacts = report.get("artifacts").and_then(|v| v.as_array()).unwrap();
+        assert!(
+            artifacts
+                .iter()
+                .any(|a| { a.get("name").and_then(|v| v.as_str()) == Some("payload") })
+        );
+        assert!(
+            artifacts
+                .iter()
+                .any(|a| { a.get("name").and_then(|v| v.as_str()) == Some("comment") })
+        );
+
+        assert!(artifacts_dir.join("extras").join("payload.json").exists());
+        assert!(out_md.exists());
+    }
+
+    #[test]
+    fn test_finish_check_output_diagnostics_writes_outputs() {
+        let temp = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).unwrap();
+        let out_json = root.join("report.json");
+        let out_md = root.join("comment.md");
+
+        let mut report = minimal_report();
+        report.findings.push(Finding {
+            check_id: "test.check".to_string(),
+            code: "test_code".to_string(),
+            severity: Severity::Warn,
+            message: "diagnostic".to_string(),
+            location: Some(Location {
+                path: "src/lib.rs".to_string(),
+                line: Some(1),
+                col: Some(1),
+            }),
+        });
+
+        let run = builddiag_app::CheckRun {
+            report,
+            markdown: "md".to_string(),
+            annotations: Vec::new(),
+            exit_code: 0,
+        };
+
+        finish_check_output(
+            &run,
+            None,
+            &out_json,
+            Some(&out_md),
+            AnnotationFormat::None,
+            OutputFormat::Diagnostics,
+            None,
+        )
+        .unwrap();
+
+        assert!(out_json.exists());
+        assert!(out_md.exists());
+    }
+
+    #[test]
+    fn test_run_check_cli_cockpit_error_receipt_written() {
+        let temp = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).unwrap();
+        let bad_config = root.join("bad.toml");
+        std::fs::write(&bad_config, "[defaults").unwrap();
+
+        let exit = run_check_cli(
+            &root,
+            Some(&bad_config),
+            None,
+            None,
+            None,
+            None,
+            AnnotationFormat::None,
+            OutputFormat::Sensor,
+            Mode::Cockpit,
+            false,
+            None,
+            None,
+            false,
+            false,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(exit, 0);
+        let receipt_path = root.join("artifacts/builddiag/report.json");
+        assert!(receipt_path.exists());
+        let receipt_txt = std::fs::read_to_string(&receipt_path).unwrap();
+        let receipt: builddiag_types::Report = serde_json::from_str(&receipt_txt).unwrap();
+        assert_eq!(receipt.verdict, Verdict::Error);
+    }
+
+    #[test]
+    fn test_run_check_cli_cockpit_error_with_explicit_out_uses_out_path() {
+        let (_temp, root) = create_minimal_repo();
+        let bad_config = root.join("bad.toml");
+        std::fs::write(&bad_config, "[defaults").unwrap();
+        let out_json = root.join("explicit-report.json");
+
+        let exit = run_check_cli(
+            &root,
+            Some(&bad_config),
+            None,
+            Some(&out_json),
+            None,
+            None,
+            AnnotationFormat::None,
+            OutputFormat::Builddiag,
+            Mode::Cockpit,
+            false,
+            None,
+            None,
+            false,
+            false,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(exit, 0);
+        assert!(out_json.exists());
+    }
+
+    #[test]
+    fn test_run_cli_check_dispatches() {
+        let (_temp, root) = create_minimal_repo();
+
+        let cli = Cli {
+            cmd: Command::Check {
+                root,
+                config: None,
+                profile: None,
+                out: None,
+                md: None,
+                artifacts_dir: None,
+                annotations: AnnotationFormat::None,
+                format: OutputFormat::Builddiag,
+                mode: Mode::Standard,
+                diff_aware: false,
+                base: None,
+                head: None,
+                always: false,
+                no_cache: true,
+                cache_dir: None,
+            },
+        };
+
+        let exit = run_cli(cli).unwrap();
+        assert!(exit == 0 || exit == 2);
+    }
+
+    #[test]
+    fn test_run_cli_md_outputs_to_stdout() {
+        let temp = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).unwrap();
+        let report_path = root.join("report.json");
+        write_report(&report_path, &minimal_report());
+
+        let cli = Cli {
+            cmd: Command::Md {
+                report: report_path,
+                out: None,
+            },
+        };
+
+        let exit = run_cli(cli).unwrap();
+        assert_eq!(exit, 0);
+    }
+
+    #[test]
+    fn test_run_cli_annotations_prints_lines() {
+        let temp = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).unwrap();
+        let report_path = root.join("report.json");
+
+        let mut report = minimal_report();
+        report.findings.push(Finding {
+            check_id: "test.check".to_string(),
+            code: "test_code".to_string(),
+            severity: Severity::Error,
+            message: "oops".to_string(),
+            location: Some(Location {
+                path: "src/lib.rs".to_string(),
+                line: Some(1),
+                col: Some(1),
+            }),
+        });
+        write_report(&report_path, &report);
+
+        let cli = Cli {
+            cmd: Command::Annotations {
+                report: report_path,
+            },
+        };
+
+        let exit = run_cli(cli).unwrap();
+        assert_eq!(exit, 0);
+    }
+
+    #[test]
+    fn test_run_cli_explain_unknown_returns_one() {
+        let cli = Cli {
+            cmd: Command::Explain {
+                check_or_code: "unknown.check".to_string(),
+            },
+        };
+
+        let exit = run_cli(cli).unwrap();
+        assert_eq!(exit, 1);
+    }
+
+    #[test]
+    fn test_run_main_exits_with_code_on_success() {
+        let (_temp, root) = create_minimal_repo();
+        let cli = Cli {
+            cmd: Command::Check {
+                root,
+                config: None,
+                profile: None,
+                out: None,
+                md: None,
+                artifacts_dir: None,
+                annotations: AnnotationFormat::None,
+                format: OutputFormat::Builddiag,
+                mode: Mode::Standard,
+                diff_aware: false,
+                base: None,
+                head: None,
+                always: false,
+                no_cache: true,
+                cache_dir: None,
+            },
+        };
+
+        let code = run_main(cli);
+        assert!(matches!(code, 0 | 2));
+    }
+
+    #[test]
+    fn test_run_main_exits_with_code_on_error() {
+        let cli = Cli {
+            cmd: Command::Md {
+                report: Utf8PathBuf::from("missing.json"),
+                out: None,
+            },
+        };
+
+        let code = run_main(cli);
+        assert_eq!(code, 1);
+    }
+
+    #[test]
+    fn test_main_uses_injected_args() {
+        let args = vec![
+            std::ffi::OsString::from("builddiag"),
+            std::ffi::OsString::from("list-checks"),
+        ];
+        *super::MAIN_ARGS.lock().unwrap() = Some(args);
+        let code = main();
+        assert_eq!(code, std::process::ExitCode::from(0));
+    }
+
+    #[test]
+    fn test_main_args_falls_back_to_env() {
+        *super::MAIN_ARGS.lock().unwrap() = None;
+        let args = main_args();
+        assert!(!args.is_empty());
+    }
+
+    #[test]
+    fn test_write_legacy_doc_includes_url() {
+        let doc = builddiag_checks::CheckDocumentation {
+            id: "test.check",
+            name: "Test Check",
+            description: "desc",
+            help: "help",
+            url: Some("https://example.com/docs"),
+            codes: &["code"],
+        };
+        let mut out = String::new();
+        write_legacy_doc(&mut out, &doc).unwrap();
+        assert!(out.contains("Documentation: https://example.com/docs"));
+    }
+
+    #[test]
+    fn test_try_main_from_parses_list_checks() {
+        let args = [
+            std::ffi::OsString::from("builddiag"),
+            std::ffi::OsString::from("list-checks"),
+        ];
+        let exit = try_main_from(args).unwrap();
+        assert_eq!(exit, 0);
+    }
+
+    #[test]
+    fn test_run_explain_and_list_checks_do_not_panic() {
+        let check_output = explain_output("rust.msrv_defined").unwrap();
+        assert!(check_output.contains("Check: rust.msrv_defined"));
+        let code_output = explain_output("missing_msrv").unwrap();
+        assert!(code_output.contains("Code: missing_msrv"));
+
+        let table_output = list_checks_table(None);
+        assert!(table_output.contains("Available checks:"));
+        let json_output = list_checks_json(Some(Profile::Oss));
+        let parsed: serde_json::Value = serde_json::from_str(json_output.trim()).unwrap();
+        assert!(parsed.as_array().unwrap().len() >= 1);
+    }
+
+    #[test]
+    fn test_explain_output_legacy_fallback_for_check_id() {
+        let output = explain_output("deps.wildcard_version").unwrap();
+        assert!(output.contains("No Wildcard Versions"));
+        assert!(output.contains("Finding codes:"));
+    }
+
+    #[test]
+    fn test_explain_output_legacy_fallback_for_code() {
+        let output = explain_output("wildcard_version").unwrap();
+        assert!(output.contains("No Wildcard Versions"));
+        assert!(output.contains("Finding codes:"));
+    }
+
+    #[test]
+    fn test_explain_output_unknown_entries() {
+        let err = explain_output("unknown.check").unwrap_err();
+        assert!(format!("{err}").contains("Unknown check"));
+
+        let err = explain_output("unknown_code").unwrap_err();
+        assert!(format!("{err}").contains("Unknown check or finding code"));
+    }
+
+    #[test]
+    fn test_list_checks_table_filters_skipped_profile() {
+        let output = list_checks_table(Some(Profile::Oss));
+        assert!(!output.contains("tools.checksums_file_exists"));
+        assert!(output.contains("rust.msrv_defined"));
+    }
+
+    #[test]
+    fn test_list_checks_json_contains_profiles() {
+        let output = list_checks_json(None);
+        let parsed: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+        let first = &parsed.as_array().unwrap()[0];
+        assert!(first.get("profiles").is_some());
+    }
+
+    #[test]
+    fn test_list_checks_json_filters_skipped_profile() {
+        let output = list_checks_json(Some(Profile::Oss));
+        let parsed: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+        let ids: Vec<&str> = parsed
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.get("id").and_then(|id| id.as_str()))
+            .collect();
+
+        assert!(ids.contains(&"rust.msrv_defined"));
+        assert!(!ids.contains(&"tools.checksums_file_exists"));
+    }
+
+    #[test]
+    fn test_run_check_command_builddiag_and_sensor() {
+        let (_temp, root) = create_minimal_repo();
+        let out_json = root.join("report.json");
+        let out_md = root.join("comment.md");
+
+        let builddiag = run_check_command(
+            &root,
+            None,
+            None,
+            Some(&out_json),
+            Some(&out_md),
+            AnnotationFormat::None,
+            OutputFormat::Builddiag,
+            false,
+            None,
+            None,
+            false,
+            true,
+            None,
+        )
+        .unwrap();
+        assert!(builddiag.sensor_report.is_none());
+        assert_eq!(builddiag.out_json, out_json);
+
+        let sensor = run_check_command(
+            &root,
+            None,
+            None,
+            Some(&out_json),
+            Some(&out_md),
+            AnnotationFormat::None,
+            OutputFormat::Sensor,
+            false,
+            None,
+            None,
+            false,
+            true,
+            None,
+        )
+        .unwrap();
+        assert!(sensor.sensor_report.is_some());
+        assert_eq!(sensor.run.report.schema, builddiag_app::REPORT_SCHEMA_V1);
+    }
+
+    #[test]
+    fn test_run_check_command_diagnostics() {
+        let (_temp, root) = create_minimal_repo();
+        let out_json = root.join("report.json");
+        let out_md = root.join("comment.md");
+
+        let diag = run_check_command(
+            &root,
+            None,
+            None,
+            Some(&out_json),
+            Some(&out_md),
+            AnnotationFormat::None,
+            OutputFormat::Diagnostics,
+            false,
+            None,
+            None,
+            false,
+            true,
+            None,
+        )
+        .unwrap();
+
+        assert!(diag.sensor_report.is_none());
+        assert_eq!(diag.out_json, out_json);
+        assert_eq!(diag.out_md, Some(out_md));
+    }
+
+    #[test]
+    fn test_run_check_cli_standard_error_returns_err() {
+        let (_temp, root) = create_minimal_repo();
+        let bad_config = root.join("bad.toml");
+        std::fs::write(&bad_config, "[defaults").unwrap();
+
+        let result = run_check_cli(
+            &root,
+            Some(&bad_config),
+            None,
+            None,
+            None,
+            None,
+            AnnotationFormat::None,
+            OutputFormat::Builddiag,
+            Mode::Standard,
+            false,
+            None,
+            None,
+            false,
+            false,
+            None,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_run_check_cli_standard_success_returns_exit_code() {
+        let (_temp, root) = create_minimal_repo();
+
+        let exit = run_check_cli(
+            &root,
+            None,
+            None,
+            None,
+            None,
+            None,
+            AnnotationFormat::None,
+            OutputFormat::Builddiag,
+            Mode::Standard,
+            false,
+            None,
+            None,
+            false,
+            true,
+            None,
+        )
+        .unwrap();
+
+        assert!(exit == 0 || exit == 2);
+    }
+
+    #[test]
+    fn test_run_check_cli_cockpit_success_returns_zero() {
+        let (_temp, root) = create_minimal_repo();
+
+        let exit = run_check_cli(
+            &root,
+            None,
+            None,
+            None,
+            None,
+            None,
+            AnnotationFormat::None,
+            OutputFormat::Builddiag,
+            Mode::Cockpit,
+            false,
+            None,
+            None,
+            false,
+            true,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(exit, 0);
+    }
+
+    #[test]
+    fn test_run_check_cli_cockpit_write_failure_returns_one() {
+        let (_temp, root) = create_minimal_repo();
+        let bad_config = root.join("bad.toml");
+        std::fs::write(&bad_config, "[defaults").unwrap();
+        let artifacts_file = root.join("artifacts");
+        std::fs::write(&artifacts_file, "not a dir").unwrap();
+
+        let exit = run_check_cli(
+            &root,
+            Some(&bad_config),
+            None,
+            None,
+            None,
+            Some(&artifacts_file),
+            AnnotationFormat::None,
+            OutputFormat::Builddiag,
+            Mode::Cockpit,
+            false,
+            None,
+            None,
+            false,
+            false,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(exit, 1);
+    }
+
+    #[test]
+    fn test_run_check_command_with_profile_diff_aware_cache_dir() {
+        let (_temp, root) = create_minimal_repo();
+        let out_json = root.join("report.json");
+        let out_md = root.join("comment.md");
+        let cache_dir = root.join("cache");
+
+        let result = run_check_command(
+            &root,
+            None,
+            Some(ProfileArg::Strict),
+            Some(&out_json),
+            Some(&out_md),
+            AnnotationFormat::None,
+            OutputFormat::Builddiag,
+            true,
+            Some("HEAD"),
+            Some("HEAD"),
+            false,
+            false,
+            Some(&cache_dir),
+        )
+        .unwrap();
+
+        assert_eq!(result.out_json, out_json);
+    }
+
+    #[test]
+    fn test_run_cli_md_annotations_and_explain() {
+        let temp = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).unwrap();
+        let report_path = root.join("report.json");
+        write_report(&report_path, &minimal_report());
+
+        let out_md = root.join("out.md");
+        let md_cli = Cli {
+            cmd: Command::Md {
+                report: report_path.clone(),
+                out: Some(out_md.clone()),
+            },
+        };
+        assert_eq!(run_cli(md_cli).unwrap(), 0);
+        assert!(out_md.exists());
+
+        let annotations_cli = Cli {
+            cmd: Command::Annotations {
+                report: report_path.clone(),
+            },
+        };
+        assert_eq!(run_cli(annotations_cli).unwrap(), 0);
+
+        let explain_cli = Cli {
+            cmd: Command::Explain {
+                check_or_code: "deps.lockfile_present".to_string(),
+            },
+        };
+        assert_eq!(run_cli(explain_cli).unwrap(), 0);
+    }
+
+    #[test]
+    fn test_list_checks_prints_json() {
+        list_checks(Some(Profile::Oss), ListFormat::Json);
+    }
+
+    #[test]
+    fn test_write_legacy_doc_outputs_fields() {
+        let doc = builddiag_checks::CheckDocumentation {
+            id: "legacy.check",
+            name: "Legacy Check",
+            description: "legacy description",
+            help: "legacy help",
+            url: Some("https://example.com/legacy"),
+            codes: &["legacy_code"],
+        };
+        let mut out = String::new();
+        write_legacy_doc(&mut out, &doc).unwrap();
+        assert!(out.contains("Legacy Check"));
+        assert!(out.contains("Documentation: https://example.com/legacy"));
+        assert!(out.contains("legacy_code"));
+    }
+
+    #[test]
+    fn test_write_legacy_doc_omits_url_when_missing() {
+        let doc = builddiag_checks::CheckDocumentation {
+            id: "legacy.check",
+            name: "Legacy Check",
+            description: "legacy description",
+            help: "legacy help",
+            url: None,
+            codes: &["legacy_code"],
+        };
+        let mut out = String::new();
+        write_legacy_doc(&mut out, &doc).unwrap();
+        assert!(!out.contains("Documentation:"));
+    }
+
+    #[test]
+    fn test_explain_output_legacy_fallbacks() {
+        let output = explain_output("deps.lockfile_present").unwrap();
+        assert!(output.contains("Finding codes:"));
+
+        let output = explain_output("missing_lockfile_for_binary").unwrap();
+        assert!(output.contains("Finding codes:"));
+    }
+
+    #[test]
+    fn test_explain_output_includes_separators_for_multi_code_checks() {
+        let output = explain_output("tools.checksums_format").unwrap();
+        assert!(output.contains("------------------------------------------------------------"));
+    }
+
+    #[test]
+    fn test_finish_check_output_sensor_without_artifacts_dir() {
+        let temp = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).unwrap();
+        let out_json = root.join("report.json");
+        let out_md = root.join("comment.md");
+
+        let run = minimal_run();
+        let sensor = SensorReport {
+            schema: builddiag_types::SENSOR_REPORT_SCHEMA_V1.to_string(),
+            tool: None,
+            run: None,
+            verdict: SensorVerdict::default(),
+            findings: Vec::new(),
+            artifacts: Vec::new(),
+            data: None,
+        };
+
+        finish_check_output(
+            &run,
+            Some(&sensor),
+            &out_json,
+            Some(&out_md),
+            AnnotationFormat::None,
+            OutputFormat::Sensor,
+            None,
+        )
+        .unwrap();
+
+        assert!(out_json.exists());
+        assert!(out_md.exists());
+
+        let report_txt = std::fs::read_to_string(&out_json).unwrap();
+        let report: serde_json::Value = serde_json::from_str(&report_txt).unwrap();
+        if let Some(artifacts) = report.get("artifacts").and_then(|v| v.as_array()) {
+            assert!(artifacts.is_empty());
+        }
+        assert!(!root.join("extras").join("payload.json").exists());
+    }
+
+    #[test]
+    fn test_run_cli_list_checks_returns_zero() {
+        let cli = Cli {
+            cmd: Command::ListChecks {
+                profile: None,
+                format: ListFormat::Table,
+            },
+        };
+        assert_eq!(run_cli(cli).unwrap(), 0);
+    }
 }

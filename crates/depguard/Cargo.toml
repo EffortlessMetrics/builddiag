@@ -6,7 +6,6 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 description = "Dependency hygiene sensor for Rust workspaces (used by builddiag)"
-readme = "README.md"
 keywords = ["rust", "dependencies", "lint", "workspace"]
 categories = ["development-tools"]
 

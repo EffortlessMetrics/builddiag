@@ -167,10 +167,13 @@ impl RepoStateCache {
     /// Delete the cache file.
     pub fn delete(cache_dir: &Utf8Path) -> Result<()> {
         let cache_path = cache_dir.join(CACHE_FILE);
-        if cache_path.exists() {
-            fs::remove_file(&cache_path)
-                .with_context(|| format!("delete cache file: {cache_path}"))?;
-        }
+        cache_path
+            .exists()
+            .then(|| {
+                fs::remove_file(&cache_path)
+                    .with_context(|| format!("delete cache file: {cache_path}"))
+            })
+            .transpose()?;
         Ok(())
     }
 }
@@ -316,6 +319,19 @@ mod tests {
     }
 
     #[test]
+    fn test_cache_load_incompatible_version_returns_none() {
+        let temp_dir = TempDir::new().unwrap();
+        let cache_dir = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+
+        let mut cache = RepoStateCache::new();
+        cache.version = CACHE_VERSION + 1;
+        cache.save(&cache_dir).unwrap();
+
+        let loaded = RepoStateCache::load(&cache_dir).unwrap();
+        assert!(loaded.is_none());
+    }
+
+    #[test]
     fn test_cache_delete() {
         let temp_dir = TempDir::new().unwrap();
         let cache_dir = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
@@ -349,6 +365,26 @@ mod tests {
     }
 
     #[test]
+    fn test_file_meta_missing_returns_none() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+
+        let meta = get_file_meta(&root, Utf8Path::new("missing.txt")).unwrap();
+        assert!(meta.is_none());
+    }
+
+    #[test]
+    fn test_file_meta_absolute_path_is_relativized() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+        let file_path = root.join("abs.txt");
+        fs::write(&file_path, "data").unwrap();
+
+        let meta = get_file_meta(&root, &file_path).unwrap().unwrap();
+        assert_eq!(meta.path, "abs.txt");
+    }
+
+    #[test]
     fn test_cache_validation() {
         let temp_dir = TempDir::new().unwrap();
         let root = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
@@ -372,6 +408,20 @@ mod tests {
     }
 
     #[test]
+    fn test_cache_validation_missing_file_returns_false() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+
+        let cached = FileMeta {
+            path: "missing.txt".to_string(),
+            mtime: 0,
+            content_hash: "deadbeef".to_string(),
+        };
+
+        assert!(!is_cache_valid(&root, &cached));
+    }
+
+    #[test]
     fn test_cache_config_default() {
         let config = CacheConfig::default();
         assert!(config.enabled);
@@ -390,15 +440,21 @@ mod tests {
         let root = Utf8Path::new("/repo");
         let abs = config.cache_dir_abs(root);
         // Path separators may differ by platform
-        assert!(
-            abs.as_str().ends_with(".builddiag-cache"),
-            "expected path ending with .builddiag-cache, got {}",
-            abs
-        );
-        assert!(
-            abs.as_str().contains("repo"),
-            "expected path containing repo, got {}",
-            abs
-        );
+        assert!(abs.as_str().ends_with(".builddiag-cache"));
+        assert!(abs.as_str().contains("repo"));
+    }
+
+    #[test]
+    fn test_cache_dir_abs_with_absolute_override() {
+        let temp_dir = TempDir::new().unwrap();
+        let abs_dir = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+        let config = CacheConfig {
+            enabled: true,
+            cache_dir: abs_dir.clone(),
+        };
+
+        let root = Utf8Path::new("/repo");
+        let resolved = config.cache_dir_abs(root);
+        assert_eq!(resolved, abs_dir);
     }
 }

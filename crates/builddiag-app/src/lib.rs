@@ -212,9 +212,9 @@ pub fn write_outputs(out_json: &Utf8Path, out_md: Option<&Utf8Path>, run: &Check
     let json = serde_json::to_vec_pretty(&run.report)?;
     write_atomic(out_json, &json)?;
 
-    if let Some(md_path) = out_md {
-        write_atomic(md_path, run.markdown.as_bytes())?;
-    }
+    out_md
+        .map(|md_path| write_atomic(md_path, run.markdown.as_bytes()))
+        .transpose()?;
 
     Ok(())
 }
@@ -622,7 +622,25 @@ pub fn run_check_with_sensor_from_repo_state(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use camino::Utf8PathBuf;
     use tempfile::TempDir;
+
+    fn create_minimal_repo() -> (TempDir, Utf8PathBuf) {
+        let temp = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).unwrap();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            r#"[package]
+name = "fixture"
+version = "0.1.0"
+edition = "2021"
+"#,
+        )
+        .unwrap();
+        std::fs::write(root.join("src/lib.rs"), "pub fn demo() {}").unwrap();
+        (temp, root)
+    }
 
     /// Tests for load_config function
     /// _Requirements: 2.6, 8.2, 8.3_
@@ -753,11 +771,7 @@ custom_key = "custom_value"
             let err = result.unwrap_err();
             let err_msg = format!("{:#}", err);
             // Error should contain context about reading the config file
-            assert!(
-                err_msg.contains("read config") || err_msg.contains("nonexistent.toml"),
-                "Error message should contain context about the missing file: {}",
-                err_msg
-            );
+            assert!(err_msg.contains("read config") || err_msg.contains("nonexistent.toml"));
         }
 
         #[test]
@@ -781,11 +795,7 @@ fail_on = "error"
             let err = result.unwrap_err();
             let err_msg = format!("{:#}", err);
             // Error should contain context about parsing the config file
-            assert!(
-                err_msg.contains("parse config") || err_msg.contains("invalid.toml"),
-                "Error message should contain context about parsing failure: {}",
-                err_msg
-            );
+            assert!(err_msg.contains("parse config") || err_msg.contains("invalid.toml"));
         }
 
         #[test]
@@ -809,11 +819,7 @@ fail_on = "invalid_value"
             let err = result.unwrap_err();
             let err_msg = format!("{:#}", err);
             // Error should contain context about parsing the config file
-            assert!(
-                err_msg.contains("parse config") || err_msg.contains("bad_enum.toml"),
-                "Error message should contain context about parsing failure: {}",
-                err_msg
-            );
+            assert!(err_msg.contains("parse config") || err_msg.contains("bad_enum.toml"));
         }
 
         #[test]
@@ -837,11 +843,7 @@ diff_aware = "yes"
             let err = result.unwrap_err();
             let err_msg = format!("{:#}", err);
             // Error should contain context about parsing the config file
-            assert!(
-                err_msg.contains("parse config") || err_msg.contains("wrong_type.toml"),
-                "Error message should contain context about parsing failure: {}",
-                err_msg
-            );
+            assert!(err_msg.contains("parse config") || err_msg.contains("wrong_type.toml"));
         }
     }
 
@@ -861,11 +863,11 @@ diff_aware = "yes"
             let content = b"test content";
             let result = write_atomic(&utf8_path, content);
 
-            assert!(result.is_ok(), "write_atomic should succeed: {:?}", result);
-            assert!(nested_path.exists(), "file should exist after write");
+            assert!(result.is_ok());
+            assert!(nested_path.exists());
 
             let read_content = std::fs::read(&nested_path).expect("should read file");
-            assert_eq!(read_content, content, "content should match");
+            assert_eq!(read_content, content);
         }
 
         #[test]
@@ -878,10 +880,10 @@ diff_aware = "yes"
             let content = b"Hello, World!\nThis is a test file.";
             let result = write_atomic(&utf8_path, content);
 
-            assert!(result.is_ok(), "write_atomic should succeed: {:?}", result);
+            assert!(result.is_ok());
 
             let read_content = std::fs::read(&file_path).expect("should read file");
-            assert_eq!(read_content, content, "content should match exactly");
+            assert_eq!(read_content, content);
         }
 
         #[test]
@@ -899,10 +901,10 @@ diff_aware = "yes"
             let new_content = b"new content that is different";
             let result = write_atomic(&utf8_path, new_content);
 
-            assert!(result.is_ok(), "write_atomic should succeed: {:?}", result);
+            assert!(result.is_ok());
 
             let read_content = std::fs::read(&file_path).expect("should read file");
-            assert_eq!(read_content, new_content, "content should be overwritten");
+            assert_eq!(read_content, new_content);
         }
 
         #[test]
@@ -915,14 +917,10 @@ diff_aware = "yes"
             let content = b"";
             let result = write_atomic(&utf8_path, content);
 
-            assert!(
-                result.is_ok(),
-                "write_atomic should succeed with empty content: {:?}",
-                result
-            );
+            assert!(result.is_ok());
 
             let read_content = std::fs::read(&file_path).expect("should read file");
-            assert!(read_content.is_empty(), "file should be empty");
+            assert!(read_content.is_empty());
         }
 
         #[test]
@@ -936,14 +934,10 @@ diff_aware = "yes"
             let content: Vec<u8> = (0u8..=255).collect();
             let result = write_atomic(&utf8_path, &content);
 
-            assert!(
-                result.is_ok(),
-                "write_atomic should succeed with binary content: {:?}",
-                result
-            );
+            assert!(result.is_ok());
 
             let read_content = std::fs::read(&file_path).expect("should read file");
-            assert_eq!(read_content, content, "binary content should match exactly");
+            assert_eq!(read_content, content);
         }
 
         #[test]
@@ -956,7 +950,7 @@ diff_aware = "yes"
             let content = b"test content";
             let result = write_atomic(&utf8_path, content);
 
-            assert!(result.is_ok(), "write_atomic should succeed: {:?}", result);
+            assert!(result.is_ok());
 
             // Check that no .tmp file remains in the directory
             let entries: Vec<_> = std::fs::read_dir(temp_dir.path())
@@ -965,10 +959,7 @@ diff_aware = "yes"
                 .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
                 .collect();
 
-            assert!(
-                entries.is_empty(),
-                "no .tmp files should remain after successful write"
-            );
+            assert!(entries.is_empty());
         }
 
         #[test]
@@ -979,13 +970,9 @@ diff_aware = "yes"
 
             let result = write_atomic(root_path, content);
 
-            assert!(result.is_err(), "write_atomic should fail for root path");
+            assert!(result.is_err());
             let err_msg = format!("{:#}", result.unwrap_err());
-            assert!(
-                err_msg.contains("no parent dir"),
-                "error should mention no parent dir: {}",
-                err_msg
-            );
+            assert!(err_msg.contains("no parent dir"));
         }
 
         #[test]
@@ -999,19 +986,11 @@ diff_aware = "yes"
             let content: Vec<u8> = vec![b'x'; 1024 * 1024];
             let result = write_atomic(&utf8_path, &content);
 
-            assert!(
-                result.is_ok(),
-                "write_atomic should succeed with large content: {:?}",
-                result
-            );
+            assert!(result.is_ok());
 
             let read_content = std::fs::read(&file_path).expect("should read file");
-            assert_eq!(
-                read_content.len(),
-                content.len(),
-                "large content size should match"
-            );
-            assert_eq!(read_content, content, "large content should match exactly");
+            assert_eq!(read_content.len(), content.len());
+            assert_eq!(read_content, content);
         }
 
         #[test]
@@ -1024,17 +1003,47 @@ diff_aware = "yes"
             let content = "Hello, 世界! 🦀 Rust is awesome! Ñoño".as_bytes();
             let result = write_atomic(&utf8_path, content);
 
-            assert!(
-                result.is_ok(),
-                "write_atomic should succeed with unicode content: {:?}",
-                result
-            );
+            assert!(result.is_ok());
 
             let read_content = std::fs::read(&file_path).expect("should read file");
-            assert_eq!(
-                read_content, content,
-                "unicode content should match exactly"
-            );
+            assert_eq!(read_content, content);
+        }
+    }
+
+    /// Tests for write_outputs function
+    mod write_outputs_tests {
+        use super::*;
+        use camino::Utf8PathBuf;
+
+        #[test]
+        fn write_outputs_writes_markdown_when_requested() {
+            let temp_dir = TempDir::new().expect("failed to create temp dir");
+            let root = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
+                .expect("path should be valid UTF-8");
+            let out_json = root.join("report.json");
+            let out_md = root.join("comment.md");
+
+            let run = CheckRun {
+                report: Report {
+                    schema: REPORT_SCHEMA_V1.to_string(),
+                    tool: None,
+                    run: None,
+                    verdict: Verdict::Pass,
+                    findings: Vec::new(),
+                    summary: None,
+                    data: None,
+                },
+                markdown: "markdown".to_string(),
+                annotations: Vec::new(),
+                exit_code: 0,
+            };
+
+            write_outputs(&out_json, Some(&out_md), &run).unwrap();
+
+            assert!(out_json.exists());
+            assert!(out_md.exists());
+            let md = std::fs::read_to_string(&out_md).unwrap();
+            assert_eq!(md, "markdown");
         }
     }
 
@@ -1223,6 +1232,198 @@ diff_aware = "yes"
 
             assert_eq!(sensor.artifacts.len(), 1);
             assert_eq!(sensor.artifacts[0].name, "markdown");
+        }
+
+        #[test]
+        fn build_capabilities_with_substrate_includes_flag() {
+            let config = Config::default();
+            let caps = build_capabilities_with_substrate(&config, None, false, false, false, true);
+            assert!(caps.contains_key("substrate"));
+        }
+    }
+
+    mod run_check_tests {
+        use super::*;
+
+        #[test]
+        fn run_check_produces_report() {
+            let (_temp, root) = create_minimal_repo();
+            let config = Config::default();
+            let cache = CacheConfig::default();
+
+            let run = run_check(&root, &config, false, None, Some(&cache)).unwrap();
+            assert_eq!(run.report.schema, REPORT_SCHEMA_V1);
+            assert!(!run.markdown.is_empty());
+        }
+
+        #[test]
+        fn run_check_with_sensor_produces_sensor_report() {
+            let (_temp, root) = create_minimal_repo();
+            let config = Config::default();
+            let cache = CacheConfig::default();
+
+            let run = run_check_with_sensor(&root, &config, false, None, Some(&cache)).unwrap();
+            assert_eq!(run.sensor_report.schema, SENSOR_REPORT_SCHEMA_V1);
+            assert_eq!(run.check_run.report.schema, REPORT_SCHEMA_V1);
+        }
+    }
+
+    mod git_tests {
+        use super::*;
+        use std::process::Command;
+        use std::sync::{Mutex, OnceLock};
+        use tempfile::TempDir;
+
+        static GIT_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+        fn git_lock() -> std::sync::MutexGuard<'static, ()> {
+            GIT_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+        }
+
+        struct EnvGuard {
+            key: &'static str,
+            original: Option<String>,
+        }
+
+        impl EnvGuard {
+            fn set(key: &'static str, value: &str) -> Self {
+                let original = std::env::var(key).ok();
+                unsafe {
+                    std::env::set_var(key, value);
+                }
+                Self { key, original }
+            }
+        }
+
+        impl Drop for EnvGuard {
+            fn drop(&mut self) {
+                if let Some(val) = &self.original {
+                    unsafe {
+                        std::env::set_var(self.key, val);
+                    }
+                } else {
+                    unsafe {
+                        std::env::remove_var(self.key);
+                    }
+                }
+            }
+        }
+
+        fn run_git(root: &Utf8Path, args: &[&str]) {
+            let status = Command::new("git")
+                .arg("-C")
+                .arg(root)
+                .args(args)
+                .status()
+                .expect("git should run");
+            assert!(status.success());
+        }
+
+        #[test]
+        fn compute_changed_files_returns_none_for_non_repo() {
+            let _lock = git_lock();
+            let temp_dir = TempDir::new().expect("temp dir");
+            let root = Utf8Path::from_path(temp_dir.path()).unwrap();
+            let changed = compute_changed_files(root, "HEAD", "HEAD").unwrap();
+            assert!(changed.is_none());
+        }
+
+        #[test]
+        fn compute_changed_files_returns_paths_for_repo() {
+            let _lock = git_lock();
+            let temp_dir = TempDir::new().expect("temp dir");
+            let root = Utf8Path::from_path(temp_dir.path()).unwrap();
+
+            run_git(root, &["init", "-b", "main"]);
+            run_git(root, &["config", "user.email", "test@example.com"]);
+            run_git(root, &["config", "user.name", "Test User"]);
+
+            let file_path = root.join("file.txt");
+            std::fs::write(&file_path, "one").unwrap();
+            run_git(root, &["add", "."]);
+            run_git(root, &["commit", "-m", "init"]);
+
+            std::fs::write(&file_path, "two").unwrap();
+            run_git(root, &["add", "."]);
+            run_git(root, &["commit", "-m", "second"]);
+
+            let changed = compute_changed_files(root, "HEAD~1", "HEAD")
+                .unwrap()
+                .expect("expected diff-aware set");
+            assert!(changed.contains("file.txt"));
+        }
+
+        #[test]
+        fn compute_changed_files_returns_empty_set_when_no_diff() {
+            let _lock = git_lock();
+            let temp_dir = TempDir::new().expect("temp dir");
+            let root = Utf8Path::from_path(temp_dir.path()).unwrap();
+
+            run_git(root, &["init", "-b", "main"]);
+            run_git(root, &["config", "user.email", "test@example.com"]);
+            run_git(root, &["config", "user.name", "Test User"]);
+
+            let file_path = root.join("file.txt");
+            std::fs::write(&file_path, "content").unwrap();
+            run_git(root, &["add", "."]);
+            run_git(root, &["commit", "-m", "init"]);
+
+            let changed = compute_changed_files(root, "HEAD", "HEAD")
+                .unwrap()
+                .expect("expected diff-aware set");
+            assert!(changed.is_empty());
+        }
+
+        #[test]
+        fn compute_changed_files_returns_none_when_git_missing() {
+            let _lock = git_lock();
+            let temp_dir = TempDir::new().expect("temp dir");
+            let root = Utf8Path::from_path(temp_dir.path()).unwrap();
+            let _guard = EnvGuard::set("PATH", "");
+
+            let changed = compute_changed_files(root, "HEAD", "HEAD").unwrap();
+            assert!(changed.is_none());
+        }
+
+        #[test]
+        fn env_guard_removes_missing_var_on_drop() {
+            let _lock = git_lock();
+            let key = "BUILDDIAG_ENV_GUARD_TEST_UNSET";
+            unsafe {
+                std::env::remove_var(key);
+            }
+
+            {
+                let _guard = EnvGuard::set(key, "value");
+                assert_eq!(std::env::var(key).ok().as_deref(), Some("value"));
+            }
+
+            assert!(std::env::var(key).is_err());
+        }
+
+        #[test]
+        fn get_git_info_reports_dirty_and_branch() {
+            let _lock = git_lock();
+            let temp_dir = TempDir::new().expect("temp dir");
+            let root = Utf8Path::from_path(temp_dir.path()).unwrap();
+
+            run_git(root, &["init", "-b", "main"]);
+            run_git(root, &["config", "user.email", "test@example.com"]);
+            run_git(root, &["config", "user.name", "Test User"]);
+
+            let file_path = root.join("file.txt");
+            std::fs::write(&file_path, "clean").unwrap();
+            run_git(root, &["add", "."]);
+            run_git(root, &["commit", "-m", "init"]);
+
+            let info = super::get_git_info(root).expect("git info");
+            assert!(info.commit.len() >= 7);
+            assert_eq!(info.branch.as_deref(), Some("main"));
+            assert!(!info.dirty);
+
+            std::fs::write(&file_path, "dirty").unwrap();
+            let dirty = super::get_git_info(root).expect("git info");
+            assert!(dirty.dirty);
         }
     }
 }

@@ -87,11 +87,28 @@ fn crate_name_strategy() -> impl Strategy<Value = String> {
 fn is_windows_reserved(name: &str) -> bool {
     matches!(
         name.to_ascii_uppercase().as_str(),
-        "CON" | "PRN" | "AUX" | "NUL"
-            | "COM1" | "COM2" | "COM3" | "COM4" | "COM5"
-            | "COM6" | "COM7" | "COM8" | "COM9"
-            | "LPT1" | "LPT2" | "LPT3" | "LPT4" | "LPT5"
-            | "LPT6" | "LPT7" | "LPT8" | "LPT9"
+        "CON"
+            | "PRN"
+            | "AUX"
+            | "NUL"
+            | "COM1"
+            | "COM2"
+            | "COM3"
+            | "COM4"
+            | "COM5"
+            | "COM6"
+            | "COM7"
+            | "COM8"
+            | "COM9"
+            | "LPT1"
+            | "LPT2"
+            | "LPT3"
+            | "LPT4"
+            | "LPT5"
+            | "LPT6"
+            | "LPT7"
+            | "LPT8"
+            | "LPT9"
     )
 }
 
