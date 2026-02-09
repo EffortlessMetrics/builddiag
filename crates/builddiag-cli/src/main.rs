@@ -1302,7 +1302,7 @@ edition = "2021"
         assert!(table_output.contains("Available checks:"));
         let json_output = list_checks_json(Some(Profile::Oss));
         let parsed: serde_json::Value = serde_json::from_str(json_output.trim()).unwrap();
-        assert!(parsed.as_array().unwrap().len() >= 1);
+        assert!(!parsed.as_array().unwrap().is_empty());
     }
 
     #[test]

@@ -3157,13 +3157,15 @@ weird = 1
 
     #[test]
     fn prepare_check_tasks_respects_disabled_and_diff_aware() {
-        let mut config = Config::default();
-        config.checks = vec![CheckConfig {
-            id: "rust.msrv_defined".to_string(),
-            severity: Severity::Warn,
-            enabled: false,
-            triggers: Vec::new(),
-        }];
+        let config = Config {
+            checks: vec![CheckConfig {
+                id: "rust.msrv_defined".to_string(),
+                severity: Severity::Warn,
+                enabled: false,
+                triggers: Vec::new(),
+            }],
+            ..Default::default()
+        };
 
         let changed: BTreeSet<String> = ["docs/README.md".to_string()].into_iter().collect();
         let tasks = prepare_check_tasks(&config, Some(&changed), false);

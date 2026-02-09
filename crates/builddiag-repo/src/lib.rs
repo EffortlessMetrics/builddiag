@@ -2239,8 +2239,10 @@ edition = "2021"
 
         let cache_file = root.join("cache-file");
         std::fs::write(&cache_file, "not a dir").unwrap();
-        let mut cache_cfg = CacheConfig::default();
-        cache_cfg.cache_dir = cache_file;
+        let cache_cfg = CacheConfig {
+            cache_dir: cache_file,
+            ..Default::default()
+        };
 
         let config = Config::default();
         let state = load_repo_state_cached(&root, &config, None, Some(&cache_cfg)).unwrap();

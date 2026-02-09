@@ -762,10 +762,14 @@ fn normalize_for_comparison(json: &str) -> Result<String> {
         run.remove("ended_at");
         run.remove("duration_ms");
 
-        // Also normalize git info (commit might change)
+        // Also normalize git info (commit and branch might change)
         if let Some(git) = run.get_mut("git").and_then(|g| g.as_object_mut()) {
             git.insert(
                 "commit".to_string(),
+                serde_json::Value::String("NORMALIZED".to_string()),
+            );
+            git.insert(
+                "branch".to_string(),
                 serde_json::Value::String("NORMALIZED".to_string()),
             );
             git.insert("dirty".to_string(), serde_json::Value::Bool(false));
@@ -1354,10 +1358,13 @@ mod tests {
         output_with_status(0)
     }
 
+    type OutputFn = Box<dyn Fn(&Cmd) -> Result<std::process::Output> + Send + Sync>;
+    type StatusFn = Box<dyn Fn(&Cmd) -> Result<std::process::ExitStatus> + Send + Sync>;
+
     struct FakeRunner {
         commands: Mutex<Vec<Cmd>>,
-        output_fn: Box<dyn Fn(&Cmd) -> Result<std::process::Output> + Send + Sync>,
-        status_fn: Box<dyn Fn(&Cmd) -> Result<std::process::ExitStatus> + Send + Sync>,
+        output_fn: OutputFn,
+        status_fn: StatusFn,
     }
 
     impl FakeRunner {
@@ -1409,21 +1416,19 @@ mod tests {
     }
 
     fn fixtures_root() -> Utf8PathBuf {
-        let root = Utf8PathBuf::from_path_buf(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")))
+        Utf8PathBuf::from_path_buf(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")))
             .unwrap()
             .join("..")
             .join("fixtures")
-            .join("conformance");
-        root
+            .join("conformance")
     }
 
     fn golden_root() -> Utf8PathBuf {
-        let root = Utf8PathBuf::from_path_buf(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")))
+        Utf8PathBuf::from_path_buf(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")))
             .unwrap()
             .join("..")
             .join("fixtures")
-            .join("golden");
-        root
+            .join("golden")
     }
 
     fn read_golden(golden: &Utf8Path, name: &str, kind: &str) -> String {
@@ -1677,8 +1682,7 @@ version = "0.1.0"
     fn runner_writing_out_json_writes_to_out_path() {
         let temp = TempDir::new().unwrap();
         let out_path = Utf8PathBuf::from_path_buf(temp.path().join("out.json")).unwrap();
-        let runner =
-            runner_writing_out_json(serde_json::json!({"schema": "sensor.report.v1"}), 0);
+        let runner = runner_writing_out_json(serde_json::json!({"schema": "sensor.report.v1"}), 0);
         let cmd = Cmd::new("cargo").args([
             "run",
             "-p",
@@ -1694,8 +1698,7 @@ version = "0.1.0"
 
     #[test]
     fn runner_writing_out_json_skips_without_out_arg() {
-        let runner =
-            runner_writing_out_json(serde_json::json!({"schema": "sensor.report.v1"}), 0);
+        let runner = runner_writing_out_json(serde_json::json!({"schema": "sensor.report.v1"}), 0);
         let cmd = Cmd::new("cargo").args(["run", "-p", "builddiag", "--", "check"]);
         let output = runner.output(&cmd).unwrap();
         assert!(output.status.success());
@@ -2021,11 +2024,12 @@ version = "0.1.0"
         let fixtures = fixtures_root();
         let golden = golden_root();
         let runner = FakeRunner::new().with_output_fn(move |cmd| {
-            if cmd.program == "cargo" && cmd.args.iter().any(|a| a == "builddiag") {
-                if let Some(out) = arg_value(&cmd.args, "--out") {
-                    let out_path = Utf8PathBuf::from(out);
-                    write_text(&out_path, "{")?;
-                }
+            if cmd.program == "cargo"
+                && cmd.args.iter().any(|a| a == "builddiag")
+                && let Some(out) = arg_value(&cmd.args, "--out")
+            {
+                let out_path = Utf8PathBuf::from(out);
+                write_text(&out_path, "{")?;
             }
             Ok(success_output())
         });
@@ -2118,8 +2122,7 @@ version = "0.1.0"
         let (_temp, fixtures, _fixture) = fixture_root_with("case");
         let temp_golden = TempDir::new().unwrap();
         let golden = Utf8PathBuf::from_path_buf(temp_golden.path().to_path_buf()).unwrap();
-        let runner =
-            runner_writing_out_json(serde_json::json!({"schema": "sensor.report.v1"}), 0);
+        let runner = runner_writing_out_json(serde_json::json!({"schema": "sensor.report.v1"}), 0);
 
         run_conform(
             &runner,
@@ -2142,8 +2145,7 @@ version = "0.1.0"
             r#"{ "schema": "sensor.report.v1", "verdict": "pass" }"#,
         )
         .unwrap();
-        let runner =
-            runner_writing_out_json(serde_json::json!({"schema": "sensor.report.v1"}), 0);
+        let runner = runner_writing_out_json(serde_json::json!({"schema": "sensor.report.v1"}), 0);
 
         let result = run_conform(
             &runner,
@@ -2175,8 +2177,7 @@ version = "0.1.0"
     fn run_conform_reports_failure_for_library_parity() {
         let fixtures = fixtures_root();
         let golden = golden_root();
-        let runner =
-            runner_writing_out_json(serde_json::json!({"schema": "sensor.report.v1"}), 0);
+        let runner = runner_writing_out_json(serde_json::json!({"schema": "sensor.report.v1"}), 0);
 
         let result = run_conform(
             &runner,
@@ -2192,8 +2193,7 @@ version = "0.1.0"
     fn run_conform_reports_failure_for_native_schema() {
         let (_temp, fixtures, _fixture) = fixture_root_with("case");
         let golden = golden_root();
-        let runner =
-            runner_writing_out_json(serde_json::json!({"schema": "wrong.schema"}), 0);
+        let runner = runner_writing_out_json(serde_json::json!({"schema": "wrong.schema"}), 0);
 
         let result = run_conform(
             &runner,
@@ -2300,7 +2300,11 @@ version = "0.1.0"
     fn real_command_runner_output_success() {
         let runner = RealCommandRunner;
         let output = runner
-            .output(&Cmd::new("cmd").args(["/C", "echo", "hello"]).env("FOO", "bar"))
+            .output(
+                &Cmd::new("cmd")
+                    .args(["/C", "echo", "hello"])
+                    .env("FOO", "bar"),
+            )
             .unwrap();
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(stdout.contains("hello"));
@@ -2311,7 +2315,11 @@ version = "0.1.0"
     fn real_command_runner_output_success() {
         let runner = RealCommandRunner;
         let output = runner
-            .output(&Cmd::new("sh").args(["-c", "printf hello"]).env("FOO", "bar"))
+            .output(
+                &Cmd::new("sh")
+                    .args(["-c", "printf hello"])
+                    .env("FOO", "bar"),
+            )
             .unwrap();
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(stdout.contains("hello"));
@@ -2399,8 +2407,7 @@ version = "0.1.0"
     #[test]
     fn run_main_returns_one_on_error() {
         let temp = TempDir::new().unwrap();
-        let fixtures =
-            Utf8PathBuf::from_path_buf(temp.path().join("missing-fixtures")).unwrap();
+        let fixtures = Utf8PathBuf::from_path_buf(temp.path().join("missing-fixtures")).unwrap();
         let golden = Utf8PathBuf::from_path_buf(temp.path().join("golden")).unwrap();
         let runner = FakeRunner::default();
         let code = run_main(
