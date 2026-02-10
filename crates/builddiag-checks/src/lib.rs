@@ -2520,14 +2520,13 @@ edition = "2021"
         // Assert: Fail, "nightly" is not pinned and disallowed
         assert_eq!(report.status, CheckStatus::Fail);
         // Should have both nightly_disallowed and unpinned_channel findings
-        assert!(report
-            .findings
-            .iter()
-            .any(|f| f.code == "nightly_disallowed"));
-        assert!(report
-            .findings
-            .iter()
-            .any(|f| f.code == "unpinned_channel"));
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|f| f.code == "nightly_disallowed")
+        );
+        assert!(report.findings.iter().any(|f| f.code == "unpinned_channel"));
     }
 
     #[test]
@@ -3058,14 +3057,13 @@ edition = "2021"
 
         let report = check_publish_ready(&repo, &config, Severity::Warn).unwrap();
 
-        assert!(report
-            .findings
-            .iter()
-            .any(|f| f.code == "missing_documentation"));
-        assert!(report
-            .findings
-            .iter()
-            .any(|f| f.code == "missing_readme"));
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|f| f.code == "missing_documentation")
+        );
+        assert!(report.findings.iter().any(|f| f.code == "missing_readme"));
     }
 
     // =========================================================================

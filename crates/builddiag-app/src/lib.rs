@@ -1428,7 +1428,6 @@ diff_aware = "yes"
             }
         }
 
-
         fn run_git(root: &Utf8Path, args: &[&str]) {
             let status = Command::new("git")
                 .arg("-C")

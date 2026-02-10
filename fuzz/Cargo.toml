@@ -12,8 +12,8 @@ edition = "2024"
 cargo-fuzz = true
 
 [dependencies]
-libfuzzer-sys = "0.4"
-arbitrary = { version = "1", features = ["derive"] }
+libfuzzer-sys = "0.4.10"
+arbitrary = { version = "1.4.2", features = ["derive"] }
 
 # Crates to fuzz
 builddiag-domain = { path = "../crates/builddiag-domain" }
@@ -22,9 +22,9 @@ builddiag-repo = { path = "../crates/builddiag-repo" }
 builddiag-types = { path = "../crates/builddiag-types" }
 
 # Dependencies needed for parsing
-toml = "0.8"
-serde_json = "1"
-chrono = { version = "0.4", default-features = false, features = ["std"] }
+toml = "0.9.8"
+serde_json = "1.0.149"
+chrono = { version = "0.4.43", default-features = false, features = ["std"] }
 
 [[bin]]
 name = "fuzz_version"
