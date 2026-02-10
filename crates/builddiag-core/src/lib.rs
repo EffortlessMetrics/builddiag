@@ -210,6 +210,17 @@ mod tests {
     }
 
     #[test]
+    fn run_returns_error_for_missing_root() {
+        let temp = TempDir::new().unwrap();
+        let missing = Utf8PathBuf::from_path_buf(temp.path().join("missing")).unwrap();
+        let mut settings = Settings::default();
+        settings.root = missing;
+
+        let result = run(&settings);
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn reexports_are_accessible() {
         // Compile-time check that re-exports work
         let _: Severity = Severity::Info;

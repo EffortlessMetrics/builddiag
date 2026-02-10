@@ -1988,7 +1988,9 @@ fn check_security_advisory_impl(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use builddiag_repo::{Member, PublishMetadata, RepoState, Toolchain, WorkspaceInfo};
+    use builddiag_repo::{
+        ChecksumEntry, Member, PublishMetadata, RepoState, Toolchain, ToolsChecksums, WorkspaceInfo,
+    };
     use builddiag_types::{CheckConfig, Config, MsrvSource, RelationToMsrv, Severity};
     use camino::Utf8PathBuf;
     use std::collections::BTreeSet;
@@ -2071,6 +2073,79 @@ mod tests {
         repo.workspace.is_workspace = false;
         repo.workspace.members.clear();
         repo
+    }
+
+    fn repo_with_temp_root() -> (TempDir, RepoState) {
+        let temp = TempDir::new().expect("temp dir");
+        let root = Utf8PathBuf::from_path_buf(temp.path().to_path_buf())
+            .expect("path should be valid UTF-8");
+        std::fs::write(
+            root.join("Cargo.toml"),
+            r#"[package]
+name = "fixture"
+version = "0.1.0"
+edition = "2021"
+"#,
+        )
+        .expect("write Cargo.toml");
+
+        let repo = repo_with_root(root);
+        (temp, repo)
+    }
+
+    #[test]
+    fn execute_check_covers_all_builtin_checks() {
+        let (_temp, repo) = repo_with_temp_root();
+        let config = Config::default();
+
+        for def in BUILTIN_CHECKS {
+            let task = CheckTask {
+                def,
+                effective_severity: Severity::Warn,
+                skip_reason: None,
+            };
+            let report = execute_check(&task, &repo, &config).unwrap();
+            assert_eq!(report.id, def.id);
+        }
+    }
+
+    #[test]
+    fn run_selected_checks_propagates_errors() {
+        let (_temp, mut repo) = repo_with_temp_root();
+        let mut config = Config::default();
+        config.profile = builddiag_types::Profile::Strict;
+        config.policy.checksums.verify_local_files = true;
+
+        let tools_dir = repo.root.join("scripts").join("tools");
+        std::fs::create_dir_all(&tools_dir).expect("create tools dir");
+
+        let checksums_path = repo.root.join(&config.paths.tools_checksums);
+        repo.tools_checksums = Some(ToolsChecksums {
+            path: checksums_path,
+            entries: vec![ChecksumEntry {
+                line: 1,
+                hash: "deadbeef".to_string(),
+                path: "scripts/tools".to_string(),
+            }],
+        });
+
+        let result = run_selected_checks(&repo, &config, true);
+        assert!(result.is_err());
+        let err_msg = format!("{:#}", result.unwrap_err());
+        assert!(err_msg.contains("read"));
+    }
+
+    #[test]
+    fn deps_checks_error_when_cargo_toml_missing() {
+        let temp = TempDir::new().expect("temp dir");
+        let root = Utf8PathBuf::from_path_buf(temp.path().to_path_buf())
+            .expect("path should be valid UTF-8");
+        let repo = repo_with_root(root);
+        let config = Config::default();
+
+        assert!(check_deps_wildcard(&repo, &config, Severity::Warn).is_err());
+        assert!(check_deps_path_version(&repo, &config, Severity::Warn).is_err());
+        assert!(check_deps_workspace_inheritance(&repo, &config, Severity::Warn).is_err());
     }
 
     // =========================================================================
@@ -2445,12 +2520,14 @@ mod tests {
         // Assert: Fail, "nightly" is not pinned and disallowed
         assert_eq!(report.status, CheckStatus::Fail);
         // Should have both nightly_disallowed and unpinned_channel findings
-        assert!(
-            report
-                .findings
-                .iter()
-                .any(|f| f.code == "nightly_disallowed" || f.code == "unpinned_channel")
-        );
+        assert!(report
+            .findings
+            .iter()
+            .any(|f| f.code == "nightly_disallowed"));
+        assert!(report
+            .findings
+            .iter()
+            .any(|f| f.code == "unpinned_channel"));
     }
 
     #[test]
@@ -2596,6 +2673,26 @@ mod tests {
             Some(check_skip_reasons::NOT_APPLICABLE)
         );
         assert!(report.skipped_detail.unwrap().contains("non-numeric"));
+    }
+
+    #[test]
+    fn toolchain_msrv_relation_errors_on_invalid_toolchain_version() {
+        let repo = mock_repo_with_msrv_and_toolchain("1.70.0", "1.bad");
+        let config = Config::default();
+
+        let err = check_toolchain_msrv_relation(&repo, &config, Severity::Error).unwrap_err();
+        let err_msg = format!("{:#}", err);
+        assert!(err_msg.contains("invalid"));
+    }
+
+    #[test]
+    fn toolchain_msrv_relation_errors_on_invalid_msrv() {
+        let repo = mock_repo_with_msrv_and_toolchain("nope", "1.70.0");
+        let config = Config::default();
+
+        let err = check_toolchain_msrv_relation(&repo, &config, Severity::Error).unwrap_err();
+        let err_msg = format!("{:#}", err);
+        assert!(err_msg.contains("invalid MSRV"));
     }
 
     #[test]
@@ -2947,6 +3044,30 @@ mod tests {
         assert_eq!(finding.severity, Severity::Info);
     }
 
+    #[test]
+    fn publish_ready_warns_for_missing_docs_and_readme() {
+        let members = vec![mock_member_with_publish(
+            "my-crate",
+            Some("A test crate"),
+            Some("MIT"),
+            Some("https://github.com/test/test"),
+            false,
+        )];
+        let repo = mock_repo_with_members(Some("1.70.0"), members);
+        let config = Config::default();
+
+        let report = check_publish_ready(&repo, &config, Severity::Warn).unwrap();
+
+        assert!(report
+            .findings
+            .iter()
+            .any(|f| f.code == "missing_documentation"));
+        assert!(report
+            .findings
+            .iter()
+            .any(|f| f.code == "missing_readme"));
+    }
+
     // =========================================================================
     // Tests for check_edition_deprecations
     // =========================================================================
@@ -2976,12 +3097,7 @@ mod tests {
         let report = check_edition_deprecations(&repo, &config, Severity::Warn).unwrap();
 
         // 2021 is not deprecated and not ancient enough for migration warning
-        assert!(
-            !report
-                .findings
-                .iter()
-                .any(|f| f.code == "deprecated_edition")
-        );
+        assert!(report.findings.is_empty());
     }
 
     #[test]
@@ -3501,6 +3617,61 @@ weird = 1
         let codes: Vec<&str> = report.findings.iter().map(|f| f.code.as_str()).collect();
         assert!(codes.contains(&"missing_tool_file"));
         assert!(codes.contains(&"hash_mismatch"));
+    }
+
+    #[test]
+    fn checksums_verify_local_passes_with_matching_hash() {
+        let temp = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).unwrap();
+        let file_path = root.join("tool.bin");
+        std::fs::write(&file_path, b"data").unwrap();
+
+        let mut hasher = Sha256::new();
+        hasher.update(b"data");
+        let hash = format!("{:x}", hasher.finalize());
+
+        let mut repo = mock_repo_state();
+        repo.root = root.clone();
+        repo.tools_checksums = Some(builddiag_repo::ToolsChecksums {
+            path: root.join("scripts/tools.sha256"),
+            entries: vec![builddiag_repo::ChecksumEntry {
+                line: 1,
+                hash,
+                path: "tool.bin".to_string(),
+            }],
+        });
+
+        let mut config = Config::default();
+        config.policy.checksums.verify_local_files = true;
+
+        let report = check_checksums_verify_local(&repo, &config, Severity::Error).unwrap();
+        assert!(report.findings.is_empty());
+    }
+
+    #[test]
+    fn checksums_verify_local_errors_on_directory_path() {
+        let temp = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).unwrap();
+        let dir_path = root.join("tool_dir");
+        std::fs::create_dir_all(&dir_path).unwrap();
+
+        let mut repo = mock_repo_state();
+        repo.root = root.clone();
+        repo.tools_checksums = Some(builddiag_repo::ToolsChecksums {
+            path: root.join("scripts/tools.sha256"),
+            entries: vec![builddiag_repo::ChecksumEntry {
+                line: 1,
+                hash: "0".repeat(64),
+                path: "tool_dir".to_string(),
+            }],
+        });
+
+        let mut config = Config::default();
+        config.policy.checksums.verify_local_files = true;
+
+        let err = check_checksums_verify_local(&repo, &config, Severity::Error).unwrap_err();
+        let err_msg = format!("{:#}", err);
+        assert!(err_msg.contains("read"));
     }
 
     // =========================================================================

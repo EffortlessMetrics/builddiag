@@ -981,7 +981,11 @@ edition = "2021"
             run: None,
             verdict: SensorVerdict::default(),
             findings: Vec::new(),
-            artifacts: Vec::new(),
+            artifacts: vec![builddiag_types::Artifact {
+                name: "placeholder".to_string(),
+                path: "artifacts/placeholder.txt".to_string(),
+                mime_type: None,
+            }],
             data: None,
         };
 
@@ -1664,7 +1668,11 @@ edition = "2021"
             run: None,
             verdict: SensorVerdict::default(),
             findings: Vec::new(),
-            artifacts: Vec::new(),
+            artifacts: vec![builddiag_types::Artifact {
+                name: "placeholder".to_string(),
+                path: "artifacts/placeholder.txt".to_string(),
+                mime_type: None,
+            }],
             data: None,
         };
 
@@ -1684,9 +1692,18 @@ edition = "2021"
 
         let report_txt = std::fs::read_to_string(&out_json).unwrap();
         let report: serde_json::Value = serde_json::from_str(&report_txt).unwrap();
-        if let Some(artifacts) = report.get("artifacts").and_then(|v| v.as_array()) {
-            assert!(artifacts.is_empty());
-        }
+        let artifacts = report
+            .get("artifacts")
+            .and_then(|v| v.as_array())
+            .expect("artifacts should be serialized");
+        assert_eq!(artifacts.len(), 1);
+        assert_eq!(
+            artifacts
+                .first()
+                .and_then(|entry| entry.get("name"))
+                .and_then(|v| v.as_str()),
+            Some("placeholder")
+        );
         assert!(!root.join("extras").join("payload.json").exists());
     }
 

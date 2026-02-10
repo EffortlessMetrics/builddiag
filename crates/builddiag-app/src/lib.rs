@@ -771,7 +771,9 @@ custom_key = "custom_value"
             let err = result.unwrap_err();
             let err_msg = format!("{:#}", err);
             // Error should contain context about reading the config file
-            assert!(err_msg.contains("read config") || err_msg.contains("nonexistent.toml"));
+            let has_context = err_msg.contains("read config");
+            let has_path = err_msg.contains("nonexistent.toml");
+            assert!(has_context | has_path);
         }
 
         #[test]
@@ -795,7 +797,9 @@ fail_on = "error"
             let err = result.unwrap_err();
             let err_msg = format!("{:#}", err);
             // Error should contain context about parsing the config file
-            assert!(err_msg.contains("parse config") || err_msg.contains("invalid.toml"));
+            let has_context = err_msg.contains("parse config");
+            let has_path = err_msg.contains("invalid.toml");
+            assert!(has_context | has_path);
         }
 
         #[test]
@@ -819,7 +823,9 @@ fail_on = "invalid_value"
             let err = result.unwrap_err();
             let err_msg = format!("{:#}", err);
             // Error should contain context about parsing the config file
-            assert!(err_msg.contains("parse config") || err_msg.contains("bad_enum.toml"));
+            let has_context = err_msg.contains("parse config");
+            let has_path = err_msg.contains("bad_enum.toml");
+            assert!(has_context | has_path);
         }
 
         #[test]
@@ -843,7 +849,9 @@ diff_aware = "yes"
             let err = result.unwrap_err();
             let err_msg = format!("{:#}", err);
             // Error should contain context about parsing the config file
-            assert!(err_msg.contains("parse config") || err_msg.contains("wrong_type.toml"));
+            let has_context = err_msg.contains("parse config");
+            let has_path = err_msg.contains("wrong_type.toml");
+            assert!(has_context | has_path);
         }
     }
 
@@ -1008,6 +1016,36 @@ diff_aware = "yes"
             let read_content = std::fs::read(&file_path).expect("should read file");
             assert_eq!(read_content, content);
         }
+
+        #[test]
+        fn write_atomic_returns_error_when_temp_write_fails() {
+            let temp_dir = TempDir::new().expect("failed to create temp dir");
+            let file_path = temp_dir.path().join("target.txt");
+            let utf8_path =
+                Utf8PathBuf::from_path_buf(file_path.clone()).expect("path should be valid UTF-8");
+
+            let tmp_dir = temp_dir.path().join(".target.txt.tmp");
+            std::fs::create_dir_all(&tmp_dir).expect("create temp dir");
+
+            let result = write_atomic(&utf8_path, b"content");
+            assert!(result.is_err());
+            let err_msg = format!("{:#}", result.unwrap_err());
+            assert!(err_msg.contains("write"));
+        }
+
+        #[test]
+        fn write_atomic_returns_error_when_rename_fails() {
+            let temp_dir = TempDir::new().expect("failed to create temp dir");
+            let dest_dir = temp_dir.path().join("dest");
+            std::fs::create_dir_all(&dest_dir).expect("create dest dir");
+            let utf8_path =
+                Utf8PathBuf::from_path_buf(dest_dir.clone()).expect("path should be valid UTF-8");
+
+            let result = write_atomic(&utf8_path, b"content");
+            assert!(result.is_err());
+            let err_msg = format!("{:#}", result.unwrap_err());
+            assert!(err_msg.contains("rename"));
+        }
     }
 
     /// Tests for write_outputs function
@@ -1044,6 +1082,36 @@ diff_aware = "yes"
             assert!(out_md.exists());
             let md = std::fs::read_to_string(&out_md).unwrap();
             assert_eq!(md, "markdown");
+        }
+
+        #[test]
+        fn write_outputs_returns_error_when_markdown_write_fails() {
+            let temp_dir = TempDir::new().expect("failed to create temp dir");
+            let root = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
+                .expect("path should be valid UTF-8");
+            let out_json = root.join("report.json");
+            let out_md = root.join("comment.md");
+            std::fs::create_dir_all(&out_md).expect("create markdown dir");
+
+            let run = CheckRun {
+                report: Report {
+                    schema: REPORT_SCHEMA_V1.to_string(),
+                    tool: None,
+                    run: None,
+                    verdict: Verdict::Pass,
+                    findings: Vec::new(),
+                    summary: None,
+                    data: None,
+                },
+                markdown: "markdown".to_string(),
+                annotations: Vec::new(),
+                exit_code: 0,
+            };
+
+            let result = write_outputs(&out_json, Some(&out_md), &run);
+            assert!(result.is_err());
+            let err_msg = format!("{:#}", result.unwrap_err());
+            assert!(err_msg.contains("rename") || err_msg.contains("write"));
         }
     }
 
@@ -1266,6 +1334,57 @@ diff_aware = "yes"
             assert_eq!(run.sensor_report.schema, SENSOR_REPORT_SCHEMA_V1);
             assert_eq!(run.check_run.report.schema, REPORT_SCHEMA_V1);
         }
+
+        #[test]
+        fn run_check_returns_error_for_missing_root() {
+            let temp_dir = TempDir::new().expect("temp dir");
+            let missing = Utf8PathBuf::from_path_buf(temp_dir.path().join("missing"))
+                .expect("path should be valid UTF-8");
+            let config = Config::default();
+            let cache = CacheConfig::default();
+
+            let result = run_check(&missing, &config, false, None, Some(&cache));
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn run_check_propagates_check_error() {
+            let temp_dir = TempDir::new().expect("temp dir");
+            let root = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
+                .expect("path should be valid UTF-8");
+            let config = Config::default();
+            let repo_state = builddiag_repo::load_repo_state(&root, &config, None).unwrap();
+            let result = run_check_inner(&root, &config, true, repo_state, Utc::now());
+            assert!(result.is_err());
+            let err_msg = format!("{:#}", result.err().expect("expected error"));
+            assert!(err_msg.contains("Cargo.toml") || err_msg.contains("read"));
+        }
+
+        #[test]
+        fn run_check_with_sensor_returns_error_for_missing_root() {
+            let temp_dir = TempDir::new().expect("temp dir");
+            let missing = Utf8PathBuf::from_path_buf(temp_dir.path().join("missing"))
+                .expect("path should be valid UTF-8");
+            let config = Config::default();
+            let cache = CacheConfig::default();
+
+            let result = run_check_with_sensor(&missing, &config, false, None, Some(&cache));
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn run_check_with_sensor_propagates_check_error() {
+            let temp_dir = TempDir::new().expect("temp dir");
+            let root = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
+                .expect("path should be valid UTF-8");
+            let config = Config::default();
+            let repo_state = builddiag_repo::load_repo_state(&root, &config, None).unwrap();
+            let result =
+                run_check_with_sensor_inner(&root, &config, true, repo_state, Utc::now(), false);
+            assert!(result.is_err());
+            let err_msg = format!("{:#}", result.err().expect("expected error"));
+            assert!(err_msg.contains("Cargo.toml") || err_msg.contains("read"));
+        }
     }
 
     mod git_tests {
@@ -1308,6 +1427,7 @@ diff_aware = "yes"
                 }
             }
         }
+
 
         fn run_git(root: &Utf8Path, args: &[&str]) {
             let status = Command::new("git")
@@ -1424,6 +1544,16 @@ diff_aware = "yes"
             std::fs::write(&file_path, "dirty").unwrap();
             let dirty = super::get_git_info(root).expect("git info");
             assert!(dirty.dirty);
+        }
+
+        #[test]
+        fn get_git_info_returns_none_when_git_missing() {
+            let _lock = git_lock();
+            let temp_dir = TempDir::new().expect("temp dir");
+            let root = Utf8Path::from_path(temp_dir.path()).unwrap();
+            let _guard = EnvGuard::set("PATH", "");
+
+            assert!(super::get_git_info(root).is_none());
         }
     }
 }
