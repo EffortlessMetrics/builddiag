@@ -1,0 +1,106 @@
+{
+  "schema": "builddiag.report.v1",
+  "tool": {
+    "name": "builddiag",
+    "version": "0.2.0"
+  },
+  "run": {
+    "started_at": "2026-02-07T05:09:26.172653500Z",
+    "ended_at": "2026-02-07T05:09:26.206742400Z",
+    "duration_ms": 34,
+    "host": {
+      "os": "windows",
+      "arch": "x86_64"
+    },
+    "git": {
+      "commit": "96efe3f0349b6112103fc3d8f373c29d45c3d66c",
+      "branch": "main",
+      "dirty": true
+    }
+  },
+  "verdict": "warn",
+  "findings": [
+    {
+      "check_id": "rust.msrv_defined",
+      "code": "missing_msrv",
+      "severity": "warn",
+      "message": "Missing workspace/package rust-version (MSRV) in Cargo.toml",
+      "location": {
+        "path": "Cargo.toml"
+      }
+    },
+    {
+      "check_id": "rust.toolchain_pinning",
+      "code": "missing_toolchain",
+      "severity": "info",
+      "message": "Missing rust-toolchain.toml (or rust-toolchain) at repo root"
+    },
+    {
+      "check_id": "workspace.publish_ready",
+      "code": "missing_description",
+      "severity": "info",
+      "message": "missing-msrv-fixture: missing required 'description' field for publishing",
+      "location": {
+        "path": "Cargo.toml"
+      }
+    },
+    {
+      "check_id": "workspace.publish_ready",
+      "code": "missing_documentation",
+      "severity": "info",
+      "message": "missing-msrv-fixture: missing recommended 'documentation' or 'homepage' field",
+      "location": {
+        "path": "Cargo.toml"
+      }
+    },
+    {
+      "check_id": "workspace.publish_ready",
+      "code": "missing_license",
+      "severity": "info",
+      "message": "missing-msrv-fixture: missing required 'license' or 'license-file' field for publishing",
+      "location": {
+        "path": "Cargo.toml"
+      }
+    },
+    {
+      "check_id": "workspace.publish_ready",
+      "code": "missing_readme",
+      "severity": "info",
+      "message": "missing-msrv-fixture: missing recommended 'readme' field",
+      "location": {
+        "path": "Cargo.toml"
+      }
+    },
+    {
+      "check_id": "workspace.publish_ready",
+      "code": "missing_repository",
+      "severity": "info",
+      "message": "missing-msrv-fixture: missing recommended 'repository' field",
+      "location": {
+        "path": "Cargo.toml"
+      }
+    },
+    {
+      "check_id": "workspace.resolver_v2",
+      "code": "resolver_not_v2",
+      "severity": "info",
+      "message": "workspace.resolver is None; expected '2'",
+      "location": {
+        "path": "Cargo.toml"
+      }
+    }
+  ],
+  "summary": {
+    "total_findings": 8,
+    "by_severity": {
+      "info": 7,
+      "warn": 1
+    },
+    "by_check": {
+      "rust.msrv_defined": 1,
+      "rust.toolchain_pinning": 1,
+      "workspace.publish_ready": 5,
+      "workspace.resolver_v2": 1
+    }
+  }
+}

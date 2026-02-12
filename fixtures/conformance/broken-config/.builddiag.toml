@@ -1,0 +1,3 @@
+# Intentionally malformed config for survivability testing
+[defaults
+fail_on = "error"

@@ -52,11 +52,18 @@ fn parse_cargo_toml(path: &Path) -> BTreeMap<String, toml::Value> {
         .unwrap_or_default()
 }
 
-/// Checks if a metadata field is present and non-empty
+/// Checks if a metadata field is present and non-empty.
+/// Supports both direct values and workspace inheritance (e.g., `field.workspace = true`).
 fn has_field(package: &BTreeMap<String, toml::Value>, field: &str) -> bool {
     match package.get(field) {
         Some(toml::Value::String(s)) => !s.is_empty(),
         Some(toml::Value::Array(arr)) => !arr.is_empty(),
+        Some(toml::Value::Table(t)) => {
+            // Handle workspace inheritance pattern: field.workspace = true
+            t.get("workspace")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+        }
         _ => false,
     }
 }

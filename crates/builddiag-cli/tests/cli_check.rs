@@ -136,7 +136,7 @@ fn check_produces_markdown_summary() {
 // MSRV validation tests
 // =============================================================================
 
-/// Test: Missing MSRV fails by default.
+/// Test: Missing MSRV fails with strict profile.
 /// _Requirements: 7.1_
 #[test]
 fn check_missing_msrv_fails() {
@@ -167,12 +167,14 @@ edition = "2021"
     cmd.arg("check")
         .arg("--root")
         .arg(dir.path())
+        .arg("--profile")
+        .arg("strict")
         .arg("--always");
 
     cmd.assert().code(2);
 }
 
-/// Test: MSRV defined only in crate (not workspace) fails with default policy.
+/// Test: MSRV defined only in crate (not workspace) fails with strict profile.
 /// _Requirements: 7.1_
 #[test]
 fn check_msrv_in_crate_only_fails_with_workspace_policy() {
@@ -204,9 +206,11 @@ rust-version = "1.75.0"
     cmd.arg("check")
         .arg("--root")
         .arg(dir.path())
+        .arg("--profile")
+        .arg("strict")
         .arg("--always");
 
-    // Should fail because default policy requires workspace-level MSRV
+    // Should fail because strict policy requires workspace-level MSRV
     cmd.assert().code(2);
 }
 
@@ -274,7 +278,7 @@ source = "any"
 // Toolchain pinning tests
 // =============================================================================
 
-/// Test: Missing rust-toolchain.toml fails with default policy.
+/// Test: Missing rust-toolchain.toml fails with strict profile.
 /// _Requirements: 7.2_
 #[test]
 fn check_missing_toolchain_fails() {
@@ -312,12 +316,14 @@ rust-version.workspace = true
     cmd.arg("check")
         .arg("--root")
         .arg(dir.path())
+        .arg("--profile")
+        .arg("strict")
         .arg("--always");
 
     cmd.assert().code(2);
 }
 
-/// Test: Unpinned toolchain (using channel like "stable") fails.
+/// Test: Unpinned toolchain (using channel like "stable") fails with strict profile.
 /// _Requirements: 7.2_
 #[test]
 fn check_unpinned_toolchain_fails() {
@@ -362,12 +368,14 @@ channel = "stable"
     cmd.arg("check")
         .arg("--root")
         .arg(dir.path())
+        .arg("--profile")
+        .arg("strict")
         .arg("--always");
 
     cmd.assert().code(2);
 }
 
-/// Test: Toolchain version mismatch with MSRV fails with default policy.
+/// Test: Toolchain version mismatch with MSRV fails with strict profile.
 /// _Requirements: 7.2_
 #[test]
 fn check_toolchain_msrv_mismatch_fails() {
@@ -412,9 +420,11 @@ channel = "1.76.0"
     cmd.arg("check")
         .arg("--root")
         .arg(dir.path())
+        .arg("--profile")
+        .arg("strict")
         .arg("--always");
 
-    // Default policy requires toolchain == MSRV
+    // Strict profile requires toolchain == MSRV
     cmd.assert().code(2);
 }
 
@@ -544,7 +554,7 @@ require_pinned = false
 // Checksums validation tests
 // =============================================================================
 
-/// Test: Missing checksums file fails with default policy.
+/// Test: Missing checksums file fails with strict profile.
 /// _Requirements: 7.3_
 #[test]
 fn check_missing_checksums_file_fails() {
@@ -589,6 +599,8 @@ channel = "1.75.0"
     cmd.arg("check")
         .arg("--root")
         .arg(dir.path())
+        .arg("--profile")
+        .arg("strict")
         .arg("--always");
 
     cmd.assert().code(2);
@@ -837,11 +849,11 @@ fn check_custom_output_paths_via_cli() {
 // GitHub annotations tests
 // =============================================================================
 
-/// Test: --github-annotations flag outputs annotations to stdout when findings have location.
+/// Test: --annotations github flag outputs annotations to stdout when findings have location.
 /// Note: Annotations are only generated for findings that have both path and line number.
 /// _Requirements: 6.1_
 #[test]
-fn check_github_annotations_flag() {
+fn check_annotations_github_flag() {
     let dir = TempDir::new().unwrap();
     create_valid_workspace(&dir);
 
@@ -849,17 +861,18 @@ fn check_github_annotations_flag() {
     cmd.arg("check")
         .arg("--root")
         .arg(dir.path())
-        .arg("--github-annotations")
+        .arg("--annotations")
+        .arg("github")
         .arg("--always");
 
     // Valid workspace should pass and not output annotations (no findings)
     cmd.assert().success().code(0);
 }
 
-/// Test: --github-annotations outputs error annotations for findings with location.
+/// Test: --annotations github outputs error annotations for findings with location.
 /// _Requirements: 6.1_
 #[test]
-fn check_github_annotations_outputs_errors_with_location() {
+fn check_annotations_github_outputs_errors_with_location() {
     let dir = TempDir::new().unwrap();
 
     // Create a workspace with missing MSRV - this should produce findings with location
@@ -887,10 +900,13 @@ edition = "2021"
     cmd.arg("check")
         .arg("--root")
         .arg(dir.path())
-        .arg("--github-annotations")
+        .arg("--profile")
+        .arg("strict")
+        .arg("--annotations")
+        .arg("github")
         .arg("--always");
 
-    // Should fail with exit code 2
+    // Should fail with exit code 2 with strict profile
     // Note: Annotations are only output if findings have path AND line number
     cmd.assert().code(2);
 }
@@ -978,6 +994,109 @@ channel = "1.75.0"
 // Error message tests
 // =============================================================================
 
+// =============================================================================
+// Cockpit mode tests
+// =============================================================================
+
+/// Test: `--mode cockpit` alone defaults to artifacts-dir layout.
+#[test]
+fn cockpit_mode_defaults_artifact_dir() {
+    let dir = TempDir::new().unwrap();
+    create_valid_workspace(&dir);
+
+    let mut cmd = get_builddiag_cmd();
+    cmd.arg("check")
+        .arg("--root")
+        .arg(dir.path())
+        .arg("--mode")
+        .arg("cockpit")
+        .arg("--always");
+
+    cmd.assert().success().code(0);
+
+    // Should create the full artifact tree
+    let report = dir.path().join("artifacts/builddiag/report.json");
+    let comment = dir.path().join("artifacts/builddiag/comment.md");
+    let payload = dir.path().join("artifacts/builddiag/extras/payload.json");
+
+    assert!(report.exists(), "report.json should be created");
+    assert!(comment.exists(), "comment.md should be created");
+    assert!(payload.exists(), "extras/payload.json should be created");
+
+    // report.json should be sensor.report.v1 format
+    let content = fs::read_to_string(&report).unwrap();
+    let val: serde_json::Value = serde_json::from_str(&content).unwrap();
+    assert_eq!(
+        val["schema"], "sensor.report.v1",
+        "cockpit mode should produce sensor format"
+    );
+}
+
+/// Test: explicit `--artifacts-dir` overrides the cockpit default.
+#[test]
+fn cockpit_mode_explicit_artifacts_dir_wins() {
+    let dir = TempDir::new().unwrap();
+    create_valid_workspace(&dir);
+
+    let custom_dir = dir.path().join("custom-artifacts");
+
+    let mut cmd = get_builddiag_cmd();
+    cmd.arg("check")
+        .arg("--root")
+        .arg(dir.path())
+        .arg("--mode")
+        .arg("cockpit")
+        .arg("--artifacts-dir")
+        .arg(&custom_dir)
+        .arg("--always");
+
+    cmd.assert().success().code(0);
+
+    let report = custom_dir.join("report.json");
+    assert!(report.exists(), "report.json should be in custom dir");
+
+    // Default location should NOT exist
+    let default_report = dir.path().join("artifacts/builddiag/report.json");
+    assert!(
+        !default_report.exists(),
+        "default artifact dir should not be used when explicit dir given"
+    );
+}
+
+/// Test: `--out` suppresses the cockpit default artifact-dir.
+#[test]
+fn cockpit_mode_explicit_out_skips_default() {
+    let dir = TempDir::new().unwrap();
+    create_valid_workspace(&dir);
+
+    let custom_out = dir.path().join("my-report.json");
+
+    let mut cmd = get_builddiag_cmd();
+    cmd.arg("check")
+        .arg("--root")
+        .arg(dir.path())
+        .arg("--mode")
+        .arg("cockpit")
+        .arg("--out")
+        .arg(&custom_out)
+        .arg("--always");
+
+    cmd.assert().success().code(0);
+
+    assert!(custom_out.exists(), "custom --out path should be used");
+
+    // Default artifact directory layout should NOT be created
+    let default_payload = dir.path().join("artifacts/builddiag/extras/payload.json");
+    assert!(
+        !default_payload.exists(),
+        "artifact dir layout should not be created when --out is specified"
+    );
+}
+
+// =============================================================================
+// Error message tests
+// =============================================================================
+
 /// Test: Error messages are descriptive.
 /// _Requirements: 6.1_
 #[test]
@@ -1009,6 +1128,8 @@ edition = "2021"
     cmd.arg("check")
         .arg("--root")
         .arg(dir.path())
+        .arg("--profile")
+        .arg("strict")
         .arg("--always");
 
     cmd.assert().code(2);
@@ -1018,13 +1139,10 @@ edition = "2021"
     let content = fs::read_to_string(&report_path).unwrap();
     let report: serde_json::Value = serde_json::from_str(&content).unwrap();
 
-    // Check that findings exist and have messages
-    let checks = report["checks"].as_array().unwrap();
-    let has_findings = checks.iter().any(|check| {
-        check["findings"]
-            .as_array()
-            .map(|f| !f.is_empty())
-            .unwrap_or(false)
-    });
-    assert!(has_findings, "Report should contain findings for errors");
+    // Check that findings exist and have messages (new schema uses flat findings array)
+    let findings = report["findings"].as_array().unwrap();
+    assert!(
+        !findings.is_empty(),
+        "Report should contain findings for errors"
+    );
 }

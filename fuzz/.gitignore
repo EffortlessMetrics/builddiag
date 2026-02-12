@@ -1,0 +1,5 @@
+# Build artifacts (cargo-fuzz creates a separate target/)
+target/
+
+# Cargo lock file (regenerated frequently)
+Cargo.lock

@@ -1,0 +1,10 @@
+[package]
+name = "broken-config-fixture"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.92"
+
+[dependencies]
+
+[workspace]
+# Empty workspace to prevent inclusion in parent workspace

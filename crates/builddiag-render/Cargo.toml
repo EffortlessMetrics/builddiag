@@ -1,16 +1,16 @@
 [package]
 name = "builddiag-render"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Markdown and GitHub annotation rendering for builddiag"
-repository = "https://github.com/user/builddiag"
-homepage = "https://github.com/user/builddiag"
-keywords = ["rust", "build", "validation"]
+repository.workspace = true
+homepage.workspace = true
+description = "Internal rendering for builddiag (not intended for direct use)"
+keywords = ["rust", "build", "validation", "markdown"]
 categories = ["development-tools"]
 
 [dependencies]
-builddiag-types = { path = "../builddiag-types" }
+builddiag-types = { path = "../builddiag-types", version = "0.2.0" }
 
 [dev-dependencies]
 insta.workspace = true

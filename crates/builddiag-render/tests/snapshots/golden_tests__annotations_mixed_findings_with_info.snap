@@ -1,0 +1,8 @@
+---
+source: crates/builddiag-render/tests/golden_tests.rs
+expression: "annotations.join(\"\\n\")"
+---
+::error file=Cargo.toml,line=1::[rust.msrv_defined:missing_msrv] Missing rust-version field in Cargo.toml
+::warning file=rust-toolchain.toml,line=2,col=10::[rust.toolchain_pinning:unpinned_toolchain] Toolchain is not pinned to a specific version
+::warning file=Cargo.toml,line=5::[workspace.resolver_v2:resolver_v1] Workspace uses resolver version 1, consider upgrading to v2
+::notice file=rust-toolchain.toml,line=1::[rust.toolchain_pinning:toolchain_channel] Detected toolchain channel: stable

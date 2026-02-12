@@ -1,0 +1,20 @@
+[package]
+name = "depguard"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Dependency hygiene sensor for Rust workspaces (used by builddiag)"
+keywords = ["rust", "dependencies", "lint", "workspace"]
+categories = ["development-tools"]
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+camino.workspace = true
+toml.workspace = true
+globset.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

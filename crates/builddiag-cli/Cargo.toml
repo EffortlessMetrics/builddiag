@@ -1,11 +1,11 @@
 [package]
 name = "builddiag"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 description = "CLI tool to validate the build contract of Rust repositories"
-repository = "https://github.com/EffortlessMetrics/builddiag"
-homepage = "https://github.com/EffortlessMetrics/builddiag"
 readme = "README.md"
 keywords = ["rust", "cli", "build", "validation", "msrv"]
 categories = ["development-tools", "command-line-utilities"]
@@ -14,12 +14,23 @@ categories = ["development-tools", "command-line-utilities"]
 anyhow.workspace = true
 clap.workspace = true
 camino.workspace = true
-builddiag-app = { path = "../builddiag-app" }
-builddiag-render = { path = "../builddiag-render" }
-builddiag-types = { path = "../builddiag-types" }
+chrono.workspace = true
+builddiag-app = { path = "../builddiag-app", version = "0.2.0" }
+builddiag-checks = { path = "../builddiag-checks", version = "0.2.0" }
+builddiag-core = { path = "../builddiag-core", version = "0.2.0" }
+builddiag-domain = { path = "../builddiag-domain", version = "0.2.0" }
+builddiag-render = { path = "../builddiag-render", version = "0.2.0" }
+builddiag-types = { path = "../builddiag-types", version = "0.2.0" }
+serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
 assert_cmd.workspace = true
 tempfile.workspace = true
 predicates.workspace = true
+cucumber = "0.22.1"
+tokio = { version = "1.49.0", features = ["macros", "rt-multi-thread"] }
+
+[[test]]
+name = "cucumber"
+harness = false

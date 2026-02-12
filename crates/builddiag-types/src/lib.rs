@@ -5,17 +5,30 @@
 //! - [`Report`] - The main output structure containing all check results
 //! - [`Config`] - Configuration schema for customizing check behavior
 //! - [`Finding`] - Individual validation findings with severity and location
-//! - [`CheckReport`] - Results from a single check execution
+//! - [`Location`] - File location information for findings
 //! - [`Severity`] - Finding severity levels (Info, Warn, Error)
-//! - [`CheckStatus`] - Check execution status (Pass, Warn, Fail, Skip)
+//! - [`Verdict`] - Overall verdict (Pass, Warn, Fail, Error)
 //!
-//! # Report Structure
+//! # Sensor Report Schema (sensor.report.v1)
+//!
+//! The [`SensorReport`] type provides the Cockpit CI governance envelope format:
+//! - [`SensorReport`] - Cockpit-compatible report with capabilities and structured verdict
+//! - [`SensorVerdict`] - Structured verdict with status, counts, and reasons
+//! - [`VerdictStatus`] - 4-value status: Pass, Warn, Fail, Skip
+//! - [`VerdictCounts`] - Counts by severity including suppressed
+//! - [`Capability`] - Capability status for "No Green By Omission"
+//! - [`SensorFinding`] - Extended finding with fingerprint, help, and url
+//!
+//! # Report Structure (builddiag.report.v1)
 //!
 //! The [`Report`] type is the primary output of builddiag. It contains:
-//! - Metadata about the tool and run
-//! - Repository information
-//! - Individual check results
-//! - An overall summary with verdict
+//! - Schema identifier for versioning
+//! - Tool information (name, version) (optional)
+//! - Run metadata (timestamps, duration, host, git info) (optional)
+//! - Overall verdict
+//! - Flattened list of findings from all checks
+//! - Optional summary with counts by severity and check
+//! - Optional report-level data for downstream tooling
 //!
 //! # Configuration
 //!
@@ -28,15 +41,18 @@
 //! # Example
 //!
 //! ```
-//! use builddiag_types::{Finding, Severity};
+//! use builddiag_types::{Finding, Severity, Location};
 //!
 //! let finding = Finding {
-//!     severity: Severity::Error,
+//!     check_id: "rust.msrv_defined".to_string(),
 //!     code: "missing_msrv".to_string(),
+//!     severity: Severity::Error,
 //!     message: "Missing rust-version in Cargo.toml".to_string(),
-//!     path: Some("Cargo.toml".to_string()),
-//!     line: None,
-//!     column: None,
+//!     location: Some(Location {
+//!         path: "Cargo.toml".to_string(),
+//!         line: Some(1),
+//!         col: None,
+//!     }),
 //! };
 //! ```
 
@@ -44,6 +60,63 @@ use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+
+// =============================================================================
+// New Report Schema Types (builddiag.report.v1)
+// =============================================================================
+
+/// Information about the host machine where builddiag was executed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct HostInfo {
+    /// Operating system name (e.g., "linux", "macos", "windows").
+    pub os: String,
+    /// CPU architecture (e.g., "x86_64", "aarch64").
+    pub arch: String,
+}
+
+/// Git repository information at the time of the run.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct GitInfo {
+    /// Current commit SHA.
+    pub commit: String,
+    /// Current branch name, if on a branch.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    /// Whether the working directory has uncommitted changes.
+    pub dirty: bool,
+}
+
+/// File location information for a finding.
+///
+/// Paths are repo-relative and use forward slashes on all platforms.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Location {
+    /// Repository-relative file path (always uses forward slashes).
+    pub path: String,
+    /// Line number in the file (1-indexed), if applicable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line: Option<u32>,
+    /// Column number in the file (1-indexed), if applicable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub col: Option<u32>,
+}
+
+/// Summary statistics for the new report format.
+///
+/// Provides aggregated counts of findings by severity and check.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ReportSummary {
+    /// Total number of findings across all checks.
+    pub total_findings: usize,
+    /// Count of findings by severity level (keys: "info", "warn", "error").
+    pub by_severity: BTreeMap<String, usize>,
+    /// Count of findings by check ID.
+    pub by_check: BTreeMap<String, usize>,
+}
+
+// =============================================================================
+// Legacy Types (kept for backward compatibility)
+// =============================================================================
 
 /// Identifier for the JSON schema version used in reports.
 ///
@@ -63,12 +136,18 @@ pub struct ToolInfo {
 /// Information about a single execution run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct RunInfo {
-    /// Unique identifier for this run.
-    pub id: String,
-    /// Timestamp when the run started.
+    /// Timestamp when the run started (ISO 8601 format).
     pub started_at: DateTime<Utc>,
-    /// Timestamp when the run completed, if finished.
+    /// Timestamp when the run completed, if finished (ISO 8601 format).
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub ended_at: Option<DateTime<Utc>>,
+    /// Duration of the run in milliseconds.
+    pub duration_ms: u64,
+    /// Information about the host machine.
+    pub host: HostInfo,
+    /// Git repository information, if available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git: Option<GitInfo>,
 }
 
 /// Information about the detected repository structure.
@@ -158,6 +237,8 @@ pub enum Verdict {
     Fail,
     /// All checks were skipped.
     Skip,
+    /// An internal error occurred during execution.
+    Error,
 }
 
 /// A single validation finding from a check.
@@ -169,38 +250,44 @@ pub enum Verdict {
 /// # Examples
 ///
 /// ```
-/// use builddiag_types::{Finding, Severity};
+/// use builddiag_types::{Finding, Severity, Location};
 ///
 /// let finding = Finding {
-///     severity: Severity::Error,
+///     check_id: "rust.msrv_defined".to_string(),
 ///     code: "missing_msrv".to_string(),
+///     severity: Severity::Error,
 ///     message: "Missing rust-version in Cargo.toml".to_string(),
-///     path: Some("Cargo.toml".to_string()),
-///     line: Some(1),
-///     column: None,
+///     location: Some(Location {
+///         path: "Cargo.toml".to_string(),
+///         line: Some(1),
+///         col: None,
+///     }),
+///
 /// };
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Finding {
-    /// Severity level of this finding.
-    pub severity: Severity,
+    /// Identifier of the check that produced this finding.
+    pub check_id: String,
     /// Machine-readable code identifying the type of finding.
     pub code: String,
+    /// Severity level of this finding.
+    pub severity: Severity,
     /// Human-readable description of the finding.
     pub message: String,
-    /// File path where the finding was detected, if applicable.
-    pub path: Option<String>,
-    /// Line number in the file, if applicable.
-    pub line: Option<u32>,
-    /// Column number in the file, if applicable.
-    pub column: Option<u32>,
+    /// File location where the finding was detected, if applicable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub location: Option<Location>,
 }
 
 /// Results from executing a single check.
 ///
 /// Each check produces a report containing its status and any findings.
 /// If the check was skipped, `skipped_reason` explains why.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+///
+/// Note: This is retained for backward compatibility during migration.
+/// New code should use findings directly in the Report struct.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct CheckReport {
     /// Unique identifier for this check (e.g., "msrv_defined").
     pub id: String,
@@ -209,7 +296,15 @@ pub struct CheckReport {
     /// Individual findings from this check.
     pub findings: Vec<Finding>,
     /// Reason the check was skipped, if `status` is `Skip`.
+    ///
+    /// This should be one of the [`check_skip_reasons`] constants.
     pub skipped_reason: Option<String>,
+    /// Human-readable detail expanding on [`skipped_reason`](Self::skipped_reason).
+    ///
+    /// Contains the original prose (e.g., "no toolchain file") alongside the
+    /// machine-readable token in `skipped_reason`.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub skipped_detail: Option<String>,
 }
 
 /// Counts of findings by severity level.
@@ -226,48 +321,445 @@ pub struct SummaryCounts {
 /// Summary of all check results.
 ///
 /// The summary aggregates findings across all checks and provides
-/// an overall verdict.
+/// counts by severity and check.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Summary {
-    /// Counts of findings by severity.
-    pub counts: SummaryCounts,
-    /// Overall verdict based on all check results.
-    pub verdict: Verdict,
-    /// Human-readable reasons explaining the verdict.
-    pub reasons: Vec<String>,
+    /// Total number of findings across all checks.
+    pub total_findings: usize,
+    /// Count of findings by severity level (keys: "info", "warn", "error").
+    pub by_severity: BTreeMap<String, usize>,
+    /// Count of findings by check ID.
+    pub by_check: BTreeMap<String, usize>,
 }
 
 /// The main report output from builddiag.
 ///
 /// A report contains all information about a validation run, including
-/// metadata, repository information, individual check results, and
-/// an overall summary.
+/// metadata, findings, and summary statistics.
+///
+/// # Schema Version
+///
+/// This report follows the `builddiag.report.v1` schema. The `schema` field
+/// is always set to "builddiag.report.v1" for this version.
 ///
 /// # Structure
 ///
-/// - `schema` - Schema version for forward compatibility
-/// - `tool` - Information about the builddiag version
-/// - `run` - Execution metadata (timestamps, run ID)
-/// - `repo` - Repository being analyzed
-/// - `inputs` - Input files that were processed
-/// - `checks` - Results from each check
-/// - `summary` - Aggregated results and verdict
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+/// - `schema` - Schema version identifier (const "builddiag.report.v1")
+/// - `tool` - Information about the builddiag version (optional)
+/// - `run` - Execution metadata (timestamps, duration, host, git) (optional)
+/// - `verdict` - Overall verdict (Pass, Warn, Fail, Error)
+/// - `findings` - Flattened list of all findings from all checks
+/// - `summary` - Optional aggregated statistics
+/// - `data` - Optional report-level data for downstream tooling
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Report {
     /// Schema identifier for this report format.
-    pub schema: SchemaId,
+    /// Always "builddiag.report.v1" for this version.
+    pub schema: String,
     /// Information about the tool that generated this report.
-    pub tool: ToolInfo,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool: Option<ToolInfo>,
     /// Information about this execution run.
-    pub run: RunInfo,
-    /// Information about the repository being analyzed.
-    pub repo: RepoInfo,
-    /// Paths to input files that were analyzed.
-    pub inputs: Inputs,
-    /// Results from each check that was executed.
-    pub checks: Vec<CheckReport>,
-    /// Summary of all check results.
-    pub summary: Summary,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run: Option<RunInfo>,
+    /// Overall verdict based on all findings.
+    pub verdict: Verdict,
+    /// All findings from all checks, flattened into a single list.
+    pub findings: Vec<Finding>,
+    /// Summary statistics, if available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<Summary>,
+    /// Optional arbitrary report-level metadata for downstream tooling.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<serde_json::Value>,
+}
+
+impl Report {
+    /// The schema identifier for builddiag.report.v1.
+    pub const SCHEMA_V1: &'static str = "builddiag.report.v1";
+}
+
+// =============================================================================
+// Sensor Report Schema Types (sensor.report.v1) - Cockpit CI Governance
+// =============================================================================
+
+/// The schema identifier for sensor.report.v1.
+pub const SENSOR_REPORT_SCHEMA_V1: &str = "sensor.report.v1";
+
+/// Canonical verdict reason tokens for sensor.report.v1.
+///
+/// These tokens appear in [`SensorVerdict::reasons`] and are the single
+/// source of truth for reason strings. Downstream consumers should
+/// pattern-match against these constants rather than bare string literals.
+pub mod verdict_reasons {
+    /// One or more checks failed.
+    pub const CHECKS_FAILED: &str = "checks_failed";
+    /// One or more checks produced warnings.
+    pub const CHECKS_WARNED: &str = "checks_warned";
+    /// All checks were skipped — no meaningful result.
+    pub const ALL_CHECKS_SKIPPED: &str = "all_checks_skipped";
+    /// An internal/runtime error occurred.
+    pub const TOOL_ERROR: &str = "tool_error";
+}
+
+/// Canonical skip-reason tokens for [`CheckReport::skipped_reason`].
+///
+/// These tokens distinguish *non-participating* checks (disabled by config or
+/// diff-aware filtering) from *execution-level* skips (missing prerequisites).
+/// Use [`CheckReport::is_non_participating`] to test membership.
+///
+/// ## Non-participating tokens
+///
+/// These checks are excluded from the verdict entirely:
+/// - [`DISABLED_BY_CONFIG`](self::DISABLED_BY_CONFIG)
+/// - [`DIFF_AWARE_NO_MATCH`](self::DIFF_AWARE_NO_MATCH)
+///
+/// ## Execution-level tokens
+///
+/// These checks participate in the verdict (count as Skip):
+/// - [`MISSING_PREREQUISITE`](self::MISSING_PREREQUISITE)
+/// - [`NOT_APPLICABLE`](self::NOT_APPLICABLE)
+/// - [`DISABLED_BY_POLICY`](self::DISABLED_BY_POLICY)
+/// - [`FEATURE_NOT_AVAILABLE`](self::FEATURE_NOT_AVAILABLE)
+pub mod check_skip_reasons {
+    /// Check was disabled via configuration override or profile default.
+    pub const DISABLED_BY_CONFIG: &str = "disabled_by_config";
+    /// Diff-aware mode filtered this check out (no matching changed files).
+    pub const DIFF_AWARE_NO_MATCH: &str = "diff_aware_no_match";
+
+    // -- Execution-level tokens (participating, count toward verdict) ----------
+
+    /// A required input file or value is absent (e.g., no toolchain file,
+    /// no MSRV, no checksums file, no Cargo.lock).
+    pub const MISSING_PREREQUISITE: &str = "missing_prerequisite";
+    /// The check does not apply to this repository shape (e.g., not a
+    /// workspace, non-numeric toolchain channel).
+    pub const NOT_APPLICABLE: &str = "not_applicable";
+    /// The check ran but a policy sub-setting caused a skip (e.g.,
+    /// coverage/sorting/verification not required by policy).
+    pub const DISABLED_BY_POLICY: &str = "disabled_by_policy";
+    /// A compile-time feature gate prevented the check from running.
+    pub const FEATURE_NOT_AVAILABLE: &str = "feature_not_available";
+}
+
+impl CheckReport {
+    /// Returns `true` if this check did not participate in the verdict.
+    ///
+    /// Non-participating checks are those disabled by configuration or
+    /// filtered out by diff-aware mode. Execution-level skips (e.g.,
+    /// "no toolchain file") are still participating — they count toward
+    /// the verdict as Skip.
+    pub fn is_non_participating(&self) -> bool {
+        matches!(
+            self.skipped_reason.as_deref(),
+            Some(check_skip_reasons::DISABLED_BY_CONFIG)
+                | Some(check_skip_reasons::DIFF_AWARE_NO_MATCH)
+        )
+    }
+}
+
+/// Status of a capability for "No Green By Omission" tracking.
+///
+/// Capabilities track whether features like git integration, config loading,
+/// or toolchain detection were available during the run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum CapabilityStatus {
+    /// Capability was available and used.
+    Available,
+    /// Capability was not available (e.g., git not found).
+    Unavailable,
+    /// Capability was available but skipped (e.g., by config).
+    Skipped,
+}
+
+/// A capability status with optional reason for non-availability.
+///
+/// Used to track "No Green By Omission" - ensuring the report explicitly
+/// states what features were or weren't available during the run.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Capability {
+    /// Status of this capability.
+    pub status: CapabilityStatus,
+    /// Reason for unavailability or skip, if applicable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+impl Capability {
+    /// Create an available capability.
+    pub fn available() -> Self {
+        Self {
+            status: CapabilityStatus::Available,
+            reason: None,
+        }
+    }
+
+    /// Create an unavailable capability with a reason.
+    pub fn unavailable(reason: impl Into<String>) -> Self {
+        Self {
+            status: CapabilityStatus::Unavailable,
+            reason: Some(reason.into()),
+        }
+    }
+
+    /// Create a skipped capability with a reason.
+    pub fn skipped(reason: impl Into<String>) -> Self {
+        Self {
+            status: CapabilityStatus::Skipped,
+            reason: Some(reason.into()),
+        }
+    }
+}
+
+/// Counts of findings by severity for the sensor verdict.
+///
+/// Includes suppressed count for findings that were filtered out
+/// by configuration or baseline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+pub struct VerdictCounts {
+    /// Number of informational findings.
+    pub info: usize,
+    /// Number of warning findings.
+    pub warn: usize,
+    /// Number of error findings.
+    pub error: usize,
+    /// Number of suppressed findings (filtered by config/baseline).
+    pub suppressed: usize,
+}
+
+/// Verdict status for sensor reports (4 values).
+///
+/// Maps the 5-value Verdict to 4 values by collapsing Error into Fail.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum VerdictStatus {
+    /// All checks passed with no findings affecting the verdict.
+    Pass,
+    /// Some checks produced warnings.
+    Warn,
+    /// One or more checks failed (includes internal errors).
+    Fail,
+    /// All checks were skipped (no meaningful result).
+    Skip,
+}
+
+impl From<Verdict> for VerdictStatus {
+    fn from(verdict: Verdict) -> Self {
+        match verdict {
+            Verdict::Pass => VerdictStatus::Pass,
+            Verdict::Warn => VerdictStatus::Warn,
+            Verdict::Fail | Verdict::Error => VerdictStatus::Fail,
+            Verdict::Skip => VerdictStatus::Skip,
+        }
+    }
+}
+
+/// Structured verdict for sensor reports.
+///
+/// Provides more detail than a simple status enum:
+/// - `status`: The overall verdict (Pass/Warn/Fail/Skip)
+/// - `counts`: Breakdown of findings by severity
+/// - `reasons`: Machine-addressable reason tokens
+/// - `data`: Optional structured data providing detail behind reason tokens
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SensorVerdict {
+    /// Overall verdict status.
+    pub status: VerdictStatus,
+    /// Counts of findings by severity.
+    pub counts: VerdictCounts,
+    /// Machine-addressable reason tokens explaining the verdict.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reasons: Vec<String>,
+    /// Optional structured data providing detail behind reason tokens.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<serde_json::Value>,
+}
+
+impl Default for SensorVerdict {
+    fn default() -> Self {
+        Self {
+            status: VerdictStatus::Pass,
+            counts: VerdictCounts::default(),
+            reasons: Vec::new(),
+            data: None,
+        }
+    }
+}
+
+/// Extended finding with fingerprint for deduplication.
+///
+/// Extends the base Finding with:
+/// - `fingerprint`: Stable hash for deduplication across runs
+/// - `help`: Optional help text from check documentation
+/// - `url`: Optional URL to detailed documentation
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SensorFinding {
+    /// Identifier of the check that produced this finding.
+    pub check_id: String,
+    /// Machine-readable code identifying the type of finding.
+    pub code: String,
+    /// Severity level of this finding.
+    pub severity: Severity,
+    /// Human-readable description of the finding.
+    pub message: String,
+    /// Stable fingerprint for deduplication (full 64-char SHA-256 hex of check_id+code+path+line).
+    pub fingerprint: String,
+    /// File location where the finding was detected, if applicable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub location: Option<Location>,
+    /// Help text explaining how to fix the issue.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub help: Option<String>,
+    /// URL to detailed documentation for this finding type.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// Optional structured data for this finding.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<serde_json::Value>,
+}
+
+/// Run information for sensor reports with capabilities.
+///
+/// Extends RunInfo with a capabilities map for "No Green By Omission" tracking.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SensorRunInfo {
+    /// Timestamp when the run started (ISO 8601 format).
+    pub started_at: DateTime<Utc>,
+    /// Timestamp when the run completed, if finished (ISO 8601 format).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ended_at: Option<DateTime<Utc>>,
+    /// Duration of the run in milliseconds.
+    pub duration_ms: u64,
+    /// Information about the host machine.
+    pub host: HostInfo,
+    /// Git repository information, if available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git: Option<GitInfo>,
+    /// Capabilities map tracking feature availability.
+    /// Keys: git, config, toolchain, checksums, diff_aware
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub capabilities: BTreeMap<String, Capability>,
+}
+
+/// Artifact reference for sensor reports.
+///
+/// References additional output files produced by the sensor.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Artifact {
+    /// Name/type of the artifact (e.g., "markdown", "sarif").
+    pub name: String,
+    /// Path to the artifact file (relative to report).
+    pub path: String,
+    /// MIME type of the artifact.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+}
+
+/// The main sensor report output following sensor.report.v1 schema.
+///
+/// This format is compatible with the Cockpit CI governance ecosystem.
+/// It extends the builddiag report format with:
+/// - Structured verdict with counts and reasons
+/// - Capabilities for "No Green By Omission"
+/// - Fingerprinted findings for deduplication
+/// - Artifact references
+///
+/// # Schema Version
+///
+/// This report follows the `sensor.report.v1` schema.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SensorReport {
+    /// Schema identifier for this report format.
+    /// Always "sensor.report.v1" for this version.
+    pub schema: String,
+    /// Information about the tool that generated this report.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool: Option<ToolInfo>,
+    /// Information about this execution run, including capabilities.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run: Option<SensorRunInfo>,
+    /// Structured verdict with status, counts, and reasons.
+    pub verdict: SensorVerdict,
+    /// All findings with fingerprints for deduplication.
+    pub findings: Vec<SensorFinding>,
+    /// References to additional artifacts produced.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub artifacts: Vec<Artifact>,
+    /// Optional arbitrary report-level metadata for downstream tooling.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<serde_json::Value>,
+}
+
+impl SensorReport {
+    /// The schema identifier for sensor.report.v1.
+    pub const SCHEMA_V1: &'static str = SENSOR_REPORT_SCHEMA_V1;
+}
+
+// =============================================================================
+// Substrate Types — Pre-computed repo state from upstream tools
+// =============================================================================
+
+/// Pre-computed repository state supplied by an upstream tool.
+///
+/// When builddiag is used as a library (via `builddiag-core`), an upstream
+/// tool such as `tokmd-core` can supply a `Substrate` instead of having
+/// builddiag discover the repository from disk. This avoids redundant I/O
+/// when the caller has already parsed the workspace.
+///
+/// # Example
+///
+/// ```
+/// use builddiag_types::{Substrate, ManifestInfo};
+///
+/// let substrate = Substrate {
+///     manifests: vec![ManifestInfo {
+///         path: "crates/foo/Cargo.toml".to_string(),
+///         name: Some("foo".to_string()),
+///         msrv: Some("1.75".to_string()),
+///         edition: Some("2024".to_string()),
+///     }],
+///     has_toolchain: true,
+///     toolchain_channel: Some("1.75.0".to_string()),
+///     has_checksums: false,
+///     has_lockfile: true,
+///     workspace_msrv: Some("1.75".to_string()),
+/// };
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Substrate {
+    /// Parsed manifests for each workspace member.
+    pub manifests: Vec<ManifestInfo>,
+    /// Whether a `rust-toolchain.toml` file was detected.
+    pub has_toolchain: bool,
+    /// Toolchain channel string (e.g. "1.75.0", "nightly-2024-01-15").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub toolchain_channel: Option<String>,
+    /// Whether a checksums file was detected.
+    pub has_checksums: bool,
+    /// Whether `Cargo.lock` exists.
+    pub has_lockfile: bool,
+    /// Workspace-level MSRV, if defined.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_msrv: Option<String>,
+}
+
+/// Information about a single Cargo manifest, pre-parsed by an upstream tool.
+///
+/// Paths must be repo-relative with forward slashes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ManifestInfo {
+    /// Repo-relative path to the manifest (forward slashes).
+    pub path: String,
+    /// Package name from `[package].name`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Rust-version / MSRV from `[package].rust-version`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub msrv: Option<String>,
+    /// Edition from `[package].edition`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edition: Option<String>,
 }
 
 // -----------------
@@ -286,6 +778,234 @@ pub enum FailOn {
     Warn,
     /// Never fail based on findings (always exit 0).
     Never,
+}
+
+/// Profile preset that configures check severities and behavior.
+///
+/// Profiles provide sensible defaults for different use cases:
+/// - `Oss` - Warn-heavy defaults suitable for open source projects
+/// - `Team` - Stronger gating for team/organization projects
+/// - `Strict` - Full CI/release discipline with maximum enforcement
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Profile {
+    /// Open source profile with warn-heavy defaults and minimal assumptions.
+    /// Good for wide adoption with low friction.
+    #[default]
+    Oss,
+    /// Team profile with stronger gating for organizational projects.
+    Team,
+    /// Strict profile with maximum enforcement for CI/release discipline.
+    Strict,
+}
+
+impl std::fmt::Display for Profile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Profile::Oss => write!(f, "oss"),
+            Profile::Team => write!(f, "team"),
+            Profile::Strict => write!(f, "strict"),
+        }
+    }
+}
+
+impl std::str::FromStr for Profile {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "oss" => Ok(Profile::Oss),
+            "team" => Ok(Profile::Team),
+            "strict" => Ok(Profile::Strict),
+            _ => Err(format!(
+                "invalid profile '{}': expected 'oss', 'team', or 'strict'",
+                s
+            )),
+        }
+    }
+}
+
+/// Check enablement state for a profile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProfileCheckState {
+    /// Check is enabled with the given severity.
+    Enabled(Severity),
+    /// Check is skipped/disabled.
+    Skip,
+}
+
+/// Effective configuration for a single check after combining profile defaults with user overrides.
+///
+/// This struct represents the final resolved configuration for a check, computed by
+/// [`effective_check_config`]. It combines:
+/// 1. Profile defaults (severity and enabled state based on selected profile)
+/// 2. User overrides from the config file's `[[checks]]` section
+///
+/// # Example
+///
+/// ```
+/// use builddiag_types::{Config, Profile, Severity, effective_check_config};
+///
+/// let mut config = Config::default();
+/// config.profile = Profile::Team;
+///
+/// let effective = effective_check_config(&config, "rust.msrv_defined");
+/// assert!(effective.enabled);
+/// assert_eq!(effective.severity, Severity::Warn);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EffectiveCheckConfig {
+    /// Whether this check is enabled.
+    pub enabled: bool,
+    /// Severity for findings from this check.
+    pub severity: Severity,
+}
+
+impl Default for EffectiveCheckConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            severity: Severity::Error,
+        }
+    }
+}
+
+/// Computes the effective configuration for a check by combining profile defaults with user overrides.
+///
+/// This function provides a single point of configuration resolution, eliminating
+/// scattered branching throughout the codebase. The resolution order is:
+///
+/// 1. Start with the profile's default state for the check
+/// 2. Apply any user overrides from `config.checks` if present
+///
+/// # Arguments
+///
+/// * `config` - The loaded configuration (with profile and optional check overrides)
+/// * `check_id` - The check identifier (e.g., "rust.msrv_defined")
+///
+/// # Returns
+///
+/// An [`EffectiveCheckConfig`] with the final enabled state and severity.
+///
+/// # Example
+///
+/// ```
+/// use builddiag_types::{Config, Profile, Severity, CheckConfig, effective_check_config};
+///
+/// // Profile defaults
+/// let mut config = Config::default();
+/// config.profile = Profile::Oss;
+///
+/// let effective = effective_check_config(&config, "rust.msrv_defined");
+/// assert!(effective.enabled);
+/// assert_eq!(effective.severity, Severity::Warn);
+///
+/// // User override takes precedence
+/// config.checks.push(CheckConfig {
+///     id: "rust.msrv_defined".to_string(),
+///     severity: Severity::Error,
+///     enabled: true,
+///     triggers: vec![],
+/// });
+///
+/// let effective = effective_check_config(&config, "rust.msrv_defined");
+/// assert_eq!(effective.severity, Severity::Error);
+/// ```
+pub fn effective_check_config(config: &Config, check_id: &str) -> EffectiveCheckConfig {
+    // Start with profile defaults
+    let profile_state = config.profile.check_state(check_id);
+
+    let (profile_enabled, profile_severity) = match profile_state {
+        ProfileCheckState::Enabled(sev) => (true, sev),
+        ProfileCheckState::Skip => (false, Severity::Error), // Default severity if re-enabled
+    };
+
+    // Check for user override
+    let user_override = config.checks.iter().find(|c| c.id == check_id);
+
+    match user_override {
+        Some(ov) => EffectiveCheckConfig {
+            enabled: ov.enabled,
+            severity: ov.severity,
+        },
+        None => EffectiveCheckConfig {
+            enabled: profile_enabled,
+            severity: profile_severity,
+        },
+    }
+}
+
+impl Profile {
+    /// Returns the check state (severity or skip) for a given check ID under this profile.
+    ///
+    /// # Profile Severity Mappings
+    ///
+    /// ## `oss` (default) - permissive, never fails on conventions
+    /// - rust.msrv_defined: enabled, warn
+    /// - rust.msrv_consistent: enabled, error (real footgun)
+    /// - rust.toolchain_pinning: enabled, info
+    /// - rust.toolchain_msrv_relation: enabled, warn
+    /// - workspace.resolver_v2: enabled, info
+    /// - tools.*: disabled (skip)
+    ///
+    /// ## `team` - reasonable gating for disciplined repos
+    /// - rust.msrv_defined: enabled, warn
+    /// - rust.msrv_consistent: enabled, error
+    /// - rust.toolchain_pinning: enabled, warn
+    /// - rust.toolchain_msrv_relation: enabled, error
+    /// - workspace.resolver_v2: enabled, warn
+    /// - tools.*: enabled, warn
+    ///
+    /// ## `strict` - CI/release discipline
+    /// - All checks: enabled, error
+    pub fn check_state(&self, check_id: &str) -> ProfileCheckState {
+        match self {
+            Profile::Oss => match check_id {
+                "rust.msrv_defined" => ProfileCheckState::Enabled(Severity::Warn),
+                "rust.msrv_consistent" => ProfileCheckState::Enabled(Severity::Error),
+                "rust.toolchain_pinning" => ProfileCheckState::Enabled(Severity::Info),
+                "rust.toolchain_msrv_relation" => ProfileCheckState::Enabled(Severity::Warn),
+                "rust.edition_deprecations" => ProfileCheckState::Enabled(Severity::Info),
+                "workspace.resolver_v2" => ProfileCheckState::Enabled(Severity::Info),
+                "workspace.edition_consistent" => ProfileCheckState::Enabled(Severity::Warn),
+                "workspace.member_ordering" => ProfileCheckState::Enabled(Severity::Info),
+                "workspace.publish_ready" => ProfileCheckState::Enabled(Severity::Info),
+                // All tools.* checks are skipped in oss profile
+                id if id.starts_with("tools.") => ProfileCheckState::Skip,
+                // Security advisory check is opt-in for oss
+                "deps.security_advisory" => ProfileCheckState::Skip,
+                // deps.duplicate_versions is info in oss
+                "deps.duplicate_versions" => ProfileCheckState::Enabled(Severity::Info),
+                // All other deps.* checks are info in oss profile
+                id if id.starts_with("deps.") => ProfileCheckState::Enabled(Severity::Info),
+                // Unknown checks default to warn
+                _ => ProfileCheckState::Enabled(Severity::Warn),
+            },
+            Profile::Team => match check_id {
+                "rust.msrv_defined" => ProfileCheckState::Enabled(Severity::Warn),
+                "rust.msrv_consistent" => ProfileCheckState::Enabled(Severity::Error),
+                "rust.toolchain_pinning" => ProfileCheckState::Enabled(Severity::Warn),
+                "rust.toolchain_msrv_relation" => ProfileCheckState::Enabled(Severity::Error),
+                "rust.edition_deprecations" => ProfileCheckState::Enabled(Severity::Warn),
+                "workspace.resolver_v2" => ProfileCheckState::Enabled(Severity::Warn),
+                "workspace.edition_consistent" => ProfileCheckState::Enabled(Severity::Error),
+                "workspace.member_ordering" => ProfileCheckState::Enabled(Severity::Info),
+                "workspace.publish_ready" => ProfileCheckState::Enabled(Severity::Warn),
+                // All tools.* checks are warn in team profile
+                id if id.starts_with("tools.") => ProfileCheckState::Enabled(Severity::Warn),
+                // Security advisory check is warn for team
+                "deps.security_advisory" => ProfileCheckState::Enabled(Severity::Warn),
+                // deps.duplicate_versions is warn in team
+                "deps.duplicate_versions" => ProfileCheckState::Enabled(Severity::Warn),
+                // All other deps.* checks are warn in team profile
+                id if id.starts_with("deps.") => ProfileCheckState::Enabled(Severity::Warn),
+                // Unknown checks default to warn
+                _ => ProfileCheckState::Enabled(Severity::Warn),
+            },
+            // All checks at error severity in strict mode
+            Profile::Strict => ProfileCheckState::Enabled(Severity::Error),
+        }
+    }
 }
 
 /// Source for determining the authoritative MSRV.
@@ -510,9 +1230,89 @@ impl Default for ChecksumsPolicy {
     }
 }
 
+/// Policy settings for edition consistency checks.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct EditionPolicy {
+    /// Require all crates to have consistent edition.
+    #[serde(default = "EditionPolicy::default_require_consistent")]
+    pub require_consistent: bool,
+    /// Allow individual crates to override the workspace edition.
+    #[serde(default)]
+    pub allow_per_crate_override: bool,
+    /// List of crate paths allowed to have different edition.
+    #[serde(default)]
+    pub allow_overrides: Vec<String>,
+}
+
+impl EditionPolicy {
+    fn default_require_consistent() -> bool {
+        true
+    }
+}
+
+impl Default for EditionPolicy {
+    fn default() -> Self {
+        Self {
+            require_consistent: true,
+            allow_per_crate_override: false,
+            allow_overrides: Vec::new(),
+        }
+    }
+}
+
+/// Policy settings for member ordering checks.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct MemberOrderingPolicy {
+    /// Require workspace.members to be sorted alphabetically.
+    #[serde(default = "MemberOrderingPolicy::default_require_sorted")]
+    pub require_sorted: bool,
+}
+
+impl MemberOrderingPolicy {
+    fn default_require_sorted() -> bool {
+        true
+    }
+}
+
+impl Default for MemberOrderingPolicy {
+    fn default() -> Self {
+        Self {
+            require_sorted: true,
+        }
+    }
+}
+
+/// Policy settings for lockfile checks.
+///
+/// Controls how builddiag validates Cargo.lock presence.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct LockfilePolicy {
+    /// Require Cargo.lock for binary crates.
+    #[serde(default = "LockfilePolicy::default_require_for_binaries")]
+    pub require_for_binaries: bool,
+    /// Warn about lockfile in library-only crates.
+    #[serde(default)]
+    pub warn_for_libraries: bool,
+}
+
+impl LockfilePolicy {
+    fn default_require_for_binaries() -> bool {
+        true
+    }
+}
+
+impl Default for LockfilePolicy {
+    fn default() -> Self {
+        Self {
+            require_for_binaries: true,
+            warn_for_libraries: false,
+        }
+    }
+}
+
 /// Combined policy settings for all check categories.
 ///
-/// Groups together MSRV, toolchain, and checksums policies.
+/// Groups together MSRV, toolchain, checksums, edition, member ordering, and lockfile policies.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct Policy {
     /// MSRV validation policy.
@@ -524,6 +1324,15 @@ pub struct Policy {
     /// Checksums verification policy.
     #[serde(default)]
     pub checksums: ChecksumsPolicy,
+    /// Edition consistency policy.
+    #[serde(default)]
+    pub edition: EditionPolicy,
+    /// Member ordering policy.
+    #[serde(default)]
+    pub member_ordering: MemberOrderingPolicy,
+    /// Lockfile policy.
+    #[serde(default)]
+    pub lockfile: LockfilePolicy,
 }
 
 /// Per-check configuration override.
@@ -562,6 +1371,8 @@ impl CheckConfig {
 /// # Example
 ///
 /// ```toml
+/// profile = "oss"
+///
 /// [defaults]
 /// fail_on = "error"
 /// out_dir = "artifacts/builddiag"
@@ -576,6 +1387,10 @@ impl CheckConfig {
 /// ```
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct Config {
+    /// Profile preset that configures check severities.
+    /// Can be overridden via CLI `--profile` flag.
+    #[serde(default)]
+    pub profile: Profile,
     /// Default settings for output and failure behavior.
     #[serde(default)]
     pub defaults: Defaults,
@@ -857,86 +1672,77 @@ mod tests {
         #[test]
         fn finding_with_error_severity() {
             let finding = Finding {
-                severity: Severity::Error,
+                check_id: "rust.msrv_defined".to_string(),
                 code: "missing_msrv".to_string(),
+                severity: Severity::Error,
                 message: "Missing rust-version in Cargo.toml".to_string(),
-                path: Some("Cargo.toml".to_string()),
-                line: Some(1),
-                column: Some(5),
+                location: Some(Location {
+                    path: "Cargo.toml".to_string(),
+                    line: Some(1),
+                    col: Some(5),
+                }),
             };
 
+            assert_eq!(finding.check_id, "rust.msrv_defined");
             assert_eq!(finding.severity, Severity::Error);
             assert_eq!(finding.code, "missing_msrv");
             assert_eq!(finding.message, "Missing rust-version in Cargo.toml");
-            assert_eq!(finding.path, Some("Cargo.toml".to_string()));
-            assert_eq!(finding.line, Some(1));
-            assert_eq!(finding.column, Some(5));
+            assert!(finding.location.is_some());
+            let loc = finding.location.unwrap();
+            assert_eq!(loc.path, "Cargo.toml");
+            assert_eq!(loc.line, Some(1));
+            assert_eq!(loc.col, Some(5));
         }
 
         #[test]
         fn finding_with_warn_severity() {
             let finding = Finding {
-                severity: Severity::Warn,
+                check_id: "rust.toolchain_msrv_relation".to_string(),
                 code: "msrv_mismatch".to_string(),
+                severity: Severity::Warn,
                 message: "MSRV differs from toolchain version".to_string(),
-                path: Some("rust-toolchain.toml".to_string()),
-                line: None,
-                column: None,
+                location: Some(Location {
+                    path: "rust-toolchain.toml".to_string(),
+                    line: None,
+                    col: None,
+                }),
             };
 
             assert_eq!(finding.severity, Severity::Warn);
             assert_eq!(finding.code, "msrv_mismatch");
-            assert_eq!(finding.path, Some("rust-toolchain.toml".to_string()));
-            assert!(finding.line.is_none());
-            assert!(finding.column.is_none());
+            assert!(finding.location.is_some());
+            let loc = finding.location.unwrap();
+            assert_eq!(loc.path, "rust-toolchain.toml");
+            assert!(loc.line.is_none());
+            assert!(loc.col.is_none());
         }
 
         #[test]
         fn finding_with_info_severity() {
             let finding = Finding {
-                severity: Severity::Info,
+                check_id: "workspace.info".to_string(),
                 code: "workspace_detected".to_string(),
+                severity: Severity::Info,
                 message: "Workspace with 5 members detected".to_string(),
-                path: None,
-                line: None,
-                column: None,
+                location: None,
             };
 
             assert_eq!(finding.severity, Severity::Info);
             assert_eq!(finding.code, "workspace_detected");
-            assert!(finding.path.is_none());
+            assert!(finding.location.is_none());
         }
 
         #[test]
-        fn finding_without_location_info() {
+        fn finding_without_location() {
             let finding = Finding {
-                severity: Severity::Error,
+                check_id: "general".to_string(),
                 code: "general_error".to_string(),
+                severity: Severity::Error,
                 message: "A general error occurred".to_string(),
-                path: None,
-                line: None,
-                column: None,
+                location: None,
             };
 
-            assert!(finding.path.is_none());
-            assert!(finding.line.is_none());
-            assert!(finding.column.is_none());
-        }
-
-        #[test]
-        fn finding_with_partial_location_info() {
-            let finding = Finding {
-                severity: Severity::Warn,
-                code: "partial_location".to_string(),
-                message: "Finding with path but no line".to_string(),
-                path: Some("src/lib.rs".to_string()),
-                line: None,
-                column: None,
-            };
-
-            assert_eq!(finding.path, Some("src/lib.rs".to_string()));
-            assert!(finding.line.is_none());
-            assert!(finding.column.is_none());
+            assert!(finding.location.is_none());
         }
 
         #[test]
@@ -950,21 +1756,27 @@ mod tests {
         #[test]
         fn finding_equality() {
             let finding1 = Finding {
-                severity: Severity::Error,
+                check_id: "test".to_string(),
                 code: "test".to_string(),
+                severity: Severity::Error,
                 message: "Test message".to_string(),
-                path: Some("test.rs".to_string()),
-                line: Some(10),
-                column: Some(5),
+                location: Some(Location {
+                    path: "test.rs".to_string(),
+                    line: Some(10),
+                    col: Some(5),
+                }),
             };
 
             let finding2 = Finding {
-                severity: Severity::Error,
+                check_id: "test".to_string(),
                 code: "test".to_string(),
+                severity: Severity::Error,
                 message: "Test message".to_string(),
-                path: Some("test.rs".to_string()),
-                line: Some(10),
-                column: Some(5),
+                location: Some(Location {
+                    path: "test.rs".to_string(),
+                    line: Some(10),
+                    col: Some(5),
+                }),
             };
 
             assert_eq!(finding1, finding2);
@@ -973,16 +1785,43 @@ mod tests {
         #[test]
         fn finding_clone() {
             let finding = Finding {
-                severity: Severity::Warn,
+                check_id: "clone_test".to_string(),
                 code: "clone_test".to_string(),
+                severity: Severity::Warn,
                 message: "Testing clone".to_string(),
-                path: Some("file.rs".to_string()),
-                line: Some(42),
-                column: None,
+                location: Some(Location {
+                    path: "file.rs".to_string(),
+                    line: Some(42),
+                    col: None,
+                }),
             };
 
             let cloned = finding.clone();
             assert_eq!(finding, cloned);
+        }
+
+        #[test]
+        fn location_construction() {
+            let loc = Location {
+                path: "src/lib.rs".to_string(),
+                line: Some(42),
+                col: Some(10),
+            };
+            assert_eq!(loc.path, "src/lib.rs");
+            assert_eq!(loc.line, Some(42));
+            assert_eq!(loc.col, Some(10));
+        }
+
+        #[test]
+        fn location_without_line_col() {
+            let loc = Location {
+                path: "Cargo.toml".to_string(),
+                line: None,
+                col: None,
+            };
+            assert_eq!(loc.path, "Cargo.toml");
+            assert!(loc.line.is_none());
+            assert!(loc.col.is_none());
         }
     }
 
@@ -991,6 +1830,16 @@ mod tests {
     mod check_report_tests {
         use super::*;
 
+        fn make_finding(check_id: &str, severity: Severity, code: &str) -> Finding {
+            Finding {
+                check_id: check_id.to_string(),
+                code: code.to_string(),
+                severity,
+                message: format!("Test finding: {}", code),
+                location: None,
+            }
+        }
+
         #[test]
         fn check_report_with_pass_status() {
             let report = CheckReport {
@@ -998,6 +1847,7 @@ mod tests {
                 status: CheckStatus::Pass,
                 findings: vec![],
                 skipped_reason: None,
+                skipped_detail: None,
             };
 
             assert_eq!(report.id, "msrv_defined");
@@ -1008,20 +1858,14 @@ mod tests {
 
         #[test]
         fn check_report_with_warn_status() {
-            let finding = Finding {
-                severity: Severity::Warn,
-                code: "msrv_mismatch".to_string(),
-                message: "MSRV differs from toolchain".to_string(),
-                path: Some("Cargo.toml".to_string()),
-                line: None,
-                column: None,
-            };
+            let finding = make_finding("toolchain_check", Severity::Warn, "msrv_mismatch");
 
             let report = CheckReport {
                 id: "toolchain_check".to_string(),
                 status: CheckStatus::Warn,
                 findings: vec![finding],
                 skipped_reason: None,
+                skipped_detail: None,
             };
 
             assert_eq!(report.status, CheckStatus::Warn);
@@ -1031,20 +1875,14 @@ mod tests {
 
         #[test]
         fn check_report_with_fail_status() {
-            let finding = Finding {
-                severity: Severity::Error,
-                code: "missing_msrv".to_string(),
-                message: "Missing rust-version".to_string(),
-                path: Some("Cargo.toml".to_string()),
-                line: Some(1),
-                column: None,
-            };
+            let finding = make_finding("msrv_defined", Severity::Error, "missing_msrv");
 
             let report = CheckReport {
                 id: "msrv_defined".to_string(),
                 status: CheckStatus::Fail,
                 findings: vec![finding],
                 skipped_reason: None,
+                skipped_detail: None,
             };
 
             assert_eq!(report.status, CheckStatus::Fail);
@@ -1058,13 +1896,18 @@ mod tests {
                 id: "checksums_valid".to_string(),
                 status: CheckStatus::Skip,
                 findings: vec![],
-                skipped_reason: Some("Checksums file not found".to_string()),
+                skipped_reason: Some(check_skip_reasons::MISSING_PREREQUISITE.to_string()),
+                skipped_detail: Some("Checksums file not found".to_string()),
             };
 
             assert_eq!(report.status, CheckStatus::Skip);
             assert!(report.findings.is_empty());
             assert_eq!(
                 report.skipped_reason,
+                Some(check_skip_reasons::MISSING_PREREQUISITE.to_string())
+            );
+            assert_eq!(
+                report.skipped_detail,
                 Some("Checksums file not found".to_string())
             );
         }
@@ -1072,30 +1915,9 @@ mod tests {
         #[test]
         fn check_report_with_multiple_findings() {
             let findings = vec![
-                Finding {
-                    severity: Severity::Error,
-                    code: "error1".to_string(),
-                    message: "First error".to_string(),
-                    path: Some("file1.rs".to_string()),
-                    line: Some(10),
-                    column: None,
-                },
-                Finding {
-                    severity: Severity::Warn,
-                    code: "warn1".to_string(),
-                    message: "First warning".to_string(),
-                    path: Some("file2.rs".to_string()),
-                    line: Some(20),
-                    column: None,
-                },
-                Finding {
-                    severity: Severity::Info,
-                    code: "info1".to_string(),
-                    message: "First info".to_string(),
-                    path: None,
-                    line: None,
-                    column: None,
-                },
+                make_finding("multi_finding_check", Severity::Error, "error1"),
+                make_finding("multi_finding_check", Severity::Warn, "warn1"),
+                make_finding("multi_finding_check", Severity::Info, "info1"),
             ];
 
             let report = CheckReport {
@@ -1103,6 +1925,7 @@ mod tests {
                 status: CheckStatus::Fail,
                 findings,
                 skipped_reason: None,
+                skipped_detail: None,
             };
 
             assert_eq!(report.findings.len(), 3);
@@ -1118,6 +1941,7 @@ mod tests {
                 status: CheckStatus::Pass,
                 findings: vec![],
                 skipped_reason: None,
+                skipped_detail: None,
             };
 
             let report2 = CheckReport {
@@ -1125,6 +1949,7 @@ mod tests {
                 status: CheckStatus::Pass,
                 findings: vec![],
                 skipped_reason: None,
+                skipped_detail: None,
             };
 
             assert_eq!(report1, report2);
@@ -1144,84 +1969,65 @@ mod tests {
         }
     }
 
-    /// Tests for Summary construction with counts and verdict
+    /// Tests for Summary construction with counts
     /// _Requirements: 2.1_
     mod summary_tests {
         use super::*;
 
         #[test]
-        fn summary_with_pass_verdict() {
+        fn summary_construction() {
+            let mut by_severity = BTreeMap::new();
+            by_severity.insert("error".to_string(), 2);
+            by_severity.insert("warn".to_string(), 3);
+            by_severity.insert("info".to_string(), 1);
+
+            let mut by_check = BTreeMap::new();
+            by_check.insert("rust.msrv_defined".to_string(), 1);
+            by_check.insert("rust.msrv_consistent".to_string(), 2);
+
             let summary = Summary {
-                counts: SummaryCounts {
-                    info: 0,
-                    warn: 0,
-                    error: 0,
-                },
-                verdict: Verdict::Pass,
-                reasons: vec![],
+                total_findings: 6,
+                by_severity,
+                by_check,
             };
 
-            assert_eq!(summary.verdict, Verdict::Pass);
-            assert_eq!(summary.counts.info, 0);
-            assert_eq!(summary.counts.warn, 0);
-            assert_eq!(summary.counts.error, 0);
-            assert!(summary.reasons.is_empty());
+            assert_eq!(summary.total_findings, 6);
+            assert_eq!(summary.by_severity.get("error"), Some(&2));
+            assert_eq!(summary.by_severity.get("warn"), Some(&3));
+            assert_eq!(summary.by_severity.get("info"), Some(&1));
+            assert_eq!(summary.by_check.len(), 2);
         }
 
         #[test]
-        fn summary_with_warn_verdict() {
+        fn summary_empty() {
             let summary = Summary {
-                counts: SummaryCounts {
-                    info: 1,
-                    warn: 2,
-                    error: 0,
-                },
-                verdict: Verdict::Warn,
-                reasons: vec!["2 warnings found".to_string()],
+                total_findings: 0,
+                by_severity: BTreeMap::new(),
+                by_check: BTreeMap::new(),
             };
 
-            assert_eq!(summary.verdict, Verdict::Warn);
-            assert_eq!(summary.counts.info, 1);
-            assert_eq!(summary.counts.warn, 2);
-            assert_eq!(summary.counts.error, 0);
-            assert_eq!(summary.reasons.len(), 1);
+            assert_eq!(summary.total_findings, 0);
+            assert!(summary.by_severity.is_empty());
+            assert!(summary.by_check.is_empty());
         }
 
         #[test]
-        fn summary_with_fail_verdict() {
-            let summary = Summary {
-                counts: SummaryCounts {
-                    info: 2,
-                    warn: 1,
-                    error: 3,
-                },
-                verdict: Verdict::Fail,
-                reasons: vec!["3 errors found".to_string(), "1 warning found".to_string()],
-            };
+        fn verdict_variants() {
+            // Verify all Verdict variants can be constructed
+            assert_eq!(Verdict::Pass, Verdict::Pass);
+            assert_eq!(Verdict::Warn, Verdict::Warn);
+            assert_eq!(Verdict::Fail, Verdict::Fail);
+            assert_eq!(Verdict::Skip, Verdict::Skip);
+            assert_eq!(Verdict::Error, Verdict::Error);
 
-            assert_eq!(summary.verdict, Verdict::Fail);
-            assert_eq!(summary.counts.error, 3);
-            assert_eq!(summary.reasons.len(), 2);
+            // Verify they are distinct
+            assert_ne!(Verdict::Pass, Verdict::Fail);
+            assert_ne!(Verdict::Warn, Verdict::Skip);
+            assert_ne!(Verdict::Fail, Verdict::Error);
         }
 
         #[test]
-        fn summary_with_skip_verdict() {
-            let summary = Summary {
-                counts: SummaryCounts {
-                    info: 0,
-                    warn: 0,
-                    error: 0,
-                },
-                verdict: Verdict::Skip,
-                reasons: vec!["All checks were skipped".to_string()],
-            };
-
-            assert_eq!(summary.verdict, Verdict::Skip);
-            assert_eq!(summary.reasons, vec!["All checks were skipped".to_string()]);
-        }
-
-        #[test]
-        fn summary_counts_construction() {
+        fn summary_counts_legacy() {
             let counts = SummaryCounts {
                 info: 5,
                 warn: 10,
@@ -1234,64 +2040,20 @@ mod tests {
         }
 
         #[test]
-        fn summary_with_multiple_reasons() {
-            let summary = Summary {
-                counts: SummaryCounts {
-                    info: 1,
-                    warn: 2,
-                    error: 1,
-                },
-                verdict: Verdict::Fail,
-                reasons: vec![
-                    "MSRV not defined".to_string(),
-                    "Toolchain not pinned".to_string(),
-                    "Checksums missing".to_string(),
-                ],
-            };
-
-            assert_eq!(summary.reasons.len(), 3);
-            assert!(summary.reasons.contains(&"MSRV not defined".to_string()));
-            assert!(
-                summary
-                    .reasons
-                    .contains(&"Toolchain not pinned".to_string())
-            );
-            assert!(summary.reasons.contains(&"Checksums missing".to_string()));
-        }
-
-        #[test]
-        fn verdict_variants() {
-            // Verify all Verdict variants can be constructed
-            assert_eq!(Verdict::Pass, Verdict::Pass);
-            assert_eq!(Verdict::Warn, Verdict::Warn);
-            assert_eq!(Verdict::Fail, Verdict::Fail);
-            assert_eq!(Verdict::Skip, Verdict::Skip);
-
-            // Verify they are distinct
-            assert_ne!(Verdict::Pass, Verdict::Fail);
-            assert_ne!(Verdict::Warn, Verdict::Skip);
-        }
-
-        #[test]
         fn summary_equality() {
+            let mut by_severity = BTreeMap::new();
+            by_severity.insert("error".to_string(), 1);
+
             let summary1 = Summary {
-                counts: SummaryCounts {
-                    info: 1,
-                    warn: 2,
-                    error: 3,
-                },
-                verdict: Verdict::Fail,
-                reasons: vec!["test".to_string()],
+                total_findings: 1,
+                by_severity: by_severity.clone(),
+                by_check: BTreeMap::new(),
             };
 
             let summary2 = Summary {
-                counts: SummaryCounts {
-                    info: 1,
-                    warn: 2,
-                    error: 3,
-                },
-                verdict: Verdict::Fail,
-                reasons: vec!["test".to_string()],
+                total_findings: 1,
+                by_severity,
+                by_check: BTreeMap::new(),
             };
 
             assert_eq!(summary1, summary2);
@@ -1305,60 +2067,53 @@ mod tests {
         use chrono::TimeZone;
 
         fn create_test_report() -> Report {
+            let started = Utc.with_ymd_and_hms(2024, 1, 15, 10, 30, 0).unwrap();
+            let ended = Utc.with_ymd_and_hms(2024, 1, 15, 10, 30, 5).unwrap();
+
+            let mut by_severity = BTreeMap::new();
+            by_severity.insert("warn".to_string(), 1);
+
+            let mut by_check = BTreeMap::new();
+            by_check.insert("rust.toolchain_msrv_relation".to_string(), 1);
+
             Report {
-                schema: SchemaId("https://builddiag.dev/schema/report/v1".to_string()),
-                tool: ToolInfo {
+                schema: Report::SCHEMA_V1.to_string(),
+                tool: Some(ToolInfo {
                     name: "builddiag".to_string(),
                     version: "0.1.0".to_string(),
-                },
-                run: RunInfo {
-                    id: "run-123".to_string(),
-                    started_at: Utc.with_ymd_and_hms(2024, 1, 15, 10, 30, 0).unwrap(),
-                    ended_at: Some(Utc.with_ymd_and_hms(2024, 1, 15, 10, 30, 5).unwrap()),
-                },
-                repo: RepoInfo {
-                    root: "/home/user/project".to_string(),
-                    detected: RepoDetected {
-                        is_workspace: true,
-                        members: 5,
+                }),
+                run: Some(RunInfo {
+                    started_at: started,
+                    ended_at: Some(ended),
+                    duration_ms: 5000,
+                    host: HostInfo {
+                        os: "linux".to_string(),
+                        arch: "x86_64".to_string(),
                     },
-                },
-                inputs: Inputs {
-                    cargo_root: Some("Cargo.toml".to_string()),
-                    rust_toolchain: Some("rust-toolchain.toml".to_string()),
-                    tools_checksums: None,
-                    tools_manifest: None,
-                },
-                checks: vec![
-                    CheckReport {
-                        id: "msrv_defined".to_string(),
-                        status: CheckStatus::Pass,
-                        findings: vec![],
-                        skipped_reason: None,
-                    },
-                    CheckReport {
-                        id: "toolchain_pinned".to_string(),
-                        status: CheckStatus::Warn,
-                        findings: vec![Finding {
-                            severity: Severity::Warn,
-                            code: "toolchain_mismatch".to_string(),
-                            message: "Toolchain version differs from MSRV".to_string(),
-                            path: Some("rust-toolchain.toml".to_string()),
-                            line: None,
-                            column: None,
-                        }],
-                        skipped_reason: None,
-                    },
-                ],
-                summary: Summary {
-                    counts: SummaryCounts {
-                        info: 0,
-                        warn: 1,
-                        error: 0,
-                    },
-                    verdict: Verdict::Warn,
-                    reasons: vec!["1 warning found".to_string()],
-                },
+                    git: Some(GitInfo {
+                        commit: "abc123".to_string(),
+                        branch: Some("main".to_string()),
+                        dirty: false,
+                    }),
+                }),
+                verdict: Verdict::Warn,
+                findings: vec![Finding {
+                    check_id: "rust.toolchain_msrv_relation".to_string(),
+                    code: "toolchain_mismatch".to_string(),
+                    severity: Severity::Warn,
+                    message: "Toolchain version differs from MSRV".to_string(),
+                    location: Some(Location {
+                        path: "rust-toolchain.toml".to_string(),
+                        line: None,
+                        col: None,
+                    }),
+                }],
+                summary: Some(Summary {
+                    total_findings: 1,
+                    by_severity,
+                    by_check,
+                }),
+                data: None,
             }
         }
 
@@ -1366,22 +2121,24 @@ mod tests {
         fn report_construction_with_all_fields() {
             let report = create_test_report();
 
-            assert_eq!(report.schema.0, "https://builddiag.dev/schema/report/v1");
-            assert_eq!(report.tool.name, "builddiag");
-            assert_eq!(report.tool.version, "0.1.0");
-            assert_eq!(report.run.id, "run-123");
-            assert!(report.run.ended_at.is_some());
-            assert_eq!(report.repo.root, "/home/user/project");
-            assert!(report.repo.detected.is_workspace);
-            assert_eq!(report.repo.detected.members, 5);
-            assert_eq!(report.checks.len(), 2);
-            assert_eq!(report.summary.verdict, Verdict::Warn);
+            assert_eq!(report.schema, Report::SCHEMA_V1);
+            let tool = report.tool.as_ref().expect("tool info should be present");
+            assert_eq!(tool.name, "builddiag");
+            assert_eq!(tool.version, "0.1.0");
+            let run = report.run.as_ref().expect("run info should be present");
+            assert_eq!(run.duration_ms, 5000);
+            assert!(run.ended_at.is_some());
+            assert_eq!(run.host.os, "linux");
+            assert!(run.git.is_some());
+            assert_eq!(report.verdict, Verdict::Warn);
+            assert_eq!(report.findings.len(), 1);
+            assert!(report.summary.is_some());
+            assert!(report.data.is_none());
         }
 
         #[test]
-        fn report_schema_id_construction() {
-            let schema = SchemaId("test-schema-v1".to_string());
-            assert_eq!(schema.0, "test-schema-v1");
+        fn report_schema_constant() {
+            assert_eq!(Report::SCHEMA_V1, "builddiag.report.v1");
         }
 
         #[test]
@@ -1401,14 +2158,21 @@ mod tests {
             let ended = Utc.with_ymd_and_hms(2024, 6, 15, 12, 0, 10).unwrap();
 
             let run = RunInfo {
-                id: "unique-run-id".to_string(),
                 started_at: started,
                 ended_at: Some(ended),
+                duration_ms: 10000,
+                host: HostInfo {
+                    os: "macos".to_string(),
+                    arch: "aarch64".to_string(),
+                },
+                git: None,
             };
 
-            assert_eq!(run.id, "unique-run-id");
             assert_eq!(run.started_at, started);
             assert_eq!(run.ended_at, Some(ended));
+            assert_eq!(run.duration_ms, 10000);
+            assert_eq!(run.host.os, "macos");
+            assert!(run.git.is_none());
         }
 
         #[test]
@@ -1416,12 +2180,89 @@ mod tests {
             let started = Utc.with_ymd_and_hms(2024, 6, 15, 12, 0, 0).unwrap();
 
             let run = RunInfo {
-                id: "in-progress-run".to_string(),
                 started_at: started,
                 ended_at: None,
+                duration_ms: 1000,
+                host: HostInfo {
+                    os: "windows".to_string(),
+                    arch: "x86_64".to_string(),
+                },
+                git: None,
             };
 
             assert!(run.ended_at.is_none());
+        }
+
+        #[test]
+        fn host_info_construction() {
+            let host = HostInfo {
+                os: "linux".to_string(),
+                arch: "x86_64".to_string(),
+            };
+            assert_eq!(host.os, "linux");
+            assert_eq!(host.arch, "x86_64");
+        }
+
+        #[test]
+        fn git_info_construction() {
+            let git = GitInfo {
+                commit: "abc123def456".to_string(),
+                branch: Some("main".to_string()),
+                dirty: false,
+            };
+            assert_eq!(git.commit, "abc123def456");
+            assert_eq!(git.branch, Some("main".to_string()));
+            assert!(!git.dirty);
+        }
+
+        #[test]
+        fn git_info_detached_head() {
+            let git = GitInfo {
+                commit: "abc123".to_string(),
+                branch: None,
+                dirty: true,
+            };
+            assert!(git.branch.is_none());
+            assert!(git.dirty);
+        }
+
+        #[test]
+        fn report_with_empty_findings() {
+            let started = Utc::now();
+
+            let report = Report {
+                schema: Report::SCHEMA_V1.to_string(),
+                tool: Some(ToolInfo {
+                    name: "builddiag".to_string(),
+                    version: "0.1.0".to_string(),
+                }),
+                run: Some(RunInfo {
+                    started_at: started,
+                    ended_at: Some(Utc::now()),
+                    duration_ms: 100,
+                    host: HostInfo {
+                        os: "linux".to_string(),
+                        arch: "x86_64".to_string(),
+                    },
+                    git: None,
+                }),
+                verdict: Verdict::Pass,
+                findings: vec![],
+                summary: None,
+                data: None,
+            };
+
+            assert!(report.findings.is_empty());
+            assert_eq!(report.verdict, Verdict::Pass);
+            assert!(report.summary.is_none());
+        }
+
+        #[test]
+        fn report_clone() {
+            let report = create_test_report();
+            let cloned = report.clone();
+
+            assert_eq!(report, cloned);
         }
 
         #[test]
@@ -1440,128 +2281,530 @@ mod tests {
         }
 
         #[test]
-        fn report_repo_detected_workspace() {
-            let detected = RepoDetected {
-                is_workspace: true,
-                members: 10,
-            };
-
-            assert!(detected.is_workspace);
-            assert_eq!(detected.members, 10);
-        }
-
-        #[test]
-        fn report_repo_detected_single_crate() {
-            let detected = RepoDetected {
-                is_workspace: false,
-                members: 1,
-            };
-
-            assert!(!detected.is_workspace);
-            assert_eq!(detected.members, 1);
-        }
-
-        #[test]
-        fn report_inputs_all_present() {
+        fn report_inputs_construction() {
             let inputs = Inputs {
                 cargo_root: Some("Cargo.toml".to_string()),
                 rust_toolchain: Some("rust-toolchain.toml".to_string()),
-                tools_checksums: Some("scripts/tools.sha256".to_string()),
-                tools_manifest: Some("scripts/tools.toml".to_string()),
+                tools_checksums: None,
+                tools_manifest: None,
             };
 
             assert!(inputs.cargo_root.is_some());
             assert!(inputs.rust_toolchain.is_some());
-            assert!(inputs.tools_checksums.is_some());
-            assert!(inputs.tools_manifest.is_some());
-        }
-
-        #[test]
-        fn report_inputs_partial() {
-            let inputs = Inputs {
-                cargo_root: Some("Cargo.toml".to_string()),
-                rust_toolchain: None,
-                tools_checksums: None,
-                tools_manifest: None,
-            };
-
-            assert!(inputs.cargo_root.is_some());
-            assert!(inputs.rust_toolchain.is_none());
             assert!(inputs.tools_checksums.is_none());
             assert!(inputs.tools_manifest.is_none());
         }
+    }
+
+    /// Tests for Profile enum and check state mapping
+    /// _Requirements: Profile severity mappings_
+    mod profile_tests {
+        use super::*;
 
         #[test]
-        fn report_inputs_all_none() {
-            let inputs = Inputs {
-                cargo_root: None,
-                rust_toolchain: None,
-                tools_checksums: None,
-                tools_manifest: None,
-            };
-
-            assert!(inputs.cargo_root.is_none());
-            assert!(inputs.rust_toolchain.is_none());
-            assert!(inputs.tools_checksums.is_none());
-            assert!(inputs.tools_manifest.is_none());
+        fn profile_default_is_oss() {
+            let profile = Profile::default();
+            assert_eq!(profile, Profile::Oss);
         }
 
         #[test]
-        fn report_with_empty_checks() {
-            let report = Report {
-                schema: SchemaId("v1".to_string()),
-                tool: ToolInfo {
+        fn profile_display() {
+            assert_eq!(Profile::Oss.to_string(), "oss");
+            assert_eq!(Profile::Team.to_string(), "team");
+            assert_eq!(Profile::Strict.to_string(), "strict");
+        }
+
+        #[test]
+        fn profile_from_str() {
+            assert_eq!("oss".parse::<Profile>().unwrap(), Profile::Oss);
+            assert_eq!("OSS".parse::<Profile>().unwrap(), Profile::Oss);
+            assert_eq!("team".parse::<Profile>().unwrap(), Profile::Team);
+            assert_eq!("Team".parse::<Profile>().unwrap(), Profile::Team);
+            assert_eq!("strict".parse::<Profile>().unwrap(), Profile::Strict);
+            assert_eq!("STRICT".parse::<Profile>().unwrap(), Profile::Strict);
+            assert!("invalid".parse::<Profile>().is_err());
+        }
+
+        // OSS profile severity tests
+        #[test]
+        fn oss_profile_msrv_defined_is_warn() {
+            let state = Profile::Oss.check_state("rust.msrv_defined");
+            assert_eq!(state, ProfileCheckState::Enabled(Severity::Warn));
+        }
+
+        #[test]
+        fn oss_profile_msrv_consistent_is_error() {
+            let state = Profile::Oss.check_state("rust.msrv_consistent");
+            assert_eq!(state, ProfileCheckState::Enabled(Severity::Error));
+        }
+
+        #[test]
+        fn oss_profile_toolchain_pinning_is_info() {
+            let state = Profile::Oss.check_state("rust.toolchain_pinning");
+            assert_eq!(state, ProfileCheckState::Enabled(Severity::Info));
+        }
+
+        #[test]
+        fn oss_profile_toolchain_msrv_relation_is_warn() {
+            let state = Profile::Oss.check_state("rust.toolchain_msrv_relation");
+            assert_eq!(state, ProfileCheckState::Enabled(Severity::Warn));
+        }
+
+        #[test]
+        fn oss_profile_resolver_v2_is_info() {
+            let state = Profile::Oss.check_state("workspace.resolver_v2");
+            assert_eq!(state, ProfileCheckState::Enabled(Severity::Info));
+        }
+
+        #[test]
+        fn oss_profile_tools_checks_are_skipped() {
+            assert_eq!(
+                Profile::Oss.check_state("tools.checksums_file_exists"),
+                ProfileCheckState::Skip
+            );
+            assert_eq!(
+                Profile::Oss.check_state("tools.checksums_format"),
+                ProfileCheckState::Skip
+            );
+            assert_eq!(
+                Profile::Oss.check_state("tools.checksums_coverage"),
+                ProfileCheckState::Skip
+            );
+            assert_eq!(
+                Profile::Oss.check_state("tools.checksums_verify_local"),
+                ProfileCheckState::Skip
+            );
+        }
+
+        #[test]
+        fn oss_profile_unknown_check_defaults_to_warn() {
+            let state = Profile::Oss.check_state("unknown.check");
+            assert_eq!(state, ProfileCheckState::Enabled(Severity::Warn));
+        }
+
+        // Team profile severity tests
+        #[test]
+        fn team_profile_msrv_defined_is_warn() {
+            let state = Profile::Team.check_state("rust.msrv_defined");
+            assert_eq!(state, ProfileCheckState::Enabled(Severity::Warn));
+        }
+
+        #[test]
+        fn team_profile_msrv_consistent_is_error() {
+            let state = Profile::Team.check_state("rust.msrv_consistent");
+            assert_eq!(state, ProfileCheckState::Enabled(Severity::Error));
+        }
+
+        #[test]
+        fn team_profile_toolchain_pinning_is_warn() {
+            let state = Profile::Team.check_state("rust.toolchain_pinning");
+            assert_eq!(state, ProfileCheckState::Enabled(Severity::Warn));
+        }
+
+        #[test]
+        fn team_profile_toolchain_msrv_relation_is_error() {
+            let state = Profile::Team.check_state("rust.toolchain_msrv_relation");
+            assert_eq!(state, ProfileCheckState::Enabled(Severity::Error));
+        }
+
+        #[test]
+        fn team_profile_resolver_v2_is_warn() {
+            let state = Profile::Team.check_state("workspace.resolver_v2");
+            assert_eq!(state, ProfileCheckState::Enabled(Severity::Warn));
+        }
+
+        #[test]
+        fn team_profile_tools_checks_are_warn() {
+            assert_eq!(
+                Profile::Team.check_state("tools.checksums_file_exists"),
+                ProfileCheckState::Enabled(Severity::Warn)
+            );
+            assert_eq!(
+                Profile::Team.check_state("tools.checksums_format"),
+                ProfileCheckState::Enabled(Severity::Warn)
+            );
+            assert_eq!(
+                Profile::Team.check_state("tools.checksums_coverage"),
+                ProfileCheckState::Enabled(Severity::Warn)
+            );
+            assert_eq!(
+                Profile::Team.check_state("tools.checksums_verify_local"),
+                ProfileCheckState::Enabled(Severity::Warn)
+            );
+        }
+
+        #[test]
+        fn team_profile_unknown_check_is_warn() {
+            let state = Profile::Team.check_state("unknown.check");
+            assert_eq!(state, ProfileCheckState::Enabled(Severity::Warn));
+        }
+
+        // Strict profile severity tests
+        #[test]
+        fn strict_profile_all_checks_are_error() {
+            let checks = [
+                "rust.msrv_defined",
+                "rust.msrv_consistent",
+                "rust.toolchain_pinning",
+                "rust.toolchain_msrv_relation",
+                "workspace.resolver_v2",
+                "tools.checksums_file_exists",
+                "tools.checksums_format",
+                "tools.checksums_coverage",
+                "tools.checksums_verify_local",
+            ];
+
+            for check_id in &checks {
+                let state = Profile::Strict.check_state(check_id);
+                assert_eq!(state, ProfileCheckState::Enabled(Severity::Error));
+            }
+        }
+
+        #[test]
+        fn strict_profile_unknown_check_is_error() {
+            let state = Profile::Strict.check_state("unknown.check");
+            assert_eq!(state, ProfileCheckState::Enabled(Severity::Error));
+        }
+    }
+
+    /// Tests for EffectiveCheckConfig and effective_check_config function
+    /// _Requirements: Profile + override resolution_
+    mod effective_check_config_tests {
+        use super::*;
+
+        #[test]
+        fn effective_config_uses_profile_defaults() {
+            let config = Config::default(); // Uses Oss profile
+
+            let effective = effective_check_config(&config, "rust.msrv_defined");
+            assert!(effective.enabled);
+            assert_eq!(effective.severity, Severity::Warn);
+        }
+
+        #[test]
+        fn effective_config_user_override_severity() {
+            let mut config = Config::default();
+            config.checks.push(CheckConfig {
+                id: "rust.msrv_defined".to_string(),
+                severity: Severity::Error,
+                enabled: true,
+                triggers: vec![],
+            });
+
+            let effective = effective_check_config(&config, "rust.msrv_defined");
+            assert!(effective.enabled);
+            assert_eq!(effective.severity, Severity::Error);
+        }
+
+        #[test]
+        fn effective_config_user_override_disabled() {
+            let mut config = Config::default();
+            config.checks.push(CheckConfig {
+                id: "rust.msrv_defined".to_string(),
+                severity: Severity::Warn,
+                enabled: false,
+                triggers: vec![],
+            });
+
+            let effective = effective_check_config(&config, "rust.msrv_defined");
+            assert!(!effective.enabled);
+        }
+
+        #[test]
+        fn effective_config_profile_skip_can_be_overridden() {
+            let mut config = Config::default(); // Oss profile skips tools.*
+            config.checks.push(CheckConfig {
+                id: "tools.checksums_file_exists".to_string(),
+                severity: Severity::Error,
+                enabled: true,
+                triggers: vec![],
+            });
+
+            // Check that tools check is skipped by default in oss
+            let default_effective =
+                effective_check_config(&Config::default(), "tools.checksums_file_exists");
+            assert!(!default_effective.enabled);
+
+            // Check that user override enables it
+            let overridden = effective_check_config(&config, "tools.checksums_file_exists");
+            assert!(overridden.enabled);
+            assert_eq!(overridden.severity, Severity::Error);
+        }
+
+        #[test]
+        fn effective_config_team_profile_defaults() {
+            let config = Config {
+                profile: Profile::Team,
+                ..Default::default()
+            };
+
+            // rust.toolchain_msrv_relation is error in team
+            let effective = effective_check_config(&config, "rust.toolchain_msrv_relation");
+            assert!(effective.enabled);
+            assert_eq!(effective.severity, Severity::Error);
+
+            // tools.* are warn in team
+            let effective = effective_check_config(&config, "tools.checksums_file_exists");
+            assert!(effective.enabled);
+            assert_eq!(effective.severity, Severity::Warn);
+        }
+
+        #[test]
+        fn effective_config_strict_profile_defaults() {
+            let config = Config {
+                profile: Profile::Strict,
+                ..Default::default()
+            };
+
+            // All checks are error in strict
+            let effective = effective_check_config(&config, "rust.msrv_defined");
+            assert!(effective.enabled);
+            assert_eq!(effective.severity, Severity::Error);
+
+            let effective = effective_check_config(&config, "workspace.resolver_v2");
+            assert!(effective.enabled);
+            assert_eq!(effective.severity, Severity::Error);
+        }
+
+        #[test]
+        fn effective_config_strict_profile_can_be_softened() {
+            let config = Config {
+                profile: Profile::Strict,
+                checks: vec![CheckConfig {
+                    id: "rust.msrv_defined".to_string(),
+                    severity: Severity::Warn,
+                    enabled: true,
+                    triggers: vec![],
+                }],
+                ..Default::default()
+            };
+
+            let effective = effective_check_config(&config, "rust.msrv_defined");
+            assert!(effective.enabled);
+            assert_eq!(effective.severity, Severity::Warn);
+        }
+
+        #[test]
+        fn effective_config_unknown_check_uses_profile_default() {
+            let config = Config::default();
+
+            let effective = effective_check_config(&config, "unknown.future_check");
+            assert!(effective.enabled);
+            assert_eq!(effective.severity, Severity::Warn); // Oss default for unknown
+        }
+
+        #[test]
+        fn effective_config_default_is_enabled_error() {
+            let default = EffectiveCheckConfig::default();
+            assert!(default.enabled);
+            assert_eq!(default.severity, Severity::Error);
+        }
+
+        #[test]
+        fn effective_config_no_matching_override() {
+            let mut config = Config::default();
+            config.checks.push(CheckConfig {
+                id: "rust.msrv_consistent".to_string(),
+                severity: Severity::Info,
+                enabled: true,
+                triggers: vec![],
+            });
+
+            // Request a different check than the override
+            let effective = effective_check_config(&config, "rust.msrv_defined");
+            assert!(effective.enabled);
+            assert_eq!(effective.severity, Severity::Warn); // Profile default
+        }
+    }
+
+    /// Tests for sensor.report.v1 types
+    /// _Requirements: Cockpit CI governance integration_
+    mod sensor_report_tests {
+        use super::*;
+
+        #[test]
+        fn capability_available() {
+            let cap = Capability::available();
+            assert_eq!(cap.status, CapabilityStatus::Available);
+            assert!(cap.reason.is_none());
+        }
+
+        #[test]
+        fn capability_unavailable() {
+            let cap = Capability::unavailable("git not found");
+            assert_eq!(cap.status, CapabilityStatus::Unavailable);
+            assert_eq!(cap.reason, Some("git not found".to_string()));
+        }
+
+        #[test]
+        fn capability_skipped() {
+            let cap = Capability::skipped("disabled by config");
+            assert_eq!(cap.status, CapabilityStatus::Skipped);
+            assert_eq!(cap.reason, Some("disabled by config".to_string()));
+        }
+
+        #[test]
+        fn verdict_counts_default() {
+            let counts = VerdictCounts::default();
+            assert_eq!(counts.info, 0);
+            assert_eq!(counts.warn, 0);
+            assert_eq!(counts.error, 0);
+            assert_eq!(counts.suppressed, 0);
+        }
+
+        #[test]
+        fn verdict_status_from_verdict() {
+            assert_eq!(VerdictStatus::from(Verdict::Pass), VerdictStatus::Pass);
+            assert_eq!(VerdictStatus::from(Verdict::Warn), VerdictStatus::Warn);
+            assert_eq!(VerdictStatus::from(Verdict::Fail), VerdictStatus::Fail);
+            assert_eq!(VerdictStatus::from(Verdict::Error), VerdictStatus::Fail);
+            assert_eq!(VerdictStatus::from(Verdict::Skip), VerdictStatus::Skip);
+        }
+
+        #[test]
+        fn sensor_verdict_default() {
+            let verdict = SensorVerdict::default();
+            assert_eq!(verdict.status, VerdictStatus::Pass);
+            assert_eq!(verdict.counts, VerdictCounts::default());
+            assert!(verdict.reasons.is_empty());
+        }
+
+        #[test]
+        fn sensor_finding_construction() {
+            let finding = SensorFinding {
+                check_id: "rust.msrv_defined".to_string(),
+                code: "missing_msrv".to_string(),
+                severity: Severity::Error,
+                message: "Missing rust-version".to_string(),
+                fingerprint: "abc123".to_string(),
+                location: Some(Location {
+                    path: "Cargo.toml".to_string(),
+                    line: Some(1),
+                    col: None,
+                }),
+                help: Some("Add rust-version to [package]".to_string()),
+                url: Some("https://docs.example.com/msrv".to_string()),
+                data: None,
+            };
+
+            assert_eq!(finding.check_id, "rust.msrv_defined");
+            assert_eq!(finding.fingerprint, "abc123");
+            assert!(finding.help.is_some());
+            assert!(finding.url.is_some());
+        }
+
+        #[test]
+        fn sensor_report_schema_constant() {
+            assert_eq!(SensorReport::SCHEMA_V1, "sensor.report.v1");
+            assert_eq!(SENSOR_REPORT_SCHEMA_V1, "sensor.report.v1");
+        }
+
+        #[test]
+        fn artifact_construction() {
+            let artifact = Artifact {
+                name: "markdown".to_string(),
+                path: "comment.md".to_string(),
+                mime_type: Some("text/markdown".to_string()),
+            };
+
+            assert_eq!(artifact.name, "markdown");
+            assert_eq!(artifact.path, "comment.md");
+            assert_eq!(artifact.mime_type, Some("text/markdown".to_string()));
+        }
+
+        #[test]
+        fn sensor_report_minimal() {
+            let report = SensorReport {
+                schema: SensorReport::SCHEMA_V1.to_string(),
+                tool: None,
+                run: None,
+                verdict: SensorVerdict::default(),
+                findings: vec![],
+                artifacts: vec![],
+                data: None,
+            };
+
+            assert_eq!(report.schema, "sensor.report.v1");
+            assert!(report.findings.is_empty());
+        }
+
+        #[test]
+        fn sensor_report_serialization_roundtrip() {
+            let report = SensorReport {
+                schema: SensorReport::SCHEMA_V1.to_string(),
+                tool: Some(ToolInfo {
                     name: "builddiag".to_string(),
                     version: "0.1.0".to_string(),
-                },
-                run: RunInfo {
-                    id: "run-1".to_string(),
-                    started_at: Utc::now(),
-                    ended_at: None,
-                },
-                repo: RepoInfo {
-                    root: ".".to_string(),
-                    detected: RepoDetected {
-                        is_workspace: false,
-                        members: 1,
-                    },
-                },
-                inputs: Inputs {
-                    cargo_root: None,
-                    rust_toolchain: None,
-                    tools_checksums: None,
-                    tools_manifest: None,
-                },
-                checks: vec![],
-                summary: Summary {
-                    counts: SummaryCounts {
-                        info: 0,
-                        warn: 0,
+                }),
+                run: None,
+                verdict: SensorVerdict {
+                    status: VerdictStatus::Warn,
+                    counts: VerdictCounts {
+                        info: 1,
+                        warn: 2,
                         error: 0,
+                        suppressed: 0,
                     },
-                    verdict: Verdict::Skip,
-                    reasons: vec!["No checks executed".to_string()],
+                    reasons: vec!["checks_warned".to_string()],
+                    data: None,
                 },
+                findings: vec![SensorFinding {
+                    check_id: "test".to_string(),
+                    code: "test_code".to_string(),
+                    severity: Severity::Warn,
+                    message: "Test warning".to_string(),
+                    fingerprint: "fingerprint123".to_string(),
+                    location: None,
+                    help: None,
+                    url: None,
+                    data: None,
+                }],
+                artifacts: vec![],
+                data: None,
             };
 
-            assert!(report.checks.is_empty());
-            assert_eq!(report.summary.verdict, Verdict::Skip);
+            let json = serde_json::to_string(&report).unwrap();
+            let parsed: SensorReport = serde_json::from_str(&json).unwrap();
+
+            assert_eq!(parsed.schema, report.schema);
+            assert_eq!(parsed.verdict.status, VerdictStatus::Warn);
+            assert_eq!(parsed.findings.len(), 1);
         }
+    }
+
+    /// Tests for CheckReport skip participation helpers
+    mod check_report_participation_tests {
+        use super::*;
 
         #[test]
-        fn report_equality() {
-            let report1 = create_test_report();
-            let report2 = create_test_report();
+        fn check_report_is_non_participating_for_config_and_diff_aware() {
+            let base = CheckReport {
+                id: "check".to_string(),
+                status: CheckStatus::Skip,
+                findings: vec![],
+                skipped_reason: Some(check_skip_reasons::DISABLED_BY_CONFIG.to_string()),
+                skipped_detail: None,
+            };
 
-            assert_eq!(report1, report2);
-        }
+            assert!(base.is_non_participating());
 
-        #[test]
-        fn report_clone() {
-            let report = create_test_report();
-            let cloned = report.clone();
+            let diff = CheckReport {
+                skipped_reason: Some(check_skip_reasons::DIFF_AWARE_NO_MATCH.to_string()),
+                ..base.clone()
+            };
+            assert!(diff.is_non_participating());
 
-            assert_eq!(report, cloned);
+            let exec_skip = CheckReport {
+                skipped_reason: Some(check_skip_reasons::MISSING_PREREQUISITE.to_string()),
+                ..base.clone()
+            };
+            assert!(!exec_skip.is_non_participating());
+
+            let no_reason = CheckReport {
+                skipped_reason: None,
+                ..base
+            };
+            assert!(!no_reason.is_non_participating());
         }
     }
 }

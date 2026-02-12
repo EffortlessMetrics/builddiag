@@ -10,9 +10,9 @@
 //! - **Property 2**: Report Serialization Round-Trip (Requirements 3.9, 8.5)
 
 use builddiag_types::{
-    CheckConfig, CheckReport, CheckStatus, ChecksumsPolicy, Config, Defaults, FailOn, Finding,
-    Inputs, MsrvPolicy, MsrvSource, PathsConfig, Policy, RelationToMsrv, RepoDetected, RepoInfo,
-    Report, RunInfo, SchemaId, Severity, Summary, SummaryCounts, ToolInfo, ToolchainPolicy,
+    CheckConfig, ChecksumsPolicy, Config, Defaults, EditionPolicy, FailOn, Finding, GitInfo,
+    HostInfo, Location, LockfilePolicy, MemberOrderingPolicy, MsrvPolicy, MsrvSource, PathsConfig,
+    Policy, Profile, RelationToMsrv, Report, RunInfo, Severity, Summary, ToolInfo, ToolchainPolicy,
     Verdict,
 };
 use chrono::{TimeZone, Utc};
@@ -59,16 +59,6 @@ fn arb_severity() -> impl Strategy<Value = Severity> {
     ]
 }
 
-/// Generate arbitrary CheckStatus values.
-fn arb_check_status() -> impl Strategy<Value = CheckStatus> {
-    prop_oneof![
-        Just(CheckStatus::Pass),
-        Just(CheckStatus::Warn),
-        Just(CheckStatus::Fail),
-        Just(CheckStatus::Skip),
-    ]
-}
-
 /// Generate arbitrary Verdict values.
 fn arb_verdict() -> impl Strategy<Value = Verdict> {
     prop_oneof![
@@ -76,6 +66,7 @@ fn arb_verdict() -> impl Strategy<Value = Verdict> {
         Just(Verdict::Warn),
         Just(Verdict::Fail),
         Just(Verdict::Skip),
+        Just(Verdict::Error),
     ]
 }
 
@@ -94,68 +85,73 @@ fn arb_relation_to_msrv() -> impl Strategy<Value = RelationToMsrv> {
     prop_oneof![Just(RelationToMsrv::Equals), Just(RelationToMsrv::AtLeast),]
 }
 
-/// Generate arbitrary Finding instances.
-fn arb_finding() -> impl Strategy<Value = Finding> {
+/// Generate arbitrary Profile values.
+fn arb_profile() -> impl Strategy<Value = Profile> {
+    prop_oneof![
+        Just(Profile::Oss),
+        Just(Profile::Team),
+        Just(Profile::Strict),
+    ]
+}
+
+/// Generate arbitrary Location instances.
+fn arb_location() -> impl Strategy<Value = Location> {
     (
-        arb_severity(),
-        arb_identifier(),
-        arb_message(),
-        proptest::option::of(arb_path()),
+        arb_path(),
         proptest::option::of(1u32..1000),
         proptest::option::of(1u32..200),
     )
-        .prop_map(|(severity, code, message, path, line, column)| Finding {
-            severity,
-            code,
-            message,
-            path,
-            line,
-            column,
-        })
+        .prop_map(|(path, line, col)| Location { path, line, col })
 }
 
-/// Generate arbitrary CheckReport instances.
-fn arb_check_report() -> impl Strategy<Value = CheckReport> {
+/// Generate arbitrary Finding instances.
+fn arb_finding() -> impl Strategy<Value = Finding> {
     (
         arb_identifier(),
-        arb_check_status(),
-        proptest::collection::vec(arb_finding(), 0..5),
-        proptest::option::of(arb_message()),
+        arb_identifier(),
+        arb_severity(),
+        arb_message(),
+        proptest::option::of(arb_location()),
     )
-        .prop_map(|(id, status, findings, skipped_reason)| CheckReport {
-            id,
-            status,
-            findings,
-            skipped_reason,
+        .prop_map(|(check_id, code, severity, message, location)| Finding {
+            check_id,
+            code,
+            severity,
+            message,
+            location,
         })
 }
 
-/// Generate arbitrary SummaryCounts instances.
-fn arb_summary_counts() -> impl Strategy<Value = SummaryCounts> {
-    (0usize..100, 0usize..100, 0usize..100).prop_map(|(info, warn, error)| SummaryCounts {
-        info,
-        warn,
-        error,
-    })
+/// Generate arbitrary HostInfo instances.
+fn arb_host_info() -> impl Strategy<Value = HostInfo> {
+    prop_oneof![
+        Just(HostInfo {
+            os: "linux".to_string(),
+            arch: "x86_64".to_string()
+        }),
+        Just(HostInfo {
+            os: "macos".to_string(),
+            arch: "aarch64".to_string()
+        }),
+        Just(HostInfo {
+            os: "windows".to_string(),
+            arch: "x86_64".to_string()
+        }),
+    ]
 }
 
-/// Generate arbitrary Summary instances.
-fn arb_summary() -> impl Strategy<Value = Summary> {
+/// Generate arbitrary GitInfo instances.
+fn arb_git_info() -> impl Strategy<Value = GitInfo> {
     (
-        arb_summary_counts(),
-        arb_verdict(),
-        proptest::collection::vec(arb_message(), 0..5),
+        "[a-f0-9]{40}".prop_map(|s| s.to_string()),
+        proptest::option::of(arb_identifier()),
+        any::<bool>(),
     )
-        .prop_map(|(counts, verdict, reasons)| Summary {
-            counts,
-            verdict,
-            reasons,
+        .prop_map(|(commit, branch, dirty)| GitInfo {
+            commit,
+            branch,
+            dirty,
         })
-}
-
-/// Generate arbitrary ToolInfo instances.
-fn arb_tool_info() -> impl Strategy<Value = ToolInfo> {
-    (arb_identifier(), arb_version()).prop_map(|(name, version)| ToolInfo { name, version })
 }
 
 /// Generate a valid UTC timestamp within a reasonable range.
@@ -179,75 +175,67 @@ fn arb_datetime() -> impl Strategy<Value = chrono::DateTime<Utc>> {
 /// Generate arbitrary RunInfo instances.
 fn arb_run_info() -> impl Strategy<Value = RunInfo> {
     (
-        arb_identifier(),
         arb_datetime(),
         proptest::option::of(arb_datetime()),
+        0u64..100000,
+        arb_host_info(),
+        proptest::option::of(arb_git_info()),
     )
-        .prop_map(|(id, started_at, ended_at)| RunInfo {
-            id,
+        .prop_map(|(started_at, ended_at, duration_ms, host, git)| RunInfo {
             started_at,
             ended_at,
+            duration_ms,
+            host,
+            git,
         })
 }
 
-/// Generate arbitrary RepoDetected instances.
-fn arb_repo_detected() -> impl Strategy<Value = RepoDetected> {
-    (any::<bool>(), 1usize..20).prop_map(|(is_workspace, members)| RepoDetected {
-        is_workspace,
-        members,
-    })
+/// Generate arbitrary ToolInfo instances.
+fn arb_tool_info() -> impl Strategy<Value = ToolInfo> {
+    (arb_identifier(), arb_version()).prop_map(|(name, version)| ToolInfo { name, version })
 }
 
-/// Generate arbitrary RepoInfo instances.
-fn arb_repo_info() -> impl Strategy<Value = RepoInfo> {
-    (arb_path(), arb_repo_detected()).prop_map(|(root, detected)| RepoInfo { root, detected })
-}
-
-/// Generate arbitrary Inputs instances.
-fn arb_inputs() -> impl Strategy<Value = Inputs> {
+/// Generate arbitrary Summary instances.
+fn arb_summary() -> impl Strategy<Value = Summary> {
     (
-        proptest::option::of(arb_path()),
-        proptest::option::of(arb_path()),
-        proptest::option::of(arb_path()),
-        proptest::option::of(arb_path()),
+        0usize..100,
+        proptest::collection::btree_map(arb_identifier(), 0usize..100, 0..5),
+        proptest::collection::btree_map(arb_identifier(), 0usize..100, 0..5),
     )
-        .prop_map(
-            |(cargo_root, rust_toolchain, tools_checksums, tools_manifest)| Inputs {
-                cargo_root,
-                rust_toolchain,
-                tools_checksums,
-                tools_manifest,
-            },
-        )
+        .prop_map(|(total_findings, by_severity, by_check)| Summary {
+            total_findings,
+            by_severity,
+            by_check,
+        })
 }
 
-/// Generate arbitrary SchemaId instances.
-fn arb_schema_id() -> impl Strategy<Value = SchemaId> {
-    arb_identifier().prop_map(SchemaId)
+/// Generate arbitrary report-level data payloads.
+fn arb_report_data() -> impl Strategy<Value = Option<serde_json::Value>> {
+    prop_oneof![
+        Just(None),
+        arb_message().prop_map(|msg| Some(serde_json::json!({ "note": msg }))),
+    ]
 }
 
 /// Generate arbitrary Report instances.
 fn arb_report() -> impl Strategy<Value = Report> {
     (
-        arb_schema_id(),
-        arb_tool_info(),
-        arb_run_info(),
-        arb_repo_info(),
-        arb_inputs(),
-        proptest::collection::vec(arb_check_report(), 0..10),
-        arb_summary(),
+        proptest::option::of(arb_tool_info()),
+        proptest::option::of(arb_run_info()),
+        arb_verdict(),
+        proptest::collection::vec(arb_finding(), 0..10),
+        proptest::option::of(arb_summary()),
+        arb_report_data(),
     )
-        .prop_map(
-            |(schema, tool, run, repo, inputs, checks, summary)| Report {
-                schema,
-                tool,
-                run,
-                repo,
-                inputs,
-                checks,
-                summary,
-            },
-        )
+        .prop_map(|(tool, run, verdict, findings, summary, data)| Report {
+            schema: Report::SCHEMA_V1.to_string(),
+            tool,
+            run,
+            verdict,
+            findings,
+            summary,
+            data,
+        })
 }
 
 // =============================================================================
@@ -324,18 +312,57 @@ fn arb_checksums_policy() -> impl Strategy<Value = ChecksumsPolicy> {
     )
 }
 
+/// Generate arbitrary EditionPolicy instances.
+fn arb_edition_policy() -> impl Strategy<Value = EditionPolicy> {
+    (
+        any::<bool>(),
+        any::<bool>(),
+        proptest::collection::vec(arb_identifier(), 0..5),
+    )
+        .prop_map(
+            |(require_consistent, allow_per_crate_override, allow_overrides)| EditionPolicy {
+                require_consistent,
+                allow_per_crate_override,
+                allow_overrides,
+            },
+        )
+}
+
+/// Generate arbitrary MemberOrderingPolicy instances.
+fn arb_member_ordering_policy() -> impl Strategy<Value = MemberOrderingPolicy> {
+    any::<bool>().prop_map(|require_sorted| MemberOrderingPolicy { require_sorted })
+}
+
+/// Generate arbitrary LockfilePolicy instances.
+fn arb_lockfile_policy() -> impl Strategy<Value = LockfilePolicy> {
+    (any::<bool>(), any::<bool>()).prop_map(|(require_for_binaries, warn_for_libraries)| {
+        LockfilePolicy {
+            require_for_binaries,
+            warn_for_libraries,
+        }
+    })
+}
+
 /// Generate arbitrary Policy instances.
 fn arb_policy() -> impl Strategy<Value = Policy> {
     (
         arb_msrv_policy(),
         arb_toolchain_policy(),
         arb_checksums_policy(),
+        arb_edition_policy(),
+        arb_member_ordering_policy(),
+        arb_lockfile_policy(),
     )
-        .prop_map(|(msrv, toolchain, checksums)| Policy {
-            msrv,
-            toolchain,
-            checksums,
-        })
+        .prop_map(
+            |(msrv, toolchain, checksums, edition, member_ordering, lockfile)| Policy {
+                msrv,
+                toolchain,
+                checksums,
+                edition,
+                member_ordering,
+                lockfile,
+            },
+        )
 }
 
 /// Generate arbitrary CheckConfig instances.
@@ -357,13 +384,15 @@ fn arb_check_config() -> impl Strategy<Value = CheckConfig> {
 /// Generate arbitrary Config instances.
 fn arb_config() -> impl Strategy<Value = Config> {
     (
+        arb_profile(),
         arb_defaults(),
         arb_paths_config(),
         arb_policy(),
         proptest::collection::vec(arb_check_config(), 0..5),
         proptest::collection::btree_map(arb_identifier(), arb_message(), 0..5),
     )
-        .prop_map(|(defaults, paths, policy, checks, meta)| Config {
+        .prop_map(|(profile, defaults, paths, policy, checks, meta)| Config {
+            profile,
             defaults,
             paths,
             policy,
@@ -439,20 +468,23 @@ proptest! {
         let parsed: Report = serde_json::from_str(&json_str).expect("JSON should parse back to Report");
 
         // Verify the round-trip produces equivalent data
-        prop_assert_eq!(report.schema.0, parsed.schema.0);
-        prop_assert_eq!(report.tool.name, parsed.tool.name);
-        prop_assert_eq!(report.tool.version, parsed.tool.version);
-        prop_assert_eq!(report.run.id, parsed.run.id);
-        prop_assert_eq!(report.run.started_at, parsed.run.started_at);
-        prop_assert_eq!(report.run.ended_at, parsed.run.ended_at);
-        prop_assert_eq!(report.repo.root, parsed.repo.root);
-        prop_assert_eq!(report.repo.detected.is_workspace, parsed.repo.detected.is_workspace);
-        prop_assert_eq!(report.repo.detected.members, parsed.repo.detected.members);
-        prop_assert_eq!(report.inputs, parsed.inputs);
-        prop_assert_eq!(report.checks.len(), parsed.checks.len());
-        prop_assert_eq!(report.summary.counts, parsed.summary.counts);
-        prop_assert_eq!(report.summary.verdict, parsed.summary.verdict);
-        prop_assert_eq!(report.summary.reasons, parsed.summary.reasons);
+        prop_assert_eq!(report.schema, parsed.schema);
+        prop_assert_eq!(report.tool, parsed.tool);
+        prop_assert_eq!(report.run, parsed.run);
+        prop_assert_eq!(report.verdict, parsed.verdict);
+        prop_assert_eq!(report.findings.len(), parsed.findings.len());
+        prop_assert_eq!(report.data, parsed.data);
+
+        // Compare summary if present
+        match (&report.summary, &parsed.summary) {
+            (Some(s1), Some(s2)) => {
+                prop_assert_eq!(s1.total_findings, s2.total_findings);
+                prop_assert_eq!(&s1.by_severity, &s2.by_severity);
+                prop_assert_eq!(&s1.by_check, &s2.by_check);
+            }
+            (None, None) => {}
+            _ => prop_assert!(false, "Summary presence mismatch"),
+        }
     }
 
     /// Additional test: Report JSON output is always valid JSON

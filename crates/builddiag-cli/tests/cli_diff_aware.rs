@@ -96,9 +96,15 @@ fn always_flag_forces_all_checks_to_run() {
     let content = fs::read_to_string(&report_path).unwrap();
     let report: serde_json::Value = serde_json::from_str(&content).unwrap();
 
-    // Verify checks were run
-    let checks = report["checks"].as_array().unwrap();
-    assert!(!checks.is_empty(), "checks should be present in report");
+    // Verify report has the expected structure (new schema uses flat findings array)
+    assert!(
+        report["verdict"].is_string(),
+        "verdict should be present in report"
+    );
+    assert!(
+        report["findings"].is_array(),
+        "findings should be present in report"
+    );
 }
 
 /// Test: --always flag works with --diff-aware flag.
@@ -152,13 +158,19 @@ diff_aware = true
     // Should succeed because --always forces all checks to run
     cmd.assert().success().code(0);
 
-    // Verify report was created with checks
+    // Verify report was created with expected structure
     let report_path = dir.path().join("artifacts/builddiag/report.json");
     let content = fs::read_to_string(&report_path).unwrap();
     let report: serde_json::Value = serde_json::from_str(&content).unwrap();
 
-    let checks = report["checks"].as_array().unwrap();
-    assert!(!checks.is_empty(), "checks should be present in report");
+    assert!(
+        report["verdict"].is_string(),
+        "verdict should be present in report"
+    );
+    assert!(
+        report["findings"].is_array(),
+        "findings should be present in report"
+    );
 }
 
 /// Test: Without --always flag, checks still run (default behavior).
@@ -317,10 +329,13 @@ fn diff_aware_gracefully_handles_non_git_repo() {
     let content = fs::read_to_string(&report_path).unwrap();
     let report: serde_json::Value = serde_json::from_str(&content).unwrap();
 
-    let checks = report["checks"].as_array().unwrap();
     assert!(
-        !checks.is_empty(),
-        "checks should run when diff-aware fails open"
+        report["verdict"].is_string(),
+        "verdict should be present when diff-aware fails open"
+    );
+    assert!(
+        report["findings"].is_array(),
+        "findings should be present when diff-aware fails open"
     );
 }
 
@@ -558,7 +573,7 @@ fn diff_aware_with_custom_output_paths() {
 /// Test: Diff-aware mode with GitHub annotations.
 /// _Requirements: 6.4_
 #[test]
-fn diff_aware_with_github_annotations() {
+fn diff_aware_with_annotations_github() {
     let dir = TempDir::new().unwrap();
     create_valid_workspace(&dir);
 
@@ -567,7 +582,8 @@ fn diff_aware_with_github_annotations() {
         .arg("--root")
         .arg(dir.path())
         .arg("--diff-aware")
-        .arg("--github-annotations");
+        .arg("--annotations")
+        .arg("github");
 
     // Should succeed (valid workspace, no findings to annotate)
     cmd.assert().success().code(0);
@@ -601,19 +617,24 @@ fn diff_aware_produces_deterministic_output() {
         let content = fs::read_to_string(&report_path).unwrap();
         let report: serde_json::Value = serde_json::from_str(&content).unwrap();
 
-        // Extract checks and summary for comparison (excluding timestamps)
-        let checks = report["checks"].clone();
+        // Extract findings, verdict and summary for comparison (excluding timestamps)
+        let findings = report["findings"].clone();
+        let verdict = report["verdict"].clone();
         let summary = report["summary"].clone();
-        reports.push((checks, summary));
+        reports.push((findings, verdict, summary));
     }
 
-    // Verify both runs produced the same checks and summary
+    // Verify both runs produced the same findings, verdict and summary
     assert_eq!(
         reports[0].0, reports[1].0,
-        "checks should be identical across runs"
+        "findings should be identical across runs"
     );
     assert_eq!(
         reports[0].1, reports[1].1,
+        "verdict should be identical across runs"
+    );
+    assert_eq!(
+        reports[0].2, reports[1].2,
         "summary should be identical across runs"
     );
 }

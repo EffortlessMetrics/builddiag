@@ -1,0 +1,62 @@
+# Config that disables every check — produces a pass verdict (nothing to evaluate).
+profile = "oss"
+
+[[checks]]
+id = "rust.msrv_defined"
+enabled = false
+
+[[checks]]
+id = "rust.msrv_consistent"
+enabled = false
+
+[[checks]]
+id = "rust.toolchain_pinning"
+enabled = false
+
+[[checks]]
+id = "rust.toolchain_msrv_relation"
+enabled = false
+
+[[checks]]
+id = "rust.edition_deprecations"
+enabled = false
+
+[[checks]]
+id = "workspace.resolver_v2"
+enabled = false
+
+[[checks]]
+id = "workspace.edition_consistent"
+enabled = false
+
+[[checks]]
+id = "workspace.member_ordering"
+enabled = false
+
+[[checks]]
+id = "workspace.publish_ready"
+enabled = false
+
+[[checks]]
+id = "deps.duplicate_versions"
+enabled = false
+
+[[checks]]
+id = "deps.lockfile_present"
+enabled = false
+
+[[checks]]
+id = "deps.wildcard_version"
+enabled = false
+
+[[checks]]
+id = "deps.path_missing_version"
+enabled = false
+
+[[checks]]
+id = "deps.workspace_inheritance"
+enabled = false
+
+[[checks]]
+id = "deps.security_advisory"
+enabled = false

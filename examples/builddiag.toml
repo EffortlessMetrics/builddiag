@@ -1,0 +1,126 @@
+# Example builddiag configuration file
+# Copy this to your project root as `.builddiag.toml` and customize as needed.
+#
+# All fields have sensible defaults. An empty config file is valid.
+# Run `builddiag list-checks` to see all available checks and their profile severities.
+# Run `builddiag explain <check-id>` for detailed documentation on any check.
+
+# Profile preset that configures check severities.
+# Options: "oss" (default), "team", "strict"
+#
+# - oss: Warn-heavy defaults, minimal friction. Good for open source projects.
+#        Tools checks are skipped by default.
+# - team: Stronger gating for organizational projects.
+#         All checks enabled, most at warn level.
+# - strict: Maximum enforcement for CI/release discipline.
+#           All checks at error severity.
+#
+# Can be overridden via CLI: `builddiag check --profile strict`
+profile = "oss"
+
+[defaults]
+# When to exit with failure. Options: "error" (default), "warn", "never"
+fail_on = "error"
+
+# Directory for output files (report.json, comment.md)
+out_dir = "artifacts/builddiag"
+
+# Enable diff-aware mode to only run checks triggered by changed files.
+# Useful in CI for faster PR checks.
+diff_aware = false
+
+# Git refs for diff-aware mode
+base = "origin/main"
+head = "HEAD"
+
+[paths]
+# All paths are relative to the repository root.
+# Customize if your project uses non-standard locations.
+cargo_root = "Cargo.toml"
+rust_toolchain = "rust-toolchain.toml"
+tools_checksums = "scripts/tools.sha256"
+tools_manifest = "scripts/tools.toml"
+
+# ============================================================================
+# MSRV Policy
+# Controls how builddiag validates Minimum Supported Rust Version
+# ============================================================================
+[policy.msrv]
+# Require MSRV to be explicitly defined
+require_defined = true
+
+# Where MSRV should be defined. Options: "workspace" (default), "any"
+# - workspace: MSRV must be in workspace.package.rust-version
+# - any: MSRV can be in any crate's package.rust-version
+source = "workspace"
+
+# Allow individual crates to have different MSRV from workspace
+allow_per_crate_override = false
+
+# Specific crates allowed to override (only used if allow_per_crate_override = false)
+# Example: allow_overrides = ["crates/legacy-crate/Cargo.toml"]
+allow_overrides = []
+
+# ============================================================================
+# Toolchain Policy
+# Controls how builddiag validates rust-toolchain.toml
+# ============================================================================
+[policy.toolchain]
+# Require toolchain to be pinned to a specific version (not "stable" or "nightly")
+require_pinned = true
+
+# Required relationship between toolchain version and MSRV.
+# Options: "equals" (default), "at_least"
+# - equals: Toolchain must exactly match MSRV (ensures CI tests actual MSRV)
+# - at_least: Toolchain can be newer than MSRV (allows using newer features in dev)
+relation_to_msrv = "equals"
+
+# Allow nightly toolchain (normally disallowed)
+allow_nightly = false
+
+# ============================================================================
+# Checksums Policy
+# Controls how builddiag validates tool checksums
+# Note: In the "oss" profile, these checks are skipped by default
+# ============================================================================
+[policy.checksums]
+# Require a checksums file to exist
+require_file = true
+
+# Require all tools declared in manifest to have checksums
+require_coverage = false
+
+# Actually verify local tool files match recorded checksums.
+# This is a "machine truth" check - only enable if you want builddiag
+# to verify your local environment matches recorded hashes.
+verify_local_files = false
+
+# ============================================================================
+# Per-Check Overrides
+# Override profile defaults for specific checks
+# ============================================================================
+
+# Example: Disable the MSRV consistency check
+# [[checks]]
+# id = "rust.msrv_consistent"
+# enabled = false
+
+# Example: Override severity for toolchain pinning to error (even in oss profile)
+# [[checks]]
+# id = "rust.toolchain_pinning"
+# severity = "error"
+# enabled = true
+
+# Example: Custom triggers for diff-aware mode
+# [[checks]]
+# id = "rust.msrv_defined"
+# triggers = ["Cargo.toml", "crates/*/Cargo.toml"]
+
+# ============================================================================
+# Metadata
+# Arbitrary key-value pairs for downstream tooling
+# ============================================================================
+[meta]
+# Example: Mark this config for a specific repo or team
+# owner = "platform-team"
+# version = "1"

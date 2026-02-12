@@ -1,22 +1,31 @@
 [package]
 name = "builddiag-repo"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Repository state loading for builddiag build contract validator"
-repository = "https://github.com/user/builddiag"
-homepage = "https://github.com/user/builddiag"
+repository.workspace = true
+homepage.workspace = true
+description = "Internal repo loading for builddiag (not intended for direct use)"
 keywords = ["rust", "build", "validation"]
 categories = ["development-tools"]
+
+[features]
+default = ["cache"]
+cache = ["dep:serde_json", "dep:sha2", "dep:hex"]
 
 [dependencies]
 anyhow.workspace = true
 serde.workspace = true
+serde_json = { workspace = true, optional = true }
+sha2 = { workspace = true, optional = true }
+hex = { workspace = true, optional = true }
 toml.workspace = true
 cargo_metadata.workspace = true
 camino.workspace = true
-builddiag-domain = { path = "../builddiag-domain" }
-builddiag-types = { path = "../builddiag-types" }
+globset.workspace = true
+builddiag-domain = { path = "../builddiag-domain", version = "0.2.0" }
+builddiag-types = { path = "../builddiag-types", version = "0.2.0" }
 
 [dev-dependencies]
 tempfile.workspace = true
+proptest.workspace = true

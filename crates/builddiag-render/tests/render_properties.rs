@@ -6,18 +6,20 @@
 //! - Deterministic output ordering (Property 5)
 //! - Markdown rendering consistency
 //! - GitHub annotation formatting
+//! - Budget-aware truncation
 //!
 //! # Properties Tested
 //!
 //! - **Property 5**: Deterministic Output Ordering (Requirements 8.8)
 //! - Markdown output consistency (Requirements 3.5)
 //! - GitHub annotation formatting (Requirements 3.6)
+//! - Budget-aware rendering with truncation
 
-use builddiag_render::{render_github_annotations, render_markdown};
-use builddiag_types::{
-    CheckReport, CheckStatus, Finding, Inputs, RepoDetected, RepoInfo, Report, RunInfo, SchemaId,
-    Severity, Summary, SummaryCounts, ToolInfo, Verdict,
+use builddiag_render::{
+    RenderOptions, render_github_annotations, render_github_annotations_with_options,
+    render_markdown, render_markdown_with_options,
 };
+use builddiag_types::{Finding, HostInfo, Location, Report, RunInfo, Severity, ToolInfo, Verdict};
 use chrono::{TimeZone, Utc};
 use proptest::prelude::*;
 
@@ -63,16 +65,6 @@ fn arb_severity() -> impl Strategy<Value = Severity> {
     ]
 }
 
-/// Generate arbitrary CheckStatus values.
-fn arb_check_status() -> impl Strategy<Value = CheckStatus> {
-    prop_oneof![
-        Just(CheckStatus::Pass),
-        Just(CheckStatus::Warn),
-        Just(CheckStatus::Fail),
-        Just(CheckStatus::Skip),
-    ]
-}
-
 /// Generate arbitrary Verdict values.
 fn arb_verdict() -> impl Strategy<Value = Verdict> {
     prop_oneof![
@@ -80,104 +72,62 @@ fn arb_verdict() -> impl Strategy<Value = Verdict> {
         Just(Verdict::Warn),
         Just(Verdict::Fail),
         Just(Verdict::Skip),
+        Just(Verdict::Error),
     ]
+}
+
+/// Generate arbitrary Location instances.
+fn arb_location() -> impl Strategy<Value = Location> {
+    (
+        arb_path(),
+        proptest::option::of(1u32..1000),
+        proptest::option::of(1u32..200),
+    )
+        .prop_map(|(path, line, col)| Location { path, line, col })
 }
 
 /// Generate arbitrary Finding instances.
 fn arb_finding() -> impl Strategy<Value = Finding> {
     (
+        arb_identifier(), // check_id
+        arb_identifier(), // code
         arb_severity(),
-        arb_identifier(),
         arb_message(),
-        proptest::option::of(arb_path()),
-        proptest::option::of(1u32..1000),
-        proptest::option::of(1u32..200),
+        proptest::option::of(arb_location()),
     )
-        .prop_map(|(severity, code, message, path, line, column)| Finding {
-            severity,
+        .prop_map(|(check_id, code, severity, message, location)| Finding {
+            check_id,
             code,
+            severity,
             message,
-            path,
-            line,
-            column,
+            location,
         })
 }
 
 /// Generate arbitrary Finding instances with path and line (for GitHub annotations).
-#[allow(dead_code)] // Will be used in subsequent tasks (5.2, 5.3)
 fn arb_finding_with_location() -> impl Strategy<Value = Finding> {
     (
+        arb_identifier(), // check_id
+        arb_identifier(), // code
         arb_severity(),
-        arb_identifier(),
         arb_message(),
         arb_path(),
         1u32..1000,
         proptest::option::of(1u32..200),
     )
-        .prop_map(|(severity, code, message, path, line, column)| Finding {
-            severity,
-            code,
-            message,
-            path: Some(path),
-            line: Some(line),
-            column,
-        })
-}
-
-/// Generate arbitrary CheckReport instances.
-fn arb_check_report() -> impl Strategy<Value = CheckReport> {
-    (
-        arb_identifier(),
-        arb_check_status(),
-        proptest::collection::vec(arb_finding(), 0..5),
-        proptest::option::of(arb_message()),
-    )
-        .prop_map(|(id, status, findings, skipped_reason)| CheckReport {
-            id,
-            status,
-            findings,
-            skipped_reason,
-        })
-}
-
-/// Generate CheckReport instances that will produce findings in markdown output.
-/// These have Warn or Fail status with at least one finding.
-#[allow(dead_code)] // Will be used in subsequent tasks (5.2, 5.3)
-fn arb_check_report_with_findings() -> impl Strategy<Value = CheckReport> {
-    (
-        arb_identifier(),
-        prop_oneof![Just(CheckStatus::Warn), Just(CheckStatus::Fail)],
-        proptest::collection::vec(arb_finding(), 1..5),
-    )
-        .prop_map(|(id, status, findings)| CheckReport {
-            id,
-            status,
-            findings,
-            skipped_reason: None,
-        })
-}
-
-/// Generate arbitrary SummaryCounts instances.
-fn arb_summary_counts() -> impl Strategy<Value = SummaryCounts> {
-    (0usize..100, 0usize..100, 0usize..100).prop_map(|(info, warn, error)| SummaryCounts {
-        info,
-        warn,
-        error,
-    })
-}
-
-/// Generate arbitrary Summary instances.
-fn arb_summary() -> impl Strategy<Value = Summary> {
-    (
-        arb_summary_counts(),
-        arb_verdict(),
-        proptest::collection::vec(arb_message(), 0..5),
-    )
-        .prop_map(|(counts, verdict, reasons)| Summary {
-            counts,
-            verdict,
-            reasons,
-        })
+        .prop_map(
+            |(check_id, code, severity, message, path, line, col)| Finding {
+                check_id,
+                code,
+                severity,
+                message,
+                location: Some(Location {
+                    path,
+                    line: Some(line),
+                    col,
+                }),
+            },
+        )
 }
 
 /// Generate arbitrary ToolInfo instances.
@@ -203,104 +153,100 @@ fn arb_datetime() -> impl Strategy<Value = chrono::DateTime<Utc>> {
         })
 }
 
-/// Generate arbitrary RunInfo instances.
-fn arb_run_info() -> impl Strategy<Value = RunInfo> {
+/// Generate arbitrary HostInfo instances.
+fn arb_host_info() -> impl Strategy<Value = HostInfo> {
     (
-        arb_identifier(),
-        arb_datetime(),
-        proptest::option::of(arb_datetime()),
+        prop_oneof![Just("linux"), Just("macos"), Just("windows")],
+        prop_oneof![Just("x86_64"), Just("aarch64")],
     )
-        .prop_map(|(id, started_at, ended_at)| RunInfo {
-            id,
-            started_at,
-            ended_at,
+        .prop_map(|(os, arch)| HostInfo {
+            os: os.to_string(),
+            arch: arch.to_string(),
         })
 }
 
-/// Generate arbitrary RepoDetected instances.
-fn arb_repo_detected() -> impl Strategy<Value = RepoDetected> {
-    (any::<bool>(), 1usize..20).prop_map(|(is_workspace, members)| RepoDetected {
-        is_workspace,
-        members,
-    })
-}
-
-/// Generate arbitrary RepoInfo instances.
-fn arb_repo_info() -> impl Strategy<Value = RepoInfo> {
-    (arb_path(), arb_repo_detected()).prop_map(|(root, detected)| RepoInfo { root, detected })
-}
-
-/// Generate arbitrary Inputs instances.
-fn arb_inputs() -> impl Strategy<Value = Inputs> {
+/// Generate arbitrary RunInfo instances.
+fn arb_run_info() -> impl Strategy<Value = RunInfo> {
     (
-        proptest::option::of(arb_path()),
-        proptest::option::of(arb_path()),
-        proptest::option::of(arb_path()),
-        proptest::option::of(arb_path()),
+        arb_datetime(),
+        proptest::option::of(arb_datetime()),
+        0u64..10000,
+        arb_host_info(),
     )
-        .prop_map(
-            |(cargo_root, rust_toolchain, tools_checksums, tools_manifest)| Inputs {
-                cargo_root,
-                rust_toolchain,
-                tools_checksums,
-                tools_manifest,
-            },
-        )
-}
-
-/// Generate arbitrary SchemaId instances.
-fn arb_schema_id() -> impl Strategy<Value = SchemaId> {
-    arb_identifier().prop_map(SchemaId)
+        .prop_map(|(started_at, ended_at, duration_ms, host)| RunInfo {
+            started_at,
+            ended_at,
+            duration_ms,
+            host,
+            git: None,
+        })
 }
 
 /// Generate arbitrary Report instances.
 fn arb_report() -> impl Strategy<Value = Report> {
     (
-        arb_schema_id(),
-        arb_tool_info(),
-        arb_run_info(),
-        arb_repo_info(),
-        arb_inputs(),
-        proptest::collection::vec(arb_check_report(), 0..10),
-        arb_summary(),
+        proptest::option::of(arb_tool_info()),
+        proptest::option::of(arb_run_info()),
+        arb_verdict(),
+        proptest::collection::vec(arb_finding(), 0..20),
     )
-        .prop_map(
-            |(schema, tool, run, repo, inputs, checks, summary)| Report {
-                schema,
-                tool,
-                run,
-                repo,
-                inputs,
-                checks,
-                summary,
-            },
-        )
+        .prop_map(|(tool, run, verdict, findings)| Report {
+            schema: Report::SCHEMA_V1.to_string(),
+            tool,
+            run,
+            verdict,
+            findings,
+            summary: None,
+            data: None,
+        })
 }
 
 /// Generate Report instances that will produce non-empty markdown output.
-/// These have at least one check with Warn or Fail status and findings.
-#[allow(dead_code)] // Will be used in subsequent tasks (5.2, 5.3)
+/// These have at least one non-info finding.
 fn arb_report_with_findings() -> impl Strategy<Value = Report> {
     (
-        arb_schema_id(),
-        arb_tool_info(),
-        arb_run_info(),
-        arb_repo_info(),
-        arb_inputs(),
-        proptest::collection::vec(arb_check_report_with_findings(), 1..5),
-        arb_summary(),
+        proptest::option::of(arb_tool_info()),
+        proptest::option::of(arb_run_info()),
+        arb_verdict(),
+        proptest::collection::vec(arb_finding(), 1..10),
     )
-        .prop_map(
-            |(schema, tool, run, repo, inputs, checks, summary)| Report {
-                schema,
-                tool,
-                run,
-                repo,
-                inputs,
-                checks,
-                summary,
-            },
-        )
+        .prop_map(|(tool, run, verdict, findings)| Report {
+            schema: Report::SCHEMA_V1.to_string(),
+            tool,
+            run,
+            verdict,
+            findings,
+            summary: None,
+            data: None,
+        })
+}
+
+/// Generate Report instances that will produce GitHub annotations.
+/// These have findings with path and line information.
+fn arb_report_with_located_findings() -> impl Strategy<Value = Report> {
+    (
+        proptest::option::of(arb_tool_info()),
+        proptest::option::of(arb_run_info()),
+        arb_verdict(),
+        proptest::collection::vec(arb_finding_with_location(), 1..10),
+    )
+        .prop_map(|(tool, run, verdict, findings)| Report {
+            schema: Report::SCHEMA_V1.to_string(),
+            tool,
+            run,
+            verdict,
+            findings,
+            summary: None,
+            data: None,
+        })
+}
+
+/// Generate arbitrary RenderOptions.
+fn arb_render_options() -> impl Strategy<Value = RenderOptions> {
+    (1usize..100, any::<bool>()).prop_map(|(max_findings, show_info)| RenderOptions {
+        max_findings,
+        show_info,
+    })
 }
 
 // =============================================================================
@@ -356,9 +302,8 @@ proptest! {
         let md = render_markdown(&report);
 
         // Check if there are any findings that would be displayed
-        let has_displayable_findings = report.checks.iter().any(|c| {
-            (c.status == CheckStatus::Warn || c.status == CheckStatus::Fail) && !c.findings.is_empty()
-        });
+        // (non-info findings since show_info defaults to false)
+        let has_displayable_findings = report.findings.iter().any(|f| f.severity != Severity::Info);
 
         if has_displayable_findings {
             // When there are findings, should have table and reproduce section
@@ -403,6 +348,21 @@ proptest! {
         );
     }
 
+    /// Verify deterministic output with custom options.
+    #[test]
+    fn prop_deterministic_output_with_options(
+        report in arb_report(),
+        options in arb_render_options()
+    ) {
+        let md1 = render_markdown_with_options(&report, &options);
+        let md2 = render_markdown_with_options(&report, &options);
+        prop_assert_eq!(md1, md2);
+
+        let ann1 = render_github_annotations_with_options(&report, &options);
+        let ann2 = render_github_annotations_with_options(&report, &options);
+        prop_assert_eq!(ann1, ann2);
+    }
+
     // =========================================================================
     // Markdown Consistency Property
     // =========================================================================
@@ -413,8 +373,6 @@ proptest! {
     /// Verify that markdown output contains expected sections for any report:
     /// - Header with verdict icon
     /// - Summary counts (errors, warnings)
-    /// - Findings table when there are findings
-    /// - Reproduce section when there are findings
     #[test]
     fn prop_markdown_consistency(report in arb_report()) {
         let md = render_markdown(&report);
@@ -425,8 +383,9 @@ proptest! {
             "Markdown should start with builddiag header"
         );
 
-        // Verify verdict icon is present (one of ✅, ⚠️, ❌, ⏭️)
-        let has_verdict_icon = md.contains("✅") || md.contains("⚠️") || md.contains("❌") || md.contains("⏭️");
+        // Verify verdict icon is present (one of the expected icons)
+        let has_verdict_icon = md.contains('\u{2705}') || md.contains('\u{26A0}')
+            || md.contains('\u{274C}') || md.contains('\u{23ED}') || md.contains('\u{1F4A5}');
         prop_assert!(
             has_verdict_icon,
             "Markdown header should contain a verdict icon"
@@ -441,66 +400,6 @@ proptest! {
             md.contains("warnings"),
             "Markdown should contain warning count"
         );
-
-        // Verify the counts in the header match the report summary
-        let expected_error_count = format!("{} errors", report.summary.counts.error);
-        let expected_warn_count = format!("{} warnings", report.summary.counts.warn);
-        prop_assert!(
-            md.contains(&expected_error_count),
-            "Markdown should contain correct error count: expected '{}' in output",
-            expected_error_count
-        );
-        prop_assert!(
-            md.contains(&expected_warn_count),
-            "Markdown should contain correct warning count: expected '{}' in output",
-            expected_warn_count
-        );
-
-        // Check if there are any findings that would be displayed
-        // (only Warn or Fail status checks with non-empty findings are shown)
-        let has_displayable_findings = report.checks.iter().any(|c| {
-            (c.status == CheckStatus::Warn || c.status == CheckStatus::Fail) && !c.findings.is_empty()
-        });
-
-        if has_displayable_findings {
-            // 3. Findings table - should be present when there are findings
-            prop_assert!(
-                md.contains("| severity |"),
-                "Markdown should contain findings table header when there are findings"
-            );
-            prop_assert!(
-                md.contains("| check |"),
-                "Markdown should contain check column in findings table"
-            );
-            prop_assert!(
-                md.contains("| location |"),
-                "Markdown should contain location column in findings table"
-            );
-            prop_assert!(
-                md.contains("| message |"),
-                "Markdown should contain message column in findings table"
-            );
-            prop_assert!(
-                md.contains("|---|---|---|---|"),
-                "Markdown should contain table separator row"
-            );
-
-            // 4. Reproduce section - should be present when there are findings
-            prop_assert!(
-                md.contains("Reproduce:"),
-                "Markdown should contain Reproduce section when there are findings"
-            );
-            prop_assert!(
-                md.contains("builddiag check"),
-                "Markdown should contain builddiag check command in Reproduce section"
-            );
-        } else {
-            // When no findings, should show "No findings." message
-            prop_assert!(
-                md.contains("No findings."),
-                "Markdown should contain 'No findings.' when there are no displayable findings"
-            );
-        }
     }
 
     /// Feature: comprehensive-test-coverage, Markdown Consistency with Findings
@@ -510,7 +409,12 @@ proptest! {
     /// the expected table structure and reproduce section.
     #[test]
     fn prop_markdown_consistency_with_findings(report in arb_report_with_findings()) {
-        let md = render_markdown(&report);
+        // Use show_info: true to ensure we see all findings
+        let options = RenderOptions {
+            max_findings: 1000,
+            show_info: true,
+        };
+        let md = render_markdown_with_options(&report, &options);
 
         // Header should always be present
         prop_assert!(
@@ -520,7 +424,7 @@ proptest! {
 
         // For reports with findings, table should always be present
         prop_assert!(
-            md.contains("| severity | check | location | message |"),
+            md.contains("| severity | check | code | location | message |"),
             "Markdown should contain complete table header for reports with findings"
         );
 
@@ -539,5 +443,143 @@ proptest! {
             !md.contains("No findings."),
             "Markdown should not contain 'No findings.' when there are findings"
         );
+    }
+
+    // =========================================================================
+    // Budget-Aware Rendering Properties
+    // =========================================================================
+
+    /// Verify that markdown output respects max_findings budget.
+    #[test]
+    fn prop_markdown_respects_budget(report in arb_report_with_findings()) {
+        let options = RenderOptions {
+            max_findings: 3,
+            show_info: true,
+        };
+        let md = render_markdown_with_options(&report, &options);
+
+        // Count table rows (data rows start with "| error", "| warn", or "| info")
+        let row_count = md.lines()
+            .filter(|l| l.starts_with("| error") || l.starts_with("| warn") || l.starts_with("| info"))
+            .count();
+
+        prop_assert!(
+            row_count <= 3,
+            "Markdown should have at most max_findings rows, got {}",
+            row_count
+        );
+    }
+
+    /// Verify that GitHub annotations respect max_findings budget.
+    #[test]
+    fn prop_annotations_respect_budget(report in arb_report_with_located_findings()) {
+        let options = RenderOptions {
+            max_findings: 5,
+            show_info: true,
+        };
+        let annotations = render_github_annotations_with_options(&report, &options);
+
+        prop_assert!(
+            annotations.len() <= 5,
+            "Should have at most max_findings annotations, got {}",
+            annotations.len()
+        );
+    }
+
+    /// Verify that show_info=false filters out info-level findings.
+    #[test]
+    fn prop_show_info_filters_correctly(report in arb_report_with_findings()) {
+        let options_no_info = RenderOptions {
+            max_findings: 1000,
+            show_info: false,
+        };
+
+        let md_no_info = render_markdown_with_options(&report, &options_no_info);
+
+        // With show_info=false, should not contain "| info |"
+        prop_assert!(
+            !md_no_info.contains("| info |"),
+            "Markdown with show_info=false should not contain info rows"
+        );
+    }
+
+    // =========================================================================
+    // GitHub Annotation Formatting Properties
+    // =========================================================================
+
+    /// Verify that all GitHub annotations have valid format.
+    #[test]
+    fn prop_github_annotations_format(report in arb_report_with_located_findings()) {
+        let options = RenderOptions {
+            max_findings: 100,
+            show_info: true,
+        };
+        let annotations = render_github_annotations_with_options(&report, &options);
+
+        for ann in &annotations {
+            // Each annotation should start with ::error, ::warning, or ::notice
+            prop_assert!(
+                ann.starts_with("::error") || ann.starts_with("::warning") || ann.starts_with("::notice"),
+                "Annotation should start with valid severity prefix: {}",
+                ann
+            );
+
+            // Should contain file parameter
+            prop_assert!(
+                ann.contains("file="),
+                "Annotation should contain file parameter: {}",
+                ann
+            );
+
+            // Should contain line parameter
+            prop_assert!(
+                ann.contains("line="),
+                "Annotation should contain line parameter: {}",
+                ann
+            );
+
+            // Should contain the delimiter "::" followed by message
+            let parts: Vec<&str> = ann.splitn(2, "::").collect();
+            prop_assert!(
+                parts.len() == 2,
+                "Annotation should have correct format with :: delimiter"
+            );
+        }
+    }
+
+    /// Verify severity ordering in output (errors first, then warnings, then info).
+    #[test]
+    fn prop_findings_sorted_by_severity(report in arb_report_with_findings()) {
+        let options = RenderOptions {
+            max_findings: 1000,
+            show_info: true,
+        };
+        let md = render_markdown_with_options(&report, &options);
+
+        // Extract severity column from each row
+        let severities: Vec<&str> = md.lines()
+            .filter(|l| l.starts_with("| error") || l.starts_with("| warn") || l.starts_with("| info"))
+            .filter_map(|l| l.split('|').nth(1))
+            .map(|s| s.trim())
+            .collect();
+
+        // Verify ordering: all errors should come before warnings, all warnings before info
+        let mut seen_warn = false;
+        let mut seen_info = false;
+        for sev in &severities {
+            match *sev {
+                "error" => {
+                    prop_assert!(!seen_warn && !seen_info, "Errors should come before warnings and info");
+                }
+                "warn" => {
+                    prop_assert!(!seen_info, "Warnings should come before info");
+                    seen_warn = true;
+                }
+                "info" => {
+                    seen_info = true;
+                }
+                _ => {}
+            }
+        }
     }
 }

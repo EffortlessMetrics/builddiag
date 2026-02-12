@@ -1,0 +1,19 @@
+{
+  "schema": "builddiag.report.v1",
+  "tool": {"name": "builddiag", "version": "0.1.0"},
+  "run": {
+    "started_at": "2024-01-01T00:00:00Z",
+    "duration_ms": 500,
+    "host": {"os": "macos", "arch": "aarch64"}
+  },
+  "verdict": "fail",
+  "findings": [
+    {
+      "check_id": "rust.msrv_defined",
+      "code": "missing_msrv",
+      "severity": "error",
+      "message": "Missing rust-version",
+      "location": {"path": "Cargo.toml", "line": 1}
+    }
+  ]
+}

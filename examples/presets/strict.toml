@@ -1,0 +1,26 @@
+# builddiag preset: strict
+#
+# Maximum enforcement for CI/release discipline.
+# All checks at error severity; fails on warnings.
+#
+# Usage:
+#   cp examples/presets/strict.toml .builddiag.toml
+#   builddiag check --config .builddiag.toml
+
+profile = "strict"
+
+[defaults]
+fail_on = "warn"
+out_dir = "artifacts/builddiag"
+
+[policy.msrv]
+require_defined = true
+source = "workspace"
+
+[policy.toolchain]
+require_pinned = true
+relation_to_msrv = "equals"
+
+[policy.checksums]
+require_file = true
+require_coverage = true

@@ -1,0 +1,15 @@
+---
+source: crates/builddiag-render/tests/golden_tests.rs
+expression: md
+---
+## builddiag: ❌ Fail (1 errors, 2 warnings)
+
+| severity | check | code | location | message |
+|---|---|---|---|---|
+| error | rust.msrv_defined | missing_msrv | Cargo.toml:1 | Missing rust-version field in Cargo.toml |
+| warn | rust.toolchain_pinning | unpinned_toolchain | rust-toolchain.toml:2 | Toolchain is not pinned to a specific version |
+| warn | workspace.resolver_v2 | resolver_v1 | Cargo.toml:5 | Workspace uses resolver version 1, consider upgrading to v2 |
+| info | rust.toolchain_pinning | toolchain_channel | rust-toolchain.toml:1 | Detected toolchain channel: stable |
+
+Reproduce:
+`builddiag check --root .`

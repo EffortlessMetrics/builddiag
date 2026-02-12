@@ -1,0 +1,327 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Report",
+  "description": "The main report output from builddiag.\n\nA report contains all information about a validation run, including\nmetadata, findings, and summary statistics.\n\n# Schema Version\n\nThis report follows the `builddiag.report.v1` schema. The `schema` field\nis always set to \"builddiag.report.v1\" for this version.\n\n# Structure\n\n- `schema` - Schema version identifier (const \"builddiag.report.v1\")\n- `tool` - Information about the builddiag version (optional)\n- `run` - Execution metadata (timestamps, duration, host, git) (optional)\n- `verdict` - Overall verdict (Pass, Warn, Fail, Error)\n- `findings` - Flattened list of all findings from all checks\n- `summary` - Optional aggregated statistics\n- `data` - Optional report-level data for downstream tooling",
+  "type": "object",
+  "properties": {
+    "data": {
+      "description": "Optional arbitrary report-level metadata for downstream tooling."
+    },
+    "findings": {
+      "description": "All findings from all checks, flattened into a single list.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Finding"
+      }
+    },
+    "run": {
+      "description": "Information about this execution run.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RunInfo"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "schema": {
+      "description": "Schema identifier for this report format.\nAlways \"builddiag.report.v1\" for this version.",
+      "type": "string"
+    },
+    "summary": {
+      "description": "Summary statistics, if available.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Summary"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "tool": {
+      "description": "Information about the tool that generated this report.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ToolInfo"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "verdict": {
+      "description": "Overall verdict based on all findings.",
+      "$ref": "#/$defs/Verdict"
+    }
+  },
+  "required": [
+    "schema",
+    "verdict",
+    "findings"
+  ],
+  "$defs": {
+    "Finding": {
+      "description": "A single validation finding from a check.\n\nFindings represent individual issues or observations discovered during\nvalidation. Each finding has a severity, a code for programmatic handling,\nand a human-readable message.\n\n# Examples\n\n```\nuse builddiag_types::{Finding, Severity, Location};\n\nlet finding = Finding {\n    check_id: \"rust.msrv_defined\".to_string(),\n    code: \"missing_msrv\".to_string(),\n    severity: Severity::Error,\n    message: \"Missing rust-version in Cargo.toml\".to_string(),\n    location: Some(Location {\n        path: \"Cargo.toml\".to_string(),\n        line: Some(1),\n        col: None,\n    }),\n\n};\n```",
+      "type": "object",
+      "properties": {
+        "check_id": {
+          "description": "Identifier of the check that produced this finding.",
+          "type": "string"
+        },
+        "code": {
+          "description": "Machine-readable code identifying the type of finding.",
+          "type": "string"
+        },
+        "location": {
+          "description": "File location where the finding was detected, if applicable.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Location"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "message": {
+          "description": "Human-readable description of the finding.",
+          "type": "string"
+        },
+        "severity": {
+          "description": "Severity level of this finding.",
+          "$ref": "#/$defs/Severity"
+        }
+      },
+      "required": [
+        "check_id",
+        "code",
+        "severity",
+        "message"
+      ]
+    },
+    "GitInfo": {
+      "description": "Git repository information at the time of the run.",
+      "type": "object",
+      "properties": {
+        "branch": {
+          "description": "Current branch name, if on a branch.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "commit": {
+          "description": "Current commit SHA.",
+          "type": "string"
+        },
+        "dirty": {
+          "description": "Whether the working directory has uncommitted changes.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "commit",
+        "dirty"
+      ]
+    },
+    "HostInfo": {
+      "description": "Information about the host machine where builddiag was executed.",
+      "type": "object",
+      "properties": {
+        "arch": {
+          "description": "CPU architecture (e.g., \"x86_64\", \"aarch64\").",
+          "type": "string"
+        },
+        "os": {
+          "description": "Operating system name (e.g., \"linux\", \"macos\", \"windows\").",
+          "type": "string"
+        }
+      },
+      "required": [
+        "os",
+        "arch"
+      ]
+    },
+    "Location": {
+      "description": "File location information for a finding.\n\nPaths are repo-relative and use forward slashes on all platforms.",
+      "type": "object",
+      "properties": {
+        "col": {
+          "description": "Column number in the file (1-indexed), if applicable.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "line": {
+          "description": "Line number in the file (1-indexed), if applicable.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "path": {
+          "description": "Repository-relative file path (always uses forward slashes).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ]
+    },
+    "RunInfo": {
+      "description": "Information about a single execution run.",
+      "type": "object",
+      "properties": {
+        "duration_ms": {
+          "description": "Duration of the run in milliseconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "ended_at": {
+          "description": "Timestamp when the run completed, if finished (ISO 8601 format).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "git": {
+          "description": "Git repository information, if available.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GitInfo"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "host": {
+          "description": "Information about the host machine.",
+          "$ref": "#/$defs/HostInfo"
+        },
+        "started_at": {
+          "description": "Timestamp when the run started (ISO 8601 format).",
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "started_at",
+        "duration_ms",
+        "host"
+      ]
+    },
+    "Severity": {
+      "description": "Severity level of a finding.\n\nSeverity determines how a finding affects the overall verdict:\n- `Info` - Informational, does not affect verdict\n- `Warn` - Warning, may affect verdict depending on `fail_on` setting\n- `Error` - Error, causes failure unless `fail_on` is set to `Never`",
+      "oneOf": [
+        {
+          "description": "Informational finding that does not indicate a problem.",
+          "type": "string",
+          "const": "info"
+        },
+        {
+          "description": "Warning that may indicate a potential issue.",
+          "type": "string",
+          "const": "warn"
+        },
+        {
+          "description": "Error that indicates a definite problem.",
+          "type": "string",
+          "const": "error"
+        }
+      ]
+    },
+    "Summary": {
+      "description": "Summary of all check results.\n\nThe summary aggregates findings across all checks and provides\ncounts by severity and check.",
+      "type": "object",
+      "properties": {
+        "by_check": {
+          "description": "Count of findings by check ID.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0
+          }
+        },
+        "by_severity": {
+          "description": "Count of findings by severity level (keys: \"info\", \"warn\", \"error\").",
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0
+          }
+        },
+        "total_findings": {
+          "description": "Total number of findings across all checks.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "total_findings",
+        "by_severity",
+        "by_check"
+      ]
+    },
+    "ToolInfo": {
+      "description": "Information about the builddiag tool that generated the report.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Name of the tool (e.g., \"builddiag\").",
+          "type": "string"
+        },
+        "version": {
+          "description": "Version of the tool (e.g., \"0.1.0\").",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ]
+    },
+    "Verdict": {
+      "description": "Overall verdict for the report.\n\nThe verdict summarizes all check results into a single outcome.",
+      "oneOf": [
+        {
+          "description": "All checks passed.",
+          "type": "string",
+          "const": "pass"
+        },
+        {
+          "description": "Some checks produced warnings.",
+          "type": "string",
+          "const": "warn"
+        },
+        {
+          "description": "One or more checks failed.",
+          "type": "string",
+          "const": "fail"
+        },
+        {
+          "description": "All checks were skipped.",
+          "type": "string",
+          "const": "skip"
+        },
+        {
+          "description": "An internal error occurred during execution.",
+          "type": "string",
+          "const": "error"
+        }
+      ]
+    }
+  }
+}

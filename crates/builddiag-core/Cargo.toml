@@ -1,0 +1,26 @@
+[package]
+name = "builddiag-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Public library API for builddiag build contract validation"
+keywords = ["rust", "build", "validation", "ci"]
+categories = ["development-tools"]
+
+[features]
+default = ["cache"]
+cache = ["builddiag-app/cache"]
+
+[dependencies]
+builddiag-app = { path = "../builddiag-app", version = "0.2.0" }
+builddiag-repo = { path = "../builddiag-repo", version = "0.2.0" }
+builddiag-types = { path = "../builddiag-types", version = "0.2.0" }
+builddiag-domain = { path = "../builddiag-domain", version = "0.2.0" }
+anyhow.workspace = true
+camino.workspace = true
+chrono.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

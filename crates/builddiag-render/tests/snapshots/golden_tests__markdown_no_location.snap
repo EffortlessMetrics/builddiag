@@ -1,0 +1,13 @@
+---
+source: crates/builddiag-render/tests/golden_tests.rs
+expression: md
+---
+## builddiag: ❌ Fail (1 errors, 1 warnings)
+
+| severity | check | code | location | message |
+|---|---|---|---|---|
+| error | test.no_location | global_error |  | A finding without any location information |
+| warn | test.no_location | path_only | some/path.rs | A finding with only path, no line |
+
+Reproduce:
+`builddiag check --root .`

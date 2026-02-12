@@ -85,7 +85,7 @@ jobs:
   mutation:
     name: Mutation Testing
     runs-on: ubuntu-latest
-    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.run_mutation == true)
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_mutation == 'true')
     steps:
       - uses: actions/checkout@v4
 
@@ -111,7 +111,7 @@ jobs:
   fuzz:
     name: Fuzz Testing
     runs-on: ubuntu-latest
-    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.run_fuzz == true)
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_fuzz == 'true')
     steps:
       - uses: actions/checkout@v4
 
@@ -125,7 +125,7 @@ jobs:
       - name: Run fuzz tests (5 minutes each)
         run: |
           cd fuzz
-          for target in fuzz_version fuzz_toml fuzz_checksums fuzz_config; do
+          for target in fuzz_version fuzz_toml fuzz_checksums fuzz_config fuzz_report fuzz_render; do
             echo "Fuzzing $target..."
             cargo +nightly fuzz run $target -- -max_total_time=300 || true
           done

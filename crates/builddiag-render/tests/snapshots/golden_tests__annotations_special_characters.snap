@@ -1,0 +1,5 @@
+---
+source: crates/builddiag-render/tests/golden_tests.rs
+expression: "annotations.join(\"\\n\")"
+---
+::error file=file.rs,line=1::[test.special_chars:percent_test] 100%25 complete with newline

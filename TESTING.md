@@ -71,7 +71,7 @@ mod tests {
     #[test]
     fn test_config_defaults() {
         let config = Config::default();
-        assert!(config.policy.msrv.require);
+        assert!(config.policy.msrv.require_defined);
     }
 }
 ```
@@ -207,19 +207,24 @@ cd fuzz && cargo +nightly fuzz run fuzz_version -- -max_total_time=300
 
 # Run all fuzz targets with time limits
 cd fuzz
-for target in fuzz_version fuzz_toml fuzz_checksums fuzz_config; do
+for target in fuzz_version fuzz_toml fuzz_checksums fuzz_config fuzz_report fuzz_render; do
     cargo +nightly fuzz run $target -- -max_total_time=300
 done
 ```
 
 **Fuzz Targets**:
 
-| Target | Description |
-|--------|-------------|
-| `fuzz_version` | Fuzzes `parse_rust_version` function |
-| `fuzz_toml` | Fuzzes rust-toolchain.toml parsing |
-| `fuzz_checksums` | Fuzzes checksums file parsing |
-| `fuzz_config` | Fuzzes Config TOML parsing |
+| Target | Description | Type |
+|--------|-------------|------|
+| `fuzz_version` | Fuzzes `parse_rust_version` function | Byte-based |
+| `fuzz_toml` | Fuzzes rust-toolchain.toml parsing | Byte-based |
+| `fuzz_checksums` | Fuzzes checksums file parsing | Byte-based |
+| `fuzz_config` | Fuzzes Config TOML parsing | Byte-based |
+| `fuzz_report` | Fuzzes Report/Finding JSON parsing | Byte-based |
+| `fuzz_render` | Fuzzes markdown/annotation rendering | Structured (arbitrary) |
+
+**Seed Corpus**:
+Each fuzz target has a seed corpus in `fuzz/corpus/<target>/` containing representative inputs that guide the fuzzer toward interesting code paths. The fuzzer uses these seeds as starting points for mutation.
 
 **Handling Crashes**:
 When a fuzz target discovers a crash, the crashing input is saved to `fuzz/artifacts/<target>/`. Add regression tests for any discovered crashes:

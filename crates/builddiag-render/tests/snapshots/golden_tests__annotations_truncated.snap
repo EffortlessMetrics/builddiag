@@ -1,0 +1,9 @@
+---
+source: crates/builddiag-render/tests/golden_tests.rs
+expression: "annotations.join(\"\\n\")"
+---
+::error file=src/module_0.rs,line=1,col=1::[test.bulk_check:finding_00] Finding number 0 with detailed description
+::error file=src/module_1.rs,line=11::[test.bulk_check:finding_01] Finding number 1 with detailed description
+::error file=src/module_2.rs,line=21,col=3::[test.bulk_check:finding_02] Finding number 2 with detailed description
+::error file=src/module_3.rs,line=31::[test.bulk_check:finding_03] Finding number 3 with detailed description
+::error file=src/module_4.rs,line=41,col=5::[test.bulk_check:finding_04] Finding number 4 with detailed description

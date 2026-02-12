@@ -1,0 +1,7 @@
+[workspace]
+resolver = "2"
+members = ["crates/a"]
+
+[workspace.package]
+rust-version = "1.92"
+edition = "2024"

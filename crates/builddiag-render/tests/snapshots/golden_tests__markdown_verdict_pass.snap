@@ -1,0 +1,7 @@
+---
+source: crates/builddiag-render/tests/golden_tests.rs
+expression: pass_md
+---
+## builddiag: ✅ Pass (0 errors, 0 warnings)
+
+No findings.

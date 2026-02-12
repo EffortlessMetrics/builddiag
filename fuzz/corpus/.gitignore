@@ -1,0 +1,3 @@
+# Ignore auto-generated corpus files (they're binary blobs)
+# But keep the seed files we manually created
+# Note: cargo-fuzz creates many small files during runs

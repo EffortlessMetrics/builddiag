@@ -1,0 +1,101 @@
+{
+  "schema": "sensor.report.v1",
+  "tool": {
+    "name": "builddiag",
+    "version": "0.2.0"
+  },
+  "run": {
+    "started_at": "2026-02-07T05:09:21.340758400Z",
+    "ended_at": "2026-02-07T05:09:21.386785400Z",
+    "duration_ms": 46,
+    "host": {
+      "os": "windows",
+      "arch": "x86_64"
+    },
+    "git": {
+      "commit": "96efe3f0349b6112103fc3d8f373c29d45c3d66c",
+      "branch": "main",
+      "dirty": true
+    },
+    "capabilities": {
+      "checksums": {
+        "status": "unavailable",
+        "reason": "checksums file not found"
+      },
+      "config": {
+        "status": "available"
+      },
+      "diff_aware": {
+        "status": "skipped",
+        "reason": "diff-aware mode not enabled"
+      },
+      "git": {
+        "status": "available"
+      },
+      "toolchain": {
+        "status": "available"
+      }
+    }
+  },
+  "verdict": {
+    "status": "pass",
+    "counts": {
+      "info": 5,
+      "warn": 0,
+      "error": 0,
+      "suppressed": 0
+    }
+  },
+  "findings": [
+    {
+      "check_id": "workspace.publish_ready",
+      "code": "missing_description",
+      "severity": "info",
+      "message": "fixture-a: missing required 'description' field for publishing",
+      "fingerprint": "2707c79a4163d5d3ab0cf7ecff09f9673c2e19ce469e167c5d3e0d06c9f314e1",
+      "location": {
+        "path": "crates/a/Cargo.toml"
+      }
+    },
+    {
+      "check_id": "workspace.publish_ready",
+      "code": "missing_documentation",
+      "severity": "info",
+      "message": "fixture-a: missing recommended 'documentation' or 'homepage' field",
+      "fingerprint": "d4749a3097c1ffb8e3da4951630fd6efeb2af98c56db8661986876a9c4f24e90",
+      "location": {
+        "path": "crates/a/Cargo.toml"
+      }
+    },
+    {
+      "check_id": "workspace.publish_ready",
+      "code": "missing_license",
+      "severity": "info",
+      "message": "fixture-a: missing required 'license' or 'license-file' field for publishing",
+      "fingerprint": "17814dd4540956f93d134af98f6e1ba43854f677df91b46d4200a5213d23d898",
+      "location": {
+        "path": "crates/a/Cargo.toml"
+      }
+    },
+    {
+      "check_id": "workspace.publish_ready",
+      "code": "missing_readme",
+      "severity": "info",
+      "message": "fixture-a: missing recommended 'readme' field",
+      "fingerprint": "a86e20a6f7d4a620165e49d62c50bdd6bc9a898d0c10997704408b9f80df5200",
+      "location": {
+        "path": "crates/a/Cargo.toml"
+      }
+    },
+    {
+      "check_id": "workspace.publish_ready",
+      "code": "missing_repository",
+      "severity": "info",
+      "message": "fixture-a: missing recommended 'repository' field",
+      "fingerprint": "c4ba6f8e74f3f2fed6391293e7b10a659d5162a91af7c8a6f40d7e849ad63824",
+      "location": {
+        "path": "crates/a/Cargo.toml"
+      }
+    }
+  ]
+}

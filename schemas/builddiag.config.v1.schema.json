@@ -1,0 +1,444 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Config",
+  "description": "Main configuration for builddiag.\n\nThis is typically loaded from a `.builddiag.toml` file in the repository\nroot. All fields have sensible defaults, so an empty config is valid.\n\n# Example\n\n```toml\nprofile = \"oss\"\n\n[defaults]\nfail_on = \"error\"\nout_dir = \"artifacts/builddiag\"\n\n[policy.msrv]\nrequire_defined = true\nsource = \"workspace\"\n\n[policy.toolchain]\nrequire_pinned = true\nrelation_to_msrv = \"equals\"\n```",
+  "type": "object",
+  "properties": {
+    "checks": {
+      "description": "Per-check configuration overrides.",
+      "type": "array",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/CheckConfig"
+      }
+    },
+    "defaults": {
+      "description": "Default settings for output and failure behavior.",
+      "$ref": "#/$defs/Defaults",
+      "default": {
+        "base": "origin/main",
+        "diff_aware": false,
+        "fail_on": "error",
+        "head": "HEAD",
+        "out_dir": "artifacts/builddiag"
+      }
+    },
+    "meta": {
+      "description": "Optional arbitrary metadata for downstream tooling.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "default": {}
+    },
+    "paths": {
+      "description": "Paths to input files.",
+      "$ref": "#/$defs/PathsConfig",
+      "default": {
+        "cargo_root": "Cargo.toml",
+        "rust_toolchain": "rust-toolchain.toml",
+        "tools_checksums": "scripts/tools.sha256",
+        "tools_manifest": "scripts/tools.toml"
+      }
+    },
+    "policy": {
+      "description": "Policy settings for checks.",
+      "$ref": "#/$defs/Policy",
+      "default": {
+        "checksums": {
+          "require_coverage": false,
+          "require_file": true,
+          "verify_local_files": false
+        },
+        "edition": {
+          "allow_overrides": [],
+          "allow_per_crate_override": false,
+          "require_consistent": true
+        },
+        "lockfile": {
+          "require_for_binaries": true,
+          "warn_for_libraries": false
+        },
+        "member_ordering": {
+          "require_sorted": true
+        },
+        "msrv": {
+          "allow_overrides": [],
+          "allow_per_crate_override": false,
+          "require_defined": true,
+          "source": "workspace"
+        },
+        "toolchain": {
+          "allow_nightly": false,
+          "relation_to_msrv": "equals",
+          "require_pinned": true
+        }
+      }
+    },
+    "profile": {
+      "description": "Profile preset that configures check severities.\nCan be overridden via CLI `--profile` flag.",
+      "$ref": "#/$defs/Profile",
+      "default": "oss"
+    }
+  },
+  "$defs": {
+    "CheckConfig": {
+      "description": "Per-check configuration override.\n\nAllows customizing individual check behavior, including severity\nand whether the check is enabled.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "description": "Whether this check is enabled.",
+          "type": "boolean",
+          "default": true
+        },
+        "id": {
+          "description": "Unique identifier for the check to configure.",
+          "type": "string"
+        },
+        "severity": {
+          "description": "Override severity for findings from this check.",
+          "$ref": "#/$defs/Severity",
+          "default": "error"
+        },
+        "triggers": {
+          "description": "File patterns that trigger this check in diff-aware mode.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "id"
+      ]
+    },
+    "ChecksumsPolicy": {
+      "description": "Policy settings for tool checksums verification.\n\nControls how builddiag validates tool checksums files.",
+      "type": "object",
+      "properties": {
+        "require_coverage": {
+          "description": "Require all tools in manifest to have checksums.",
+          "type": "boolean",
+          "default": false
+        },
+        "require_file": {
+          "description": "Require a checksums file to exist.",
+          "type": "boolean",
+          "default": true
+        },
+        "verify_local_files": {
+          "description": "Verify checksums against local files.",
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "Defaults": {
+      "description": "Default settings for builddiag behavior.\n\nThese settings control output location, failure conditions, and\ndiff-aware mode for incremental checking.",
+      "type": "object",
+      "properties": {
+        "base": {
+          "description": "Base git ref for diff-aware mode.",
+          "type": "string",
+          "default": "origin/main"
+        },
+        "diff_aware": {
+          "description": "Enable diff-aware mode to only check changed files.",
+          "type": "boolean",
+          "default": false
+        },
+        "fail_on": {
+          "description": "Condition that triggers a non-zero exit code.",
+          "$ref": "#/$defs/FailOn",
+          "default": "error"
+        },
+        "head": {
+          "description": "Head git ref for diff-aware mode.",
+          "type": "string",
+          "default": "HEAD"
+        },
+        "out_dir": {
+          "description": "Directory for output files (report.json, comment.md).",
+          "type": "string",
+          "default": "artifacts/builddiag"
+        }
+      }
+    },
+    "EditionPolicy": {
+      "description": "Policy settings for edition consistency checks.",
+      "type": "object",
+      "properties": {
+        "allow_overrides": {
+          "description": "List of crate paths allowed to have different edition.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "allow_per_crate_override": {
+          "description": "Allow individual crates to override the workspace edition.",
+          "type": "boolean",
+          "default": false
+        },
+        "require_consistent": {
+          "description": "Require all crates to have consistent edition.",
+          "type": "boolean",
+          "default": true
+        }
+      }
+    },
+    "FailOn": {
+      "description": "Condition that determines when builddiag should exit with failure.\n\nThis controls the exit code behavior based on finding severity.",
+      "oneOf": [
+        {
+          "description": "Fail only on error-level findings.",
+          "type": "string",
+          "const": "error"
+        },
+        {
+          "description": "Fail on warning or error-level findings.",
+          "type": "string",
+          "const": "warn"
+        },
+        {
+          "description": "Never fail based on findings (always exit 0).",
+          "type": "string",
+          "const": "never"
+        }
+      ]
+    },
+    "LockfilePolicy": {
+      "description": "Policy settings for lockfile checks.\n\nControls how builddiag validates Cargo.lock presence.",
+      "type": "object",
+      "properties": {
+        "require_for_binaries": {
+          "description": "Require Cargo.lock for binary crates.",
+          "type": "boolean",
+          "default": true
+        },
+        "warn_for_libraries": {
+          "description": "Warn about lockfile in library-only crates.",
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "MemberOrderingPolicy": {
+      "description": "Policy settings for member ordering checks.",
+      "type": "object",
+      "properties": {
+        "require_sorted": {
+          "description": "Require workspace.members to be sorted alphabetically.",
+          "type": "boolean",
+          "default": true
+        }
+      }
+    },
+    "MsrvPolicy": {
+      "description": "Policy settings for MSRV (Minimum Supported Rust Version) checks.\n\nControls how builddiag validates MSRV configuration across the workspace.",
+      "type": "object",
+      "properties": {
+        "allow_overrides": {
+          "description": "List of crate names allowed to have different MSRV.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "allow_per_crate_override": {
+          "description": "Allow individual crates to override the workspace MSRV.",
+          "type": "boolean",
+          "default": false
+        },
+        "require_defined": {
+          "description": "Require MSRV to be explicitly defined.",
+          "type": "boolean",
+          "default": true
+        },
+        "source": {
+          "description": "Where MSRV should be defined (workspace or any crate).",
+          "$ref": "#/$defs/MsrvSource",
+          "default": "workspace"
+        }
+      }
+    },
+    "MsrvSource": {
+      "description": "Source for determining the authoritative MSRV.",
+      "oneOf": [
+        {
+          "description": "MSRV must be defined at the workspace level.",
+          "type": "string",
+          "const": "workspace"
+        },
+        {
+          "description": "MSRV can be defined in any crate.",
+          "type": "string",
+          "const": "any"
+        }
+      ]
+    },
+    "PathsConfig": {
+      "description": "Configuration for input file paths.\n\nAll paths are relative to the repository root. These can be customized\nif your project uses non-standard locations for configuration files.",
+      "type": "object",
+      "properties": {
+        "cargo_root": {
+          "description": "Path to the root Cargo.toml file.",
+          "type": "string",
+          "default": "Cargo.toml"
+        },
+        "rust_toolchain": {
+          "description": "Path to the rust-toolchain.toml file.",
+          "type": "string",
+          "default": "rust-toolchain.toml"
+        },
+        "tools_checksums": {
+          "description": "Path to the tools checksums file.",
+          "type": "string",
+          "default": "scripts/tools.sha256"
+        },
+        "tools_manifest": {
+          "description": "Path to the tools manifest file.",
+          "type": "string",
+          "default": "scripts/tools.toml"
+        }
+      }
+    },
+    "Policy": {
+      "description": "Combined policy settings for all check categories.\n\nGroups together MSRV, toolchain, checksums, edition, member ordering, and lockfile policies.",
+      "type": "object",
+      "properties": {
+        "checksums": {
+          "description": "Checksums verification policy.",
+          "$ref": "#/$defs/ChecksumsPolicy",
+          "default": {
+            "require_coverage": false,
+            "require_file": true,
+            "verify_local_files": false
+          }
+        },
+        "edition": {
+          "description": "Edition consistency policy.",
+          "$ref": "#/$defs/EditionPolicy",
+          "default": {
+            "allow_overrides": [],
+            "allow_per_crate_override": false,
+            "require_consistent": true
+          }
+        },
+        "lockfile": {
+          "description": "Lockfile policy.",
+          "$ref": "#/$defs/LockfilePolicy",
+          "default": {
+            "require_for_binaries": true,
+            "warn_for_libraries": false
+          }
+        },
+        "member_ordering": {
+          "description": "Member ordering policy.",
+          "$ref": "#/$defs/MemberOrderingPolicy",
+          "default": {
+            "require_sorted": true
+          }
+        },
+        "msrv": {
+          "description": "MSRV validation policy.",
+          "$ref": "#/$defs/MsrvPolicy",
+          "default": {
+            "allow_overrides": [],
+            "allow_per_crate_override": false,
+            "require_defined": true,
+            "source": "workspace"
+          }
+        },
+        "toolchain": {
+          "description": "Toolchain pinning policy.",
+          "$ref": "#/$defs/ToolchainPolicy",
+          "default": {
+            "allow_nightly": false,
+            "relation_to_msrv": "equals",
+            "require_pinned": true
+          }
+        }
+      }
+    },
+    "Profile": {
+      "description": "Profile preset that configures check severities and behavior.\n\nProfiles provide sensible defaults for different use cases:\n- `Oss` - Warn-heavy defaults suitable for open source projects\n- `Team` - Stronger gating for team/organization projects\n- `Strict` - Full CI/release discipline with maximum enforcement",
+      "oneOf": [
+        {
+          "description": "Open source profile with warn-heavy defaults and minimal assumptions.\nGood for wide adoption with low friction.",
+          "type": "string",
+          "const": "oss"
+        },
+        {
+          "description": "Team profile with stronger gating for organizational projects.",
+          "type": "string",
+          "const": "team"
+        },
+        {
+          "description": "Strict profile with maximum enforcement for CI/release discipline.",
+          "type": "string",
+          "const": "strict"
+        }
+      ]
+    },
+    "RelationToMsrv": {
+      "description": "Required relationship between toolchain version and MSRV.",
+      "oneOf": [
+        {
+          "description": "Toolchain version must exactly equal MSRV.",
+          "type": "string",
+          "const": "equals"
+        },
+        {
+          "description": "Toolchain version must be at least MSRV.",
+          "type": "string",
+          "const": "atleast"
+        }
+      ]
+    },
+    "Severity": {
+      "description": "Severity level of a finding.\n\nSeverity determines how a finding affects the overall verdict:\n- `Info` - Informational, does not affect verdict\n- `Warn` - Warning, may affect verdict depending on `fail_on` setting\n- `Error` - Error, causes failure unless `fail_on` is set to `Never`",
+      "oneOf": [
+        {
+          "description": "Informational finding that does not indicate a problem.",
+          "type": "string",
+          "const": "info"
+        },
+        {
+          "description": "Warning that may indicate a potential issue.",
+          "type": "string",
+          "const": "warn"
+        },
+        {
+          "description": "Error that indicates a definite problem.",
+          "type": "string",
+          "const": "error"
+        }
+      ]
+    },
+    "ToolchainPolicy": {
+      "description": "Policy settings for toolchain pinning checks.\n\nControls how builddiag validates the rust-toolchain.toml configuration.",
+      "type": "object",
+      "properties": {
+        "allow_nightly": {
+          "description": "Allow nightly toolchain to be pinned.",
+          "type": "boolean",
+          "default": false
+        },
+        "relation_to_msrv": {
+          "description": "Required relationship between toolchain version and MSRV.",
+          "$ref": "#/$defs/RelationToMsrv",
+          "default": "equals"
+        },
+        "require_pinned": {
+          "description": "Require toolchain to be pinned to a specific version.",
+          "type": "boolean",
+          "default": true
+        }
+      }
+    }
+  }
+}

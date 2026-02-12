@@ -1,0 +1,23 @@
+---
+source: crates/builddiag-render/tests/golden_tests.rs
+expression: md
+---
+## builddiag: ❌ Fail (5 errors, 7 warnings)
+
+| severity | check | code | location | message |
+|---|---|---|---|---|
+| error | test.bulk_check | finding_00 | src/module_0.rs:1 | Finding number 0 with detailed description |
+| error | test.bulk_check | finding_01 | src/module_1.rs:11 | Finding number 1 with detailed description |
+| error | test.bulk_check | finding_02 | src/module_2.rs:21 | Finding number 2 with detailed description |
+| error | test.bulk_check | finding_03 | src/module_3.rs:31 | Finding number 3 with detailed description |
+| error | test.bulk_check | finding_04 | src/module_4.rs:41 | Finding number 4 with detailed description |
+| warn | test.bulk_check | finding_05 | src/module_0.rs:51 | Finding number 5 with detailed description |
+| warn | test.bulk_check | finding_10 | src/module_0.rs:101 | Finding number 10 with detailed description |
+| warn | test.bulk_check | finding_06 | src/module_1.rs:61 | Finding number 6 with detailed description |
+| warn | test.bulk_check | finding_11 | src/module_1.rs:111 | Finding number 11 with detailed description |
+| warn | test.bulk_check | finding_07 | src/module_2.rs:71 | Finding number 7 with detailed description |
+
+*10 more findings truncated. See full report for details.*
+
+Reproduce:
+`builddiag check --root .`

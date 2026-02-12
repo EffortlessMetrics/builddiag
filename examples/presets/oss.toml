@@ -1,0 +1,24 @@
+# builddiag preset: oss
+#
+# Warn-heavy defaults suitable for open source projects.
+# Low friction, no checksums required.
+#
+# Usage:
+#   cp examples/presets/oss.toml .builddiag.toml
+#   builddiag check --config .builddiag.toml
+
+profile = "oss"
+
+[defaults]
+fail_on = "error"
+out_dir = "artifacts/builddiag"
+
+[policy.msrv]
+require_defined = true
+source = "any"
+
+[policy.toolchain]
+require_pinned = false
+
+[policy.checksums]
+require_file = false

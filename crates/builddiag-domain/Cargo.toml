@@ -1,18 +1,21 @@
 [package]
 name = "builddiag-domain"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Core domain logic for builddiag build contract validator"
-repository = "https://github.com/user/builddiag"
-homepage = "https://github.com/user/builddiag"
+repository.workspace = true
+homepage.workspace = true
+description = "Internal domain logic for builddiag (not intended for direct use)"
 keywords = ["rust", "build", "validation"]
 categories = ["development-tools"]
 
 [dependencies]
 anyhow.workspace = true
 semver.workspace = true
-builddiag-types = { path = "../builddiag-types" }
+serde_json.workspace = true
+sha2.workspace = true
+hex.workspace = true
+builddiag-types = { path = "../builddiag-types", version = "0.2.0" }
 
 [dev-dependencies]
 insta.workspace = true
