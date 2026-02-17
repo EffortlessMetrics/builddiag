@@ -14,7 +14,8 @@ platform-specific watcher backends.
   - `rust-toolchain.toml`
   - `checksums.txt`
 - Supports debounce and poll interval tuning.
-- Supports optional terminal clear and status-change bell notifications.
+- Supports optional terminal clear and status-change notifications
+  (desktop when supported, bell fallback).
 - Supports extra watched files (for example explicit config files).
 
 ## API

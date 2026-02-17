@@ -11,6 +11,24 @@
 
 It is designed to be fast and offline by default: it reads manifests and policy files; it does not run cargo commands.
 
+## Workspace crates
+
+| Crate | Role |
+|-------|------|
+| [`builddiag` (`crates/builddiag-cli`)](crates/builddiag-cli/README.md) | CLI entry point and command routing |
+| [`builddiag-core`](crates/builddiag-core/README.md) | Public library API for embedding builddiag |
+| [`builddiag-app`](crates/builddiag-app/README.md) | Internal orchestration, report assembly, and output writing |
+| [`builddiag-types`](crates/builddiag-types/README.md) | Shared report/config schemas and DTOs |
+| [`builddiag-domain`](crates/builddiag-domain/README.md) | Pure logic for versions, summaries, verdicts, fingerprints |
+| [`builddiag-repo`](crates/builddiag-repo/README.md) | Repository discovery and workspace state loading |
+| [`builddiag-checks`](crates/builddiag-checks/README.md) | Built-in check registry and implementations |
+| [`builddiag-render`](crates/builddiag-render/README.md) | Markdown, annotation, and diagnostics renderers |
+| [`builddiag-baseline`](crates/builddiag-baseline/README.md) | Baseline snapshot/filtering and inline suppressions |
+| [`builddiag-watch`](crates/builddiag-watch/README.md) | Polling watch loop utilities |
+| [`builddiag-fix`](crates/builddiag-fix/README.md) | Deterministic fix planning and apply |
+| [`builddiag-hooks`](crates/builddiag-hooks/README.md) | Hook snippet generation |
+| [`depguard`](crates/depguard/README.md) | Dependency hygiene library |
+
 ## Install
 
 From this repo:
@@ -80,6 +98,14 @@ jobs:
 ### Pre-commit Hook
 
 builddiag can be used as a pre-commit hook to validate your build contract before commits:
+
+```bash
+# Print pre-commit, shell-hook, and Husky snippets
+builddiag init-hooks --profile team
+
+# Generate quick-fail hook command + install .git/hooks/pre-commit
+builddiag init-hooks --profile strict --quick-fail --install
+```
 
 ```yaml
 # .pre-commit-config.yaml
@@ -268,6 +294,28 @@ builddiag check --baseline .builddiag-baseline.json
 # Merge newly observed findings into baseline
 builddiag baseline update --root .
 ```
+
+### Inline Suppressions
+
+Use inline comments in `Cargo.toml` to suppress specific findings:
+
+```toml
+# File-scoped suppression by code
+# builddiag:ignore missing_msrv
+
+[workspace]
+members = ["crates/a"]
+
+[dependencies]
+serde = "*" # Line-scoped suppression by code
+           # builddiag:ignore wildcard_version
+```
+
+Selector formats supported by `builddiag:ignore`:
+- `missing_msrv` (finding code)
+- `rust.msrv_defined` (check id)
+- `rust.msrv_defined:missing_msrv` (check id + finding code)
+- empty selector / `*` (suppress all findings for the file or line)
 
 ## Library Usage
 

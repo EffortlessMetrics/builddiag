@@ -14,6 +14,7 @@ builddiag is the repo-truth workspace contract sensor. It runs fast, determinist
 - `crates/builddiag-app/CLAUDE.md` for orchestration and output writing.
 - `crates/builddiag-watch/CLAUDE.md` for watch-loop polling/debounce behavior.
 - `crates/builddiag-fix/CLAUDE.md` for deterministic auto-fix planning and apply behavior.
+- `crates/builddiag-hooks/CLAUDE.md` for deterministic hook snippet generation.
 - `crates/builddiag-baseline/CLAUDE.md` for baseline snapshot/filtering behavior.
 - `crates/builddiag-cli/CLAUDE.md` for CLI behavior and test harness.
 - `crates/depguard/CLAUDE.md` for dependency hygiene library behavior.

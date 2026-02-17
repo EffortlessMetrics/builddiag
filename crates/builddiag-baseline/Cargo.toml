@@ -5,8 +5,10 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "Baseline filtering and snapshot support for builddiag findings"
-keywords = ["rust", "build-contract", "baseline", "ci"]
+description = "Baseline snapshot, suppression, and regression filtering for builddiag findings"
+readme = "README.md"
+documentation = "https://docs.rs/builddiag-baseline"
+keywords = ["rust", "builddiag", "baseline", "regression", "suppressions"]
 categories = ["development-tools"]
 
 [dependencies]

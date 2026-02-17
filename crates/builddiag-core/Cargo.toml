@@ -5,8 +5,10 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "Public library API for the builddiag build-contract sensor"
-keywords = ["rust", "build-contract", "workspace", "ci", "diagnostics"]
+description = "Public library API for running builddiag checks and generating receipts in-process"
+readme = "README.md"
+documentation = "https://docs.rs/builddiag-core"
+keywords = ["rust", "builddiag", "api", "workspace", "validation"]
 categories = ["development-tools"]
 
 [features]

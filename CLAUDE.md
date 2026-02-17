@@ -51,10 +51,12 @@ cargo mutants -p builddiag-domain        # Test specific package
 
 ## Architecture
 
-Eleven-crate Cargo workspace with layered architecture (dependencies flow downward):
+Twelve-crate Cargo workspace with layered architecture (dependencies flow downward):
 
 ```
 builddiag-cli      CLI entry point, argument parsing
+       ↓
+builddiag-hooks    Hook snippet generation for pre-commit/Git/Husky
        ↓           ↘
 builddiag-watch    Polling watch loop + debounce
 builddiag-fix      Deterministic auto-fix planner/applier

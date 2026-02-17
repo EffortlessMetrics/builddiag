@@ -22,12 +22,16 @@ const REQUIRED_FIELDS: &[&str] = &[
 const WORKSPACE_CRATES: &[&str] = &[
     "builddiag-types",
     "builddiag-domain",
+    "builddiag-core",
+    "builddiag-baseline",
     "builddiag-repo",
     "builddiag-checks",
+    "builddiag-hooks",
     "builddiag-render",
     "builddiag-app",
     "builddiag-watch",
     "builddiag-fix",
+    "depguard",
     "builddiag", // CLI crate (in builddiag-cli directory)
 ];
 

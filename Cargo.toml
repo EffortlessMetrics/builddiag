@@ -6,6 +6,7 @@ members = [
   "crates/builddiag-baseline",
   "crates/builddiag-repo",
   "crates/builddiag-checks",
+  "crates/builddiag-hooks",
   "crates/builddiag-render",
   "crates/builddiag-app",
   "crates/builddiag-watch",

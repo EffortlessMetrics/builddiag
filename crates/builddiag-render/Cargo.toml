@@ -5,8 +5,10 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "Internal rendering for builddiag reports (not intended for direct use)"
-keywords = ["rust", "build-contract", "markdown", "report"]
+description = "Renderer for builddiag markdown summaries, GitHub annotations, and diagnostics"
+readme = "README.md"
+documentation = "https://docs.rs/builddiag-render"
+keywords = ["rust", "builddiag", "markdown", "github-actions", "diagnostics"]
 categories = ["development-tools"]
 
 [dependencies]

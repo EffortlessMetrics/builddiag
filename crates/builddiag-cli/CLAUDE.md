@@ -72,6 +72,13 @@ builddiag list-checks
 builddiag list-checks --json
 ```
 
+### init-hooks
+Generate and optionally install pre-commit/Git/Husky hook snippets.
+```bash
+builddiag init-hooks --profile team
+builddiag init-hooks --quick-fail --install
+```
+
 ## Exit Codes
 
 - `0` - Success (verdict is Pass or Warn with fail_on: error)

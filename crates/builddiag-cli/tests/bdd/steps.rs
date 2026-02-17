@@ -2,7 +2,7 @@
 //!
 //! This module implements Given/When/Then steps for BDD scenarios.
 
-use builddiag_types::Report;
+use builddiag_types::{Report, SensorReport};
 use cucumber::{given, then, when};
 use serde_json::Value;
 use std::path::PathBuf;
@@ -135,6 +135,25 @@ out_dir = "{}"
     world.out_dir_override = Some(value);
 }
 
+#[given(expr = "the output format is {string}")]
+fn given_output_format(world: &mut BuilddiagWorld, value: String) {
+    world.extra_args.push("--format".to_string());
+    world.extra_args.push(value);
+}
+
+#[given(expr = "the check mode is {string}")]
+fn given_check_mode(world: &mut BuilddiagWorld, value: String) {
+    world.extra_args.push("--mode".to_string());
+    world.extra_args.push(value);
+}
+
+#[given(expr = "artifacts are written to {string}")]
+fn given_artifacts_dir(world: &mut BuilddiagWorld, value: String) {
+    world.extra_args.push("--artifacts-dir".to_string());
+    world.extra_args.push(value.clone());
+    world.artifacts_dir_override = Some(value);
+}
+
 #[given(expr = "the config file is named {string}")]
 fn given_config_file_name(world: &mut BuilddiagWorld, name: String) {
     world.config_path = Some(name);
@@ -171,6 +190,8 @@ fn when_run_check_with_profile(world: &mut BuilddiagWorld, profile: String) {
 fn when_run_check_with_flag(world: &mut BuilddiagWorld, flag: String, value: String) {
     if flag == "out" {
         world.explicit_out = Some(value.clone());
+    } else if flag == "artifacts-dir" {
+        world.artifacts_dir_override = Some(value.clone());
     }
     world.extra_args.push(format!("--{}", flag));
     world.extra_args.push(value);
@@ -343,6 +364,109 @@ fn then_report_exists_at_canonical_path(world: &mut BuilddiagWorld) {
     }
 }
 
+#[then("the sensor report should exist at the canonical path")]
+fn then_sensor_report_exists_at_canonical_path(world: &mut BuilddiagWorld) {
+    let report_path = canonical_report_path(world);
+    assert!(
+        report_path.exists(),
+        "Expected sensor report to exist at canonical path {:?}",
+        report_path
+    );
+
+    let report = read_sensor_report(world);
+    assert_eq!(report.schema, SensorReport::SCHEMA_V1);
+    assert!(report.tool.is_some(), "sensor.tool should be present");
+    assert!(report.run.is_some(), "sensor.run should be present");
+
+    if let Some(run) = &report.run
+        && let Some(ended) = run.ended_at
+    {
+        assert!(
+            ended >= run.started_at,
+            "sensor.run.ended_at should be >= sensor.run.started_at"
+        );
+    }
+
+    let mut info = 0usize;
+    let mut warn = 0usize;
+    let mut error = 0usize;
+    for finding in &report.findings {
+        assert!(
+            !finding.check_id.trim().is_empty(),
+            "sensor finding.check_id should be non-empty"
+        );
+        assert!(
+            !finding.code.trim().is_empty(),
+            "sensor finding.code should be non-empty"
+        );
+        assert!(
+            !finding.message.trim().is_empty(),
+            "sensor finding.message should be non-empty"
+        );
+        assert!(
+            finding.fingerprint.len() == 64
+                && finding.fingerprint.chars().all(|c| c.is_ascii_hexdigit()),
+            "sensor finding fingerprint should be 64-char hex: {}",
+            finding.fingerprint
+        );
+        if let Some(location) = &finding.location {
+            assert!(
+                !location.path.contains('\\'),
+                "sensor finding path should use forward slashes: {}",
+                location.path
+            );
+        }
+        match finding.severity {
+            builddiag_types::Severity::Info => info += 1,
+            builddiag_types::Severity::Warn => warn += 1,
+            builddiag_types::Severity::Error => error += 1,
+        }
+    }
+
+    assert_eq!(
+        report.verdict.counts.info as usize, info,
+        "sensor verdict info count should match findings"
+    );
+    assert_eq!(
+        report.verdict.counts.warn as usize, warn,
+        "sensor verdict warn count should match findings"
+    );
+    assert_eq!(
+        report.verdict.counts.error as usize, error,
+        "sensor verdict error count should match findings"
+    );
+}
+
+#[then(expr = "the sensor report verdict status should be {string}")]
+fn then_sensor_report_verdict_status(world: &mut BuilddiagWorld, expected_status: String) {
+    let report = read_sensor_report(world);
+    let actual = match report.verdict.status {
+        builddiag_types::VerdictStatus::Pass => "pass",
+        builddiag_types::VerdictStatus::Warn => "warn",
+        builddiag_types::VerdictStatus::Fail => "fail",
+        builddiag_types::VerdictStatus::Skip => "skip",
+    };
+    assert_eq!(
+        actual, expected_status,
+        "Expected sensor verdict status '{}' but got '{}'",
+        expected_status, actual
+    );
+}
+
+#[then(expr = "the sensor report should include artifact {string} at {string}")]
+fn then_sensor_report_has_artifact(world: &mut BuilddiagWorld, name: String, path: String) {
+    let report = read_sensor_report(world);
+    let found = report
+        .artifacts
+        .iter()
+        .any(|artifact| artifact.name == name && artifact.path == path);
+    assert!(
+        found,
+        "Expected sensor artifact '{}' at '{}' to be present",
+        name, path
+    );
+}
+
 #[then(expr = "the report verdict should be {string}")]
 fn then_report_verdict_is(world: &mut BuilddiagWorld, expected_verdict: String) {
     let report = read_report(world);
@@ -417,6 +541,13 @@ fn canonical_report_path(world: &BuilddiagWorld) -> PathBuf {
         return world.workspace_path().join(out_path);
     }
 
+    if let Some(ref artifacts_dir) = world.artifacts_dir_override {
+        return world
+            .workspace_path()
+            .join(artifacts_dir)
+            .join("report.json");
+    }
+
     let out_dir = world
         .out_dir_override
         .as_deref()
@@ -430,4 +561,12 @@ fn read_report(world: &BuilddiagWorld) -> Value {
         .unwrap_or_else(|_| panic!("failed to read report.json at {:?}", report_path));
     serde_json::from_str(&content)
         .unwrap_or_else(|_| panic!("failed to parse report.json at {:?}", report_path))
+}
+
+fn read_sensor_report(world: &BuilddiagWorld) -> SensorReport {
+    let report_path = canonical_report_path(world);
+    let content = std::fs::read_to_string(&report_path)
+        .unwrap_or_else(|_| panic!("failed to read sensor report at {:?}", report_path));
+    serde_json::from_str(&content)
+        .unwrap_or_else(|_| panic!("failed to parse sensor report at {:?}", report_path))
 }

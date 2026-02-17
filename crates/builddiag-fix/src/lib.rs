@@ -465,19 +465,19 @@ members = ["crates/a"]
             &root,
             "crates/a/Cargo.toml",
             r#"[package]
-name = "a"
-version = "0.1.0"
-edition = "2021"
-rust-version = "1.75"
-"#,
+    name = "a"
+    version = "0.1.0"
+    edition = "2021"
+    rust-version = "1.92"
+    "#,
         );
         write_file(&root, "crates/a/src/lib.rs", "pub fn a() {}\n");
         write_file(
             &root,
             "rust-toolchain.toml",
             r#"[toolchain]
-channel = "1.75.0"
-"#,
+    channel = "1.92.0"
+    "#,
         );
         write_file(
             &root,
@@ -517,7 +517,7 @@ files = ["scripts/tool.sh"]
 
         let manifest = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
         assert!(manifest.contains("resolver = \"2\""));
-        assert!(manifest.contains("rust-version = \"1.75.0\""));
+        assert!(manifest.contains("rust-version = \"1.92.0\""));
 
         let checksums = std::fs::read_to_string(root.join("scripts/tools.sha256")).unwrap();
         assert!(checksums.contains("scripts/tool.sh"));

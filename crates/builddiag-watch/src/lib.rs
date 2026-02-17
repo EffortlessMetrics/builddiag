@@ -7,6 +7,7 @@ use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::process::Command;
 use std::time::{Duration, UNIX_EPOCH};
 
 const WATCHED_FILE_NAMES: &[&str] = &["Cargo.toml", "rust-toolchain.toml", "checksums.txt"];
@@ -90,7 +91,7 @@ where
             && let Some(prev) = previous_exit
             && prev != exit
         {
-            eprint!("\x07");
+            notify_status_change(prev, exit);
         }
         previous_exit = Some(exit);
 
@@ -226,6 +227,82 @@ fn stat_file(path: &Utf8Path) -> Result<Option<FileStamp>> {
     }))
 }
 
+fn notify_status_change(previous_exit: i32, exit: i32) {
+    let body = format!("Status changed: {previous_exit} -> {exit}");
+    if !try_desktop_notification("builddiag watch", &body) {
+        eprint!("\x07");
+    }
+}
+
+fn try_desktop_notification(title: &str, body: &str) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        if try_windows_notification(title, body) {
+            return true;
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if try_macos_notification(title, body) {
+            return true;
+        }
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        if try_linux_notification(title, body) {
+            return true;
+        }
+    }
+    false
+}
+
+#[cfg(target_os = "windows")]
+fn try_windows_notification(title: &str, body: &str) -> bool {
+    let escaped_title = escape_powershell_single_quoted(title);
+    let escaped_body = escape_powershell_single_quoted(body);
+    let script = format!(
+        "if (Get-Command New-BurntToastNotification -ErrorAction SilentlyContinue) {{ \
+         New-BurntToastNotification -Text '{escaped_title}','{escaped_body}' | Out-Null; exit 0 \
+         }} else {{ exit 1 }}"
+    );
+
+    command_success(
+        "powershell",
+        &["-NoProfile", "-NonInteractive", "-Command", &script],
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn escape_powershell_single_quoted(input: &str) -> String {
+    input.replace('\'', "''")
+}
+
+#[cfg(target_os = "macos")]
+fn try_macos_notification(title: &str, body: &str) -> bool {
+    let escaped_title = body_for_applescript(title);
+    let escaped_body = body_for_applescript(body);
+    let command = format!("display notification \"{escaped_body}\" with title \"{escaped_title}\"");
+    command_success("osascript", &["-e", &command])
+}
+
+#[cfg(target_os = "macos")]
+fn body_for_applescript(input: &str) -> String {
+    input.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn try_linux_notification(title: &str, body: &str) -> bool {
+    command_success("notify-send", &[title, body])
+}
+
+fn command_success(program: &str, args: &[&str]) -> bool {
+    Command::new(program)
+        .args(args)
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -261,7 +338,7 @@ edition = "2021"
         let (_temp, root) = create_workspace();
         std::fs::write(
             root.join("rust-toolchain.toml"),
-            "[toolchain]\nchannel = \"1.75.0\"\n",
+            "[toolchain]\nchannel = \"1.92.0\"\n",
         )
         .unwrap();
 
@@ -344,5 +421,14 @@ members = ["crates/a"]
         handle.join().unwrap();
         assert_eq!(exit, 2);
         assert_eq!(runs, 2);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn powershell_escaping_doubles_single_quotes() {
+        assert_eq!(
+            escape_powershell_single_quoted("repo's status"),
+            "repo''s status"
+        );
     }
 }

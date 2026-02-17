@@ -5,8 +5,10 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "Internal verdict and policy logic for builddiag (not intended for direct use)"
-keywords = ["rust", "build-contract", "policy"]
+description = "Pure domain logic for builddiag verdicts, summaries, version parsing, and fingerprints"
+readme = "README.md"
+documentation = "https://docs.rs/builddiag-domain"
+keywords = ["rust", "builddiag", "domain", "verdict", "policy"]
 categories = ["development-tools"]
 
 [dependencies]

@@ -252,6 +252,7 @@ dependencies = [
  "builddiag-core",
  "builddiag-domain",
  "builddiag-fix",
+ "builddiag-hooks",
  "builddiag-render",
  "builddiag-types",
  "builddiag-watch",
@@ -358,6 +359,10 @@ dependencies = [
  "tempfile",
  "toml",
 ]
+
+[[package]]
+name = "builddiag-hooks"
+version = "0.3.0"
 
 [[package]]
 name = "builddiag-render"

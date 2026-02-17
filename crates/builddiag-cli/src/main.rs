@@ -10,6 +10,7 @@ use builddiag_domain::{
     explain::{all_check_ids, explain, explain_check_all_codes},
 };
 use builddiag_fix::{ApplyOptions, FixProposal, apply_fixes, plan_fixes};
+use builddiag_hooks::{HookProfile, InitHooksSpec, render_hooks};
 use builddiag_render::{render_diagnostics, render_github_annotations, render_markdown};
 use builddiag_types::{Config, FailOn, Profile, ProfileCheckState, Report};
 use builddiag_watch::{WatchOptions, run_watch_loop};
@@ -230,7 +231,8 @@ enum Command {
         #[arg(long, default_value_t = 300)]
         debounce_ms: u64,
 
-        /// Ring terminal bell when exit status changes.
+        /// Notify when exit status changes (desktop notification when supported,
+        /// terminal bell fallback).
         #[arg(long, default_value_t = false)]
         notify: bool,
 
@@ -297,6 +299,37 @@ enum Command {
         /// Output format: table (default) or json.
         #[arg(long, default_value = "table")]
         format: ListFormat,
+    },
+
+    /// Generate pre-commit and Git hook snippets for builddiag.
+    InitHooks {
+        /// Repository root (used for --install).
+        #[arg(long, default_value = ".")]
+        root: Utf8PathBuf,
+
+        /// Profile used in generated `builddiag check` commands.
+        #[arg(long, value_enum, default_value = "oss")]
+        profile: ProfileArg,
+
+        /// Generate faster local hook commands (diff-aware, diagnostics, no cache).
+        #[arg(long, default_value_t = false)]
+        quick_fail: bool,
+
+        /// Output format for generated snippets.
+        #[arg(long, value_enum, default_value = "text")]
+        format: InitHooksFormat,
+
+        /// Write generated snippets to a file instead of stdout.
+        #[arg(long)]
+        out: Option<Utf8PathBuf>,
+
+        /// Install the generated shell hook to .git/hooks/pre-commit.
+        #[arg(long, default_value_t = false)]
+        install: bool,
+
+        /// Overwrite an existing .git/hooks/pre-commit when --install is set.
+        #[arg(long, default_value_t = false)]
+        force: bool,
     },
 
     /// Manage finding baselines used for regression-only checks.
@@ -369,6 +402,15 @@ enum ListFormat {
     /// Human-readable table format.
     Table,
     /// JSON format for machine processing.
+    Json,
+}
+
+/// Output format for init-hooks command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum InitHooksFormat {
+    /// Human-readable text with code blocks.
+    Text,
+    /// JSON object with command and snippets.
     Json,
 }
 
@@ -527,6 +569,23 @@ fn run_cli(cli: Cli) -> Result<i32> {
             list_checks(profile.map(Profile::from), format);
             Ok(0)
         }
+        Command::InitHooks {
+            root,
+            profile,
+            quick_fail,
+            format,
+            out,
+            install,
+            force,
+        } => run_init_hooks_cli(
+            &root,
+            profile,
+            quick_fail,
+            format,
+            out.as_deref(),
+            install,
+            force,
+        ),
         Command::Baseline { cmd } => run_baseline_cli(cmd),
     }
 }
@@ -802,6 +861,129 @@ fn list_checks_table(profile_filter: Option<Profile>) -> String {
     )
     .unwrap();
     out
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_init_hooks_cli(
+    root: &Utf8Path,
+    profile: ProfileArg,
+    quick_fail: bool,
+    format: InitHooksFormat,
+    out: Option<&Utf8Path>,
+    install: bool,
+    force: bool,
+) -> Result<i32> {
+    let spec = InitHooksSpec {
+        profile: hook_profile(profile),
+        quick_fail,
+    };
+    let bundle = render_hooks(spec);
+
+    let rendered = match format {
+        InitHooksFormat::Text => render_init_hooks_text(&bundle),
+        InitHooksFormat::Json => render_init_hooks_json(&bundle)?,
+    };
+
+    if let Some(path) = out {
+        write_atomic(path, rendered.as_bytes())?;
+        println!("builddiag: wrote hook snippets to {path}");
+    } else {
+        print!("{rendered}");
+    }
+
+    if install {
+        let path = install_pre_commit_hook(root, &bundle.shell_hook_script, force)?;
+        println!("builddiag: installed pre-commit hook at {path}");
+    }
+
+    Ok(0)
+}
+
+fn hook_profile(profile: ProfileArg) -> HookProfile {
+    match profile {
+        ProfileArg::Oss => HookProfile::Oss,
+        ProfileArg::Team => HookProfile::Team,
+        ProfileArg::Strict => HookProfile::Strict,
+    }
+}
+
+fn render_init_hooks_text(bundle: &builddiag_hooks::HooksBundle) -> String {
+    let mut out = String::new();
+    writeln!(&mut out, "# builddiag init-hooks").unwrap();
+    writeln!(&mut out).unwrap();
+    writeln!(&mut out, "Check command:").unwrap();
+    writeln!(&mut out, "  {}", bundle.check_command).unwrap();
+    writeln!(&mut out).unwrap();
+
+    writeln!(&mut out, "pre-commit snippet (.pre-commit-config.yaml):").unwrap();
+    writeln!(&mut out, "```yaml").unwrap();
+    write!(&mut out, "{}", bundle.pre_commit_yaml_snippet.trim_end()).unwrap();
+    writeln!(&mut out, "\n```").unwrap();
+    writeln!(&mut out).unwrap();
+
+    writeln!(&mut out, "Git hook script (.git/hooks/pre-commit):").unwrap();
+    writeln!(&mut out, "```sh").unwrap();
+    write!(&mut out, "{}", bundle.shell_hook_script.trim_end()).unwrap();
+    writeln!(&mut out, "\n```").unwrap();
+    writeln!(&mut out).unwrap();
+
+    writeln!(&mut out, "Husky snippet (.husky/pre-commit):").unwrap();
+    writeln!(&mut out, "```sh").unwrap();
+    write!(&mut out, "{}", bundle.husky_hook_script.trim_end()).unwrap();
+    writeln!(&mut out, "\n```").unwrap();
+
+    out
+}
+
+fn render_init_hooks_json(bundle: &builddiag_hooks::HooksBundle) -> Result<String> {
+    #[derive(serde::Serialize)]
+    struct InitHooksJson<'a> {
+        check_command: &'a str,
+        pre_commit_yaml_snippet: &'a str,
+        shell_hook_script: &'a str,
+        husky_hook_script: &'a str,
+    }
+
+    let json = InitHooksJson {
+        check_command: &bundle.check_command,
+        pre_commit_yaml_snippet: &bundle.pre_commit_yaml_snippet,
+        shell_hook_script: &bundle.shell_hook_script,
+        husky_hook_script: &bundle.husky_hook_script,
+    };
+    Ok(format!("{}\n", serde_json::to_string_pretty(&json)?))
+}
+
+fn install_pre_commit_hook(root: &Utf8Path, script: &str, force: bool) -> Result<Utf8PathBuf> {
+    let git_dir = root.join(".git");
+    if !git_dir.exists() {
+        return Err(anyhow::anyhow!(
+            "{} does not look like a git repository (missing .git/)",
+            root
+        ));
+    }
+
+    let hooks_dir = git_dir.join("hooks");
+    std::fs::create_dir_all(&hooks_dir).with_context(|| format!("create {hooks_dir}"))?;
+    let hook_path = hooks_dir.join("pre-commit");
+
+    if hook_path.exists() && !force {
+        return Err(anyhow::anyhow!(
+            "{} already exists; pass --force to overwrite",
+            hook_path
+        ));
+    }
+
+    write_atomic(&hook_path, script.as_bytes())?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let perms = std::fs::Permissions::from_mode(0o755);
+        std::fs::set_permissions(&hook_path, perms)
+            .with_context(|| format!("set executable permissions on {hook_path}"))?;
+    }
+
+    Ok(hook_path)
 }
 
 fn run_baseline_cli(cmd: BaselineCommand) -> Result<i32> {
@@ -1283,6 +1465,7 @@ fn run_check_command(
     if let Some(path) = baseline_path {
         apply_baseline(root, path, fail_on, &mut result)?;
     }
+    apply_inline_suppressions(root, fail_on, &mut result)?;
 
     Ok(result)
 }
@@ -1330,6 +1513,48 @@ fn apply_baseline(
     Ok(())
 }
 
+fn apply_inline_suppressions(
+    root: &Utf8Path,
+    fail_on: FailOn,
+    cmd_result: &mut CheckCommandResult,
+) -> Result<()> {
+    let filtered = baseline::filter_report_inline_suppressions(root, &cmd_result.run.report)?;
+    if filtered.suppressed == 0 {
+        return Ok(());
+    }
+
+    cmd_result.run.report = filtered.report;
+    set_inline_suppression_metadata(
+        &mut cmd_result.run.report,
+        filtered.suppressed,
+        filtered.remaining_findings,
+    );
+    cmd_result.run.markdown = render_markdown(&cmd_result.run.report);
+    cmd_result.run.annotations = render_github_annotations(&cmd_result.run.report);
+    cmd_result.run.exit_code = exit_code_for(cmd_result.run.report.verdict, fail_on);
+
+    if let Some(existing_sensor) = cmd_result.sensor_report.take() {
+        let previously_suppressed = existing_sensor.verdict.counts.suppressed;
+        let capabilities = existing_sensor
+            .run
+            .as_ref()
+            .map(|run| run.capabilities.clone())
+            .unwrap_or_default();
+        let artifacts = existing_sensor.artifacts;
+        let checks = baseline::checks_from_findings(&cmd_result.run.report.findings);
+        let mut sensor = builddiag_app::report_to_sensor(
+            &cmd_result.run.report,
+            &checks,
+            capabilities,
+            artifacts,
+        );
+        sensor.verdict.counts.suppressed = previously_suppressed + filtered.suppressed;
+        cmd_result.sensor_report = Some(sensor);
+    }
+
+    Ok(())
+}
+
 fn set_baseline_metadata(
     report: &mut Report,
     baseline_path: &Utf8Path,
@@ -1354,6 +1579,29 @@ fn set_baseline_metadata(
         None => serde_json::Map::new(),
     };
     root.insert("baseline".to_string(), baseline_value);
+    report.data = Some(serde_json::Value::Object(root));
+}
+
+fn set_inline_suppression_metadata(
+    report: &mut Report,
+    suppressed: usize,
+    remaining_findings: usize,
+) {
+    let suppression_value = serde_json::json!({
+        "suppressed": suppressed,
+        "remaining": remaining_findings
+    });
+
+    let mut root = match report.data.take() {
+        Some(serde_json::Value::Object(obj)) => obj,
+        Some(other) => {
+            let mut obj = serde_json::Map::new();
+            obj.insert("report_data".to_string(), other);
+            obj
+        }
+        None => serde_json::Map::new(),
+    };
+    root.insert("inline_suppressions".to_string(), suppression_value);
     report.data = Some(serde_json::Value::Object(root));
 }
 
@@ -1462,19 +1710,19 @@ members = ["crates/a"]
         std::fs::write(
             root.join("crates/a/Cargo.toml"),
             r#"[package]
-name = "a"
-version = "0.1.0"
-edition = "2021"
-rust-version = "1.75"
-"#,
+    name = "a"
+    version = "0.1.0"
+    edition = "2021"
+    rust-version = "1.92"
+    "#,
         )
         .unwrap();
         std::fs::write(root.join("crates/a/src/lib.rs"), "pub fn a() {}\n").unwrap();
         std::fs::write(
             root.join("rust-toolchain.toml"),
             r#"[toolchain]
-channel = "1.75.0"
-"#,
+    channel = "1.92.0"
+    "#,
         )
         .unwrap();
         std::fs::write(
@@ -1487,6 +1735,12 @@ files = ["scripts/tool.sh"]
         .unwrap();
         std::fs::write(root.join("scripts/tool.sh"), "echo demo\n").unwrap();
 
+        (temp, root)
+    }
+
+    fn create_git_workspace() -> (TempDir, Utf8PathBuf) {
+        let (temp, root) = create_minimal_repo();
+        std::fs::create_dir_all(root.join(".git/hooks")).unwrap();
         (temp, root)
     }
 
@@ -2321,6 +2575,70 @@ files = ["scripts/tool.sh"]
     }
 
     #[test]
+    fn test_run_cli_init_hooks_writes_json_file() {
+        let (_temp, root) = create_git_workspace();
+        let out = root.join("hooks.json");
+
+        let cli = Cli {
+            cmd: Command::InitHooks {
+                root: root.clone(),
+                profile: ProfileArg::Team,
+                quick_fail: true,
+                format: InitHooksFormat::Json,
+                out: Some(out.clone()),
+                install: false,
+                force: false,
+            },
+        };
+
+        assert_eq!(run_cli(cli).unwrap(), 0);
+        let text = std::fs::read_to_string(out).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let command = json
+            .get("check_command")
+            .and_then(|v| v.as_str())
+            .expect("check_command should be present");
+        assert!(command.contains("--profile team"));
+        assert!(command.contains("--diff-aware"));
+    }
+
+    #[test]
+    fn test_run_cli_init_hooks_install_writes_pre_commit_hook() {
+        let (_temp, root) = create_git_workspace();
+        let cli = Cli {
+            cmd: Command::InitHooks {
+                root: root.clone(),
+                profile: ProfileArg::Strict,
+                quick_fail: false,
+                format: InitHooksFormat::Text,
+                out: None,
+                install: true,
+                force: false,
+            },
+        };
+
+        assert_eq!(run_cli(cli).unwrap(), 0);
+        let hook = root.join(".git/hooks/pre-commit");
+        assert!(hook.exists());
+        let content = std::fs::read_to_string(hook).unwrap();
+        assert!(content.contains("builddiag check --root . --profile strict"));
+    }
+
+    #[test]
+    fn test_install_pre_commit_hook_requires_force_for_overwrite() {
+        let (_temp, root) = create_git_workspace();
+        let hook_path = root.join(".git/hooks/pre-commit");
+        std::fs::write(&hook_path, "existing").unwrap();
+
+        let err = install_pre_commit_hook(&root, "#!/bin/sh\n", false).unwrap_err();
+        assert!(format!("{err:#}").contains("already exists"));
+
+        install_pre_commit_hook(&root, "#!/bin/sh\necho updated\n", true).unwrap();
+        let updated = std::fs::read_to_string(&hook_path).unwrap();
+        assert!(updated.contains("updated"));
+    }
+
+    #[test]
     fn test_run_fix_cli_applies_changes() {
         let (_temp, root) = create_fixable_workspace();
         let exit = run_fix_cli(&root, None, None, false, false).unwrap();
@@ -2328,7 +2646,7 @@ files = ["scripts/tool.sh"]
 
         let manifest = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
         assert!(manifest.contains("resolver = \"2\""));
-        assert!(manifest.contains("rust-version = \"1.75.0\""));
+        assert!(manifest.contains("rust-version = \"1.92.0\""));
         assert!(root.join("scripts/tools.sha256").exists());
     }
 

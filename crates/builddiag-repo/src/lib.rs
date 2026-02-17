@@ -1393,15 +1393,15 @@ abc123def456  path/to/file1.txt
         let temp_dir = TempDir::new().unwrap();
         let toolchain_path = temp_dir.path().join("rust-toolchain.toml");
         let toolchain_content = r#"
-[toolchain]
-channel = "1.75.0"
-"#;
+    [toolchain]
+    channel = "1.92.0"
+    "#;
         std::fs::write(&toolchain_path, toolchain_content).unwrap();
         let path = Utf8PathBuf::from_path_buf(toolchain_path).unwrap();
 
         let result = parse_rust_toolchain_toml(&path).unwrap();
 
-        assert_eq!(result, "1.75.0");
+        assert_eq!(result, "1.92.0");
     }
 
     #[test]
@@ -1568,7 +1568,7 @@ components = ["rustfmt"]
         // Create both files
         let toml_path = temp_dir.path().join("rust-toolchain.toml");
         let legacy_path = temp_dir.path().join("rust-toolchain");
-        std::fs::write(&toml_path, "[toolchain]\nchannel = \"1.75.0\"\n").unwrap();
+        std::fs::write(&toml_path, "[toolchain]\nchannel = \"1.92.0\"\n").unwrap();
         std::fs::write(&legacy_path, "1.70.0\n").unwrap();
         let root = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
 
@@ -1577,7 +1577,7 @@ components = ["rustfmt"]
         assert!(result.is_some());
         let toolchain = result.unwrap();
         // Should prefer the TOML format
-        assert_eq!(toolchain.channel, "1.75.0");
+        assert_eq!(toolchain.channel, "1.92.0");
         assert!(toolchain.path.ends_with("rust-toolchain.toml"));
     }
 

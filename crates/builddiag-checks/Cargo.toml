@@ -5,8 +5,10 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "Internal check registry for builddiag (not intended for direct use)"
-keywords = ["rust", "build-contract", "policy", "lint"]
+description = "Check registry and implementations for builddiag workspace contract validation"
+readme = "README.md"
+documentation = "https://docs.rs/builddiag-checks"
+keywords = ["rust", "builddiag", "lint", "policy", "workspace"]
 categories = ["development-tools"]
 
 [features]

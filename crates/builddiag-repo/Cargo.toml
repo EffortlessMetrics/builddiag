@@ -5,8 +5,10 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "Internal workspace discovery for builddiag (not intended for direct use)"
-keywords = ["rust", "build-contract", "workspace"]
+description = "Repository discovery, workspace parsing, and repo-state loading for builddiag"
+readme = "README.md"
+documentation = "https://docs.rs/builddiag-repo"
+keywords = ["rust", "builddiag", "workspace", "cargo", "metadata"]
 categories = ["development-tools"]
 
 [features]

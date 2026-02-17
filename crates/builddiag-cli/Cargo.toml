@@ -5,8 +5,9 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "Offline build-contract sensor for Rust workspaces; emits JSON receipts and Markdown summaries"
+description = "Offline Rust workspace contract sensor CLI that emits JSON receipts and Markdown summaries"
 readme = "README.md"
+documentation = "https://docs.rs/builddiag"
 keywords = ["rust", "cli", "build", "validation", "msrv"]
 categories = ["development-tools", "command-line-utilities"]
 
@@ -20,6 +21,7 @@ builddiag-baseline = { path = "../builddiag-baseline", version = "0.3.0" }
 builddiag-checks = { path = "../builddiag-checks", version = "0.3.0" }
 builddiag-core = { path = "../builddiag-core", version = "0.3.0" }
 builddiag-fix = { path = "../builddiag-fix", version = "0.3.0" }
+builddiag-hooks = { path = "../builddiag-hooks", version = "0.3.0" }
 builddiag-domain = { path = "../builddiag-domain", version = "0.3.0" }
 builddiag-render = { path = "../builddiag-render", version = "0.3.0" }
 builddiag-types = { path = "../builddiag-types", version = "0.3.0" }

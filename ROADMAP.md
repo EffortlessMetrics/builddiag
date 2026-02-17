@@ -22,7 +22,7 @@ Continuous validation during development with file system watching.
 - [x] Watch Cargo.toml, rust-toolchain.toml, and checksums files
 - [x] Debounce rapid file changes
 - [x] Clear terminal and re-display results on change
-- [ ] Optional desktop notifications for status changes
+- [x] Optional desktop notifications for status changes
 
 ### Auto-Fix Mode
 Automatically fix certain issues where the correct action is unambiguous.
@@ -41,7 +41,7 @@ Allow teams to acknowledge existing findings and track new regressions.
 - [x] `builddiag baseline create` to snapshot current findings
 - [x] `builddiag baseline update` to add new findings
 - [x] Report only new findings vs baseline in CI
-- [ ] Inline suppression comments in Cargo.toml
+- [x] Inline suppression comments in Cargo.toml
 
 ---
 
@@ -89,11 +89,11 @@ Validate Rust edition configuration.
 ### Pre-commit Hook
 Easy Git hooks integration.
 
-- [ ] `builddiag init-hooks` command
-- [ ] Generate `.pre-commit-config.yaml` snippet
-- [ ] Standalone shell hook for non-pre-commit users
-- [ ] Husky integration snippet
-- [ ] Quick-fail mode for faster feedback
+- [x] `builddiag init-hooks` command
+- [x] Generate `.pre-commit-config.yaml` snippet
+- [x] Standalone shell hook for non-pre-commit users
+- [x] Husky integration snippet
+- [x] Quick-fail mode for faster feedback
 
 ### IDE Integration
 Editor support for real-time feedback.

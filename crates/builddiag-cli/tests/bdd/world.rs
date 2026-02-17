@@ -35,6 +35,9 @@ pub struct BuilddiagWorld {
     /// Override for defaults.out_dir from config.
     pub out_dir_override: Option<String>,
 
+    /// Override for --artifacts-dir from CLI args.
+    pub artifacts_dir_override: Option<String>,
+
     /// Explicit --out path if provided.
     pub explicit_out: Option<String>,
 

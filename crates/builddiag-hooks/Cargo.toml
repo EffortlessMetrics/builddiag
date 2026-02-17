@@ -1,0 +1,14 @@
+[package]
+name = "builddiag-hooks"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Deterministic pre-commit, Git hook, and Husky snippet generator for builddiag"
+readme = "README.md"
+documentation = "https://docs.rs/builddiag-hooks"
+keywords = ["rust", "builddiag", "pre-commit", "husky", "git-hooks"]
+categories = ["development-tools"]
+
+[dependencies]

@@ -61,6 +61,31 @@ pub struct FilterResult {
     pub new_findings: usize,
 }
 
+/// Result of filtering a report using inline suppression comments in Cargo.toml.
+#[derive(Debug, Clone)]
+pub struct InlineSuppressionResult {
+    /// Filtered report with matching findings removed.
+    pub report: Report,
+    /// Number of findings suppressed by inline comments.
+    pub suppressed: usize,
+    /// Number of findings remaining after suppression.
+    pub remaining_findings: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SuppressionSelector {
+    Any,
+    Check(String),
+    Code(String),
+    CheckAndCode { check_id: String, code: String },
+}
+
+#[derive(Debug, Clone, Default)]
+struct FileSuppressions {
+    file_scoped: Vec<SuppressionSelector>,
+    line_scoped: BTreeMap<u32, Vec<SuppressionSelector>>,
+}
+
 /// Load a baseline file from disk.
 pub fn read(path: &Utf8Path) -> Result<Baseline> {
     let raw = fs::read_to_string(path).with_context(|| format!("read baseline {path}"))?;
@@ -194,6 +219,60 @@ pub fn filter_report(report: &Report, baseline: &Baseline) -> Result<FilterResul
     })
 }
 
+/// Filter a report using inline `builddiag:ignore` comments in Cargo.toml files.
+///
+/// Supported selector forms:
+/// - `# builddiag:ignore` (suppress all findings for the file or line)
+/// - `# builddiag:ignore missing_msrv` (suppress by finding code)
+/// - `# builddiag:ignore rust.msrv_defined` (suppress by check id)
+/// - `# builddiag:ignore rust.msrv_defined:missing_msrv` (suppress by check+code)
+///
+/// A directive on a comment-only line is file-scoped. A directive on a line that
+/// also contains TOML content is line-scoped.
+pub fn filter_report_inline_suppressions(
+    root: &Utf8Path,
+    report: &Report,
+) -> Result<InlineSuppressionResult> {
+    if report.verdict == Verdict::Error {
+        return Ok(InlineSuppressionResult {
+            report: report.clone(),
+            suppressed: 0,
+            remaining_findings: report.findings.len(),
+        });
+    }
+
+    let suppressions = collect_inline_suppressions(root, report)?;
+    if suppressions.is_empty() {
+        return Ok(InlineSuppressionResult {
+            report: report.clone(),
+            suppressed: 0,
+            remaining_findings: report.findings.len(),
+        });
+    }
+
+    let mut kept = Vec::with_capacity(report.findings.len());
+    let mut suppressed = 0usize;
+
+    for finding in &report.findings {
+        if finding_matches_suppression(finding, &suppressions) {
+            suppressed += 1;
+        } else {
+            kept.push(finding.clone());
+        }
+    }
+
+    let mut filtered = report.clone();
+    filtered.findings = kept;
+    filtered.verdict = verdict_from_findings(&filtered.findings);
+    filtered.summary = Some(summary_from_findings(&filtered.findings));
+
+    Ok(InlineSuppressionResult {
+        remaining_findings: filtered.findings.len(),
+        report: filtered,
+        suppressed,
+    })
+}
+
 /// Rebuild check reports from a flat findings list for sensor verdict generation.
 pub fn checks_from_findings(findings: &[Finding]) -> Vec<CheckReport> {
     let mut grouped = BTreeMap::<String, Vec<Finding>>::new();
@@ -257,6 +336,173 @@ pub fn summary_from_findings(findings: &[Finding]) -> Summary {
         by_severity,
         by_check,
     }
+}
+
+fn collect_inline_suppressions(
+    root: &Utf8Path,
+    report: &Report,
+) -> Result<BTreeMap<String, FileSuppressions>> {
+    let cargo_paths: BTreeSet<String> = report
+        .findings
+        .iter()
+        .filter_map(|finding| finding.location.as_ref())
+        .map(|location| normalize_path(&location.path))
+        .filter(|path| path.ends_with("Cargo.toml"))
+        .collect();
+
+    let mut out = BTreeMap::new();
+    for rel in cargo_paths {
+        let manifest_path = root.join(&rel);
+        if !manifest_path.exists() || !manifest_path.is_file() {
+            continue;
+        }
+
+        let raw = fs::read_to_string(&manifest_path)
+            .with_context(|| format!("read inline suppressions from {manifest_path}"))?;
+        let parsed = parse_file_suppressions(&raw);
+        if parsed.file_scoped.is_empty() && parsed.line_scoped.is_empty() {
+            continue;
+        }
+
+        out.insert(rel, parsed);
+    }
+
+    Ok(out)
+}
+
+fn finding_matches_suppression(
+    finding: &Finding,
+    suppressions: &BTreeMap<String, FileSuppressions>,
+) -> bool {
+    let Some(location) = &finding.location else {
+        return false;
+    };
+    let path = normalize_path(&location.path);
+    let Some(file_rules) = suppressions.get(&path) else {
+        return false;
+    };
+
+    if file_rules
+        .file_scoped
+        .iter()
+        .any(|selector| selector_matches(selector, finding))
+    {
+        return true;
+    }
+
+    if let Some(line) = location.line
+        && let Some(line_rules) = file_rules.line_scoped.get(&line)
+        && line_rules
+            .iter()
+            .any(|selector| selector_matches(selector, finding))
+    {
+        return true;
+    }
+
+    if location.line.is_none()
+        && file_rules
+            .line_scoped
+            .values()
+            .flatten()
+            .any(|selector| selector_matches(selector, finding))
+    {
+        return true;
+    }
+
+    false
+}
+
+fn selector_matches(selector: &SuppressionSelector, finding: &Finding) -> bool {
+    match selector {
+        SuppressionSelector::Any => true,
+        SuppressionSelector::Check(check_id) => finding.check_id == *check_id,
+        SuppressionSelector::Code(code) => finding.code == *code,
+        SuppressionSelector::CheckAndCode { check_id, code } => {
+            finding.check_id == *check_id && finding.code == *code
+        }
+    }
+}
+
+fn parse_file_suppressions(raw: &str) -> FileSuppressions {
+    let mut parsed = FileSuppressions::default();
+
+    for (idx, line) in raw.lines().enumerate() {
+        let Some(hash_index) = line.find('#') else {
+            continue;
+        };
+
+        let content = &line[..hash_index];
+        let comment = &line[hash_index + 1..];
+        let Some(selectors) = parse_comment_directive(comment) else {
+            continue;
+        };
+
+        if content.trim().is_empty() {
+            parsed.file_scoped.extend(selectors);
+        } else {
+            parsed
+                .line_scoped
+                .entry((idx + 1) as u32)
+                .or_default()
+                .extend(selectors);
+        }
+    }
+
+    parsed
+}
+
+fn parse_comment_directive(comment: &str) -> Option<Vec<SuppressionSelector>> {
+    const DIRECTIVE: &str = "builddiag:ignore";
+
+    let lower = comment.to_ascii_lowercase();
+    let index = lower.find(DIRECTIVE)?;
+    let rest = comment[index + DIRECTIVE.len()..].trim();
+
+    if rest.is_empty() {
+        return Some(vec![SuppressionSelector::Any]);
+    }
+
+    let mut selectors: Vec<SuppressionSelector> = rest
+        .split(|c: char| c == ',' || c.is_whitespace())
+        .filter_map(parse_selector_token)
+        .collect();
+
+    if selectors.is_empty() {
+        selectors.push(SuppressionSelector::Any);
+    }
+
+    Some(selectors)
+}
+
+fn parse_selector_token(token: &str) -> Option<SuppressionSelector> {
+    let token = token.trim().trim_matches(|c: char| c == ';');
+    if token.is_empty() {
+        return None;
+    }
+
+    if token == "*" {
+        return Some(SuppressionSelector::Any);
+    }
+
+    if let Some((check_id, code)) = token.split_once(':').or_else(|| token.split_once('/'))
+        && !check_id.is_empty()
+        && !code.is_empty()
+    {
+        return Some(SuppressionSelector::CheckAndCode {
+            check_id: check_id.to_string(),
+            code: code.to_string(),
+        });
+    }
+
+    if token.contains('.') {
+        return Some(SuppressionSelector::Check(token.to_string()));
+    }
+
+    Some(SuppressionSelector::Code(token.to_string()))
+}
+
+fn normalize_path(path: &str) -> String {
+    path.replace('\\', "/")
 }
 
 fn normalize(baseline: &mut Baseline) -> Result<()> {
@@ -358,5 +604,119 @@ mod tests {
         let second = merge_report(&mut baseline, &report).unwrap();
         assert_eq!(second, 0);
         assert_eq!(baseline.entries.len(), 2);
+    }
+
+    #[test]
+    fn inline_suppression_file_scope_by_code() {
+        let temp = TempDir::new().unwrap();
+        let root = Utf8Path::from_path(temp.path()).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            r#"# builddiag:ignore missing_msrv
+[workspace]
+members = ["crates/a"]
+"#,
+        )
+        .unwrap();
+
+        let report = sample_report();
+        let filtered = filter_report_inline_suppressions(root, &report).unwrap();
+        assert_eq!(filtered.suppressed, 1);
+        assert_eq!(filtered.remaining_findings, 1);
+        assert_eq!(filtered.report.findings[0].code, "members_not_sorted");
+        assert_eq!(filtered.report.verdict, Verdict::Warn);
+    }
+
+    #[test]
+    fn inline_suppression_line_scope_matches_only_target_line() {
+        let temp = TempDir::new().unwrap();
+        let root = Utf8Path::from_path(temp.path()).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            r#"[workspace]
+members = ["crates/b", "crates/a"] # builddiag:ignore members_not_sorted
+"#,
+        )
+        .unwrap();
+
+        let report = sample_report();
+        let filtered = filter_report_inline_suppressions(root, &report).unwrap();
+        assert_eq!(filtered.suppressed, 1);
+        assert_eq!(filtered.remaining_findings, 1);
+        assert_eq!(filtered.report.findings[0].code, "missing_msrv");
+        assert_eq!(filtered.report.verdict, Verdict::Fail);
+    }
+
+    #[test]
+    fn inline_suppression_check_and_code_selector() {
+        let temp = TempDir::new().unwrap();
+        let root = Utf8Path::from_path(temp.path()).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            r#"# builddiag:ignore workspace.member_ordering:members_not_sorted
+[workspace]
+members = ["crates/b", "crates/a"]
+"#,
+        )
+        .unwrap();
+
+        let report = sample_report();
+        let filtered = filter_report_inline_suppressions(root, &report).unwrap();
+        assert_eq!(filtered.suppressed, 1);
+        assert_eq!(filtered.remaining_findings, 1);
+        assert_eq!(filtered.report.findings[0].code, "missing_msrv");
+    }
+
+    #[test]
+    fn inline_suppression_ignored_for_error_verdict() {
+        let temp = TempDir::new().unwrap();
+        let root = Utf8Path::from_path(temp.path()).unwrap();
+        std::fs::write(root.join("Cargo.toml"), "# builddiag:ignore missing_msrv\n").unwrap();
+
+        let mut report = sample_report();
+        report.verdict = Verdict::Error;
+        let filtered = filter_report_inline_suppressions(root, &report).unwrap();
+        assert_eq!(filtered.suppressed, 0);
+        assert_eq!(filtered.remaining_findings, 2);
+        assert_eq!(filtered.report.verdict, Verdict::Error);
+        assert_eq!(filtered.report.findings.len(), 2);
+    }
+
+    #[test]
+    fn inline_suppression_line_selector_matches_line_less_findings() {
+        let temp = TempDir::new().unwrap();
+        let root = Utf8Path::from_path(temp.path()).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            r#"[dependencies]
+serde = "*" # builddiag:ignore wildcard_version
+"#,
+        )
+        .unwrap();
+
+        let report = Report {
+            schema: Report::SCHEMA_V1.to_string(),
+            tool: None,
+            run: None,
+            verdict: Verdict::Fail,
+            findings: vec![Finding {
+                check_id: "deps.wildcard_version".to_string(),
+                code: "wildcard_version".to_string(),
+                severity: Severity::Error,
+                message: "wildcard".to_string(),
+                location: Some(Location {
+                    path: "Cargo.toml".to_string(),
+                    line: None,
+                    col: None,
+                }),
+            }],
+            summary: None,
+            data: None,
+        };
+
+        let filtered = filter_report_inline_suppressions(root, &report).unwrap();
+        assert_eq!(filtered.suppressed, 1);
+        assert_eq!(filtered.remaining_findings, 0);
+        assert_eq!(filtered.report.verdict, Verdict::Pass);
     }
 }

@@ -5,9 +5,11 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "Polling watch loop for builddiag check reruns"
-keywords = ["rust", "watch", "cli", "build", "validation"]
-categories = ["development-tools", "command-line-utilities"]
+description = "Deterministic polling watch loop for rerunning builddiag checks on file changes"
+readme = "README.md"
+documentation = "https://docs.rs/builddiag-watch"
+keywords = ["rust", "builddiag", "watch", "polling", "debounce"]
+categories = ["development-tools"]
 
 [dependencies]
 anyhow.workspace = true

@@ -5,8 +5,10 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "Internal DTOs and schema types for builddiag (not intended for direct use)"
-keywords = ["rust", "build-contract", "schema"]
+description = "Shared schemas and data types for builddiag reports, config, and substrate input"
+readme = "README.md"
+documentation = "https://docs.rs/builddiag-types"
+keywords = ["rust", "builddiag", "schema", "report", "config"]
 categories = ["development-tools"]
 
 [dependencies]

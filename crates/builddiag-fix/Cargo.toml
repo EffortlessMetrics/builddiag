@@ -5,9 +5,11 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "Auto-fix planner/applier for builddiag build-contract findings"
-keywords = ["rust", "fix", "cli", "build", "validation"]
-categories = ["development-tools", "command-line-utilities"]
+description = "Deterministic fix planner and applier for selected builddiag findings"
+readme = "README.md"
+documentation = "https://docs.rs/builddiag-fix"
+keywords = ["rust", "builddiag", "autofix", "workspace", "deterministic"]
+categories = ["development-tools"]
 
 [dependencies]
 anyhow.workspace = true
