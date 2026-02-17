@@ -242,16 +242,19 @@ dependencies = [
 
 [[package]]
 name = "builddiag"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
  "builddiag-app",
+ "builddiag-baseline",
  "builddiag-checks",
  "builddiag-core",
  "builddiag-domain",
+ "builddiag-fix",
  "builddiag-render",
  "builddiag-types",
+ "builddiag-watch",
  "camino",
  "chrono",
  "clap",
@@ -265,7 +268,7 @@ dependencies = [
 
 [[package]]
 name = "builddiag-app"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "builddiag-checks",
@@ -281,8 +284,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "builddiag-baseline"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "builddiag-domain",
+ "builddiag-types",
+ "camino",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "builddiag-checks"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "builddiag-domain",
@@ -302,7 +318,7 @@ dependencies = [
 
 [[package]]
 name = "builddiag-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "builddiag-app",
@@ -316,7 +332,7 @@ dependencies = [
 
 [[package]]
 name = "builddiag-domain"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "builddiag-types",
@@ -330,8 +346,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "builddiag-fix"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "builddiag-domain",
+ "builddiag-repo",
+ "builddiag-types",
+ "camino",
+ "sha2",
+ "tempfile",
+ "toml",
+]
+
+[[package]]
 name = "builddiag-render"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "builddiag-types",
  "chrono",
@@ -341,7 +371,7 @@ dependencies = [
 
 [[package]]
 name = "builddiag-repo"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "builddiag-domain",
@@ -360,7 +390,7 @@ dependencies = [
 
 [[package]]
 name = "builddiag-types"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "proptest",
@@ -368,6 +398,15 @@ dependencies = [
  "serde",
  "serde_json",
  "toml",
+]
+
+[[package]]
+name = "builddiag-watch"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "camino",
+ "tempfile",
 ]
 
 [[package]]
@@ -756,7 +795,7 @@ checksum = "d7a1e2f27636f116493b8b860f5546edb47c8d8f8ea73e1d2a20be88e28d1fea"
 
 [[package]]
 name = "depguard"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "camino",

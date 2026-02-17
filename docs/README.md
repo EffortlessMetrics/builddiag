@@ -29,6 +29,9 @@ Each crate has its own `CLAUDE.md` with implementation-level details:
 | [builddiag-checks](../crates/builddiag-checks/CLAUDE.md) | Check implementations and documentation registry |
 | [builddiag-render](../crates/builddiag-render/CLAUDE.md) | Markdown and GitHub annotation rendering |
 | [builddiag-app](../crates/builddiag-app/CLAUDE.md) | Orchestration, config loading, atomic writes |
+| [builddiag-watch](../crates/builddiag-watch/CLAUDE.md) | Polling watch loop and change debounce |
+| [builddiag-fix](../crates/builddiag-fix/CLAUDE.md) | Deterministic fix planning and apply |
+| [builddiag-baseline](../crates/builddiag-baseline/CLAUDE.md) | Baseline snapshot/filtering for regression-only checks |
 | [builddiag-cli](../crates/builddiag-cli/CLAUDE.md) | CLI entry point, argument parsing |
 | [depguard](../crates/depguard/CLAUDE.md) | Dependency hygiene library |
 

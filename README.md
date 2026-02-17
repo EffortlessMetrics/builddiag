@@ -254,13 +254,28 @@ builddiag check --config builddiag.toml
 
 If no config is provided, sensible defaults are used.
 
+## Baselines
+
+Use baselines to acknowledge existing findings and fail only on regressions:
+
+```bash
+# Snapshot current findings
+builddiag baseline create --root .
+
+# Check only new findings (not present in baseline)
+builddiag check --baseline .builddiag-baseline.json
+
+# Merge newly observed findings into baseline
+builddiag baseline update --root .
+```
+
 ## Library Usage
 
 Use `builddiag-core` to embed builddiag in your own tools:
 
 ```toml
 [dependencies]
-builddiag-core = "0.2"
+builddiag-core = "0.3"
 ```
 
 ```rust

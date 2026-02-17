@@ -1,23 +1,21 @@
 [package]
-name = "builddiag-domain"
+name = "builddiag-baseline"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "Internal verdict and policy logic for builddiag (not intended for direct use)"
-keywords = ["rust", "build-contract", "policy"]
+description = "Baseline filtering and snapshot support for builddiag findings"
+keywords = ["rust", "build-contract", "baseline", "ci"]
 categories = ["development-tools"]
 
 [dependencies]
 anyhow.workspace = true
-semver.workspace = true
+serde.workspace = true
 serde_json.workspace = true
-sha2.workspace = true
-hex.workspace = true
+camino.workspace = true
 builddiag-types = { path = "../builddiag-types", version = "0.3.0" }
+builddiag-domain = { path = "../builddiag-domain", version = "0.3.0" }
 
 [dev-dependencies]
-insta.workspace = true
-proptest.workspace = true
-regex = "1"
+tempfile.workspace = true

@@ -2,6 +2,7 @@
 //!
 //! This module implements Given/When/Then steps for BDD scenarios.
 
+use builddiag_types::Report;
 use cucumber::{given, then, when};
 use serde_json::Value;
 use std::path::PathBuf;
@@ -292,6 +293,54 @@ fn then_report_exists_at_canonical_path(world: &mut BuilddiagWorld) {
         "Expected report to exist at canonical path {:?}",
         report_path
     );
+
+    let content = std::fs::read_to_string(&report_path)
+        .unwrap_or_else(|_| panic!("failed to read report at {:?}", report_path));
+    let report: Report = serde_json::from_str(&content)
+        .unwrap_or_else(|_| panic!("report does not match builddiag report contract"));
+
+    assert_eq!(report.schema, Report::SCHEMA_V1);
+    assert!(report.tool.is_some(), "report.tool should be present");
+    assert!(report.run.is_some(), "report.run should be present");
+
+    if let Some(run) = &report.run {
+        if let Some(ended) = run.ended_at {
+            assert!(
+                ended >= run.started_at,
+                "run.ended_at should be >= run.started_at"
+            );
+        }
+    }
+
+    for finding in &report.findings {
+        assert!(
+            !finding.check_id.trim().is_empty(),
+            "finding.check_id should be non-empty"
+        );
+        assert!(
+            !finding.code.trim().is_empty(),
+            "finding.code should be non-empty"
+        );
+        assert!(
+            !finding.message.trim().is_empty(),
+            "finding.message should be non-empty"
+        );
+        if let Some(location) = &finding.location {
+            assert!(
+                !location.path.contains('\\'),
+                "finding path should use forward slashes: {}",
+                location.path
+            );
+        }
+    }
+
+    if let Some(summary) = &report.summary {
+        assert_eq!(
+            summary.total_findings,
+            report.findings.len(),
+            "summary.total_findings should match findings length"
+        );
+    }
 }
 
 #[then(expr = "the report verdict should be {string}")]

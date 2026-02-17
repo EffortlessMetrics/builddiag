@@ -26,6 +26,8 @@ const WORKSPACE_CRATES: &[&str] = &[
     "builddiag-checks",
     "builddiag-render",
     "builddiag-app",
+    "builddiag-watch",
+    "builddiag-fix",
     "builddiag", // CLI crate (in builddiag-cli directory)
 ];
 

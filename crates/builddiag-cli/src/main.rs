@@ -2,17 +2,26 @@ use anyhow::{Context, Result};
 use builddiag_app::{
     compute_changed_files, create_error_receipt, run_check, write_atomic, write_outputs,
 };
+use builddiag_baseline as baseline;
 use builddiag_checks::{BUILTIN_CHECKS, CHECK_DOCS, explain_check};
 use builddiag_core::load_config;
-use builddiag_domain::explain::{all_check_ids, explain, explain_check_all_codes};
+use builddiag_domain::{
+    exit_code_for,
+    explain::{all_check_ids, explain, explain_check_all_codes},
+};
+use builddiag_fix::{ApplyOptions, FixProposal, apply_fixes, plan_fixes};
 use builddiag_render::{render_diagnostics, render_github_annotations, render_markdown};
-use builddiag_types::{Config, Profile, ProfileCheckState};
+use builddiag_types::{Config, FailOn, Profile, ProfileCheckState, Report};
+use builddiag_watch::{WatchOptions, run_watch_loop};
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::Utc;
 use clap::{Parser, Subcommand, ValueEnum};
 use std::fmt::Write as _;
+use std::io::Write as _;
+use std::io::{self};
 #[cfg(test)]
 use std::sync::Mutex;
+use std::time::Duration;
 
 /// CLI-compatible profile enum for clap value parsing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -107,6 +116,11 @@ enum Command {
         #[arg(long)]
         md: Option<Utf8PathBuf>,
 
+        /// Baseline file path. When provided, only findings not in the baseline
+        /// are kept in the emitted report.
+        #[arg(long)]
+        baseline: Option<Utf8PathBuf>,
+
         /// Artifacts output directory. When set, always writes sensor.report.v1
         /// to <dir>/report.json with builddiag-native payload in <dir>/extras/payload.json.
         /// Overrides --out, --md, and --format.
@@ -150,6 +164,108 @@ enum Command {
         cache_dir: Option<Utf8PathBuf>,
     },
 
+    /// Continuously run checks when contract files change.
+    Watch {
+        /// Repository root.
+        #[arg(long, default_value = ".")]
+        root: Utf8PathBuf,
+
+        /// Optional config file (TOML).
+        #[arg(long)]
+        config: Option<Utf8PathBuf>,
+
+        /// Profile preset (oss, team, strict). Overrides config file profile.
+        #[arg(long, value_enum)]
+        profile: Option<ProfileArg>,
+
+        /// Output JSON report path.
+        #[arg(long)]
+        out: Option<Utf8PathBuf>,
+
+        /// Output Markdown summary path.
+        #[arg(long)]
+        md: Option<Utf8PathBuf>,
+
+        /// Baseline file path for regression-only output.
+        #[arg(long)]
+        baseline: Option<Utf8PathBuf>,
+
+        /// Annotation output format (github or none).
+        #[arg(long, value_enum, default_value = "none")]
+        annotations: AnnotationFormat,
+
+        /// Output format for the JSON report.
+        #[arg(long, value_enum, default_value = "builddiag")]
+        format: OutputFormat,
+
+        /// Enable diff-aware skipping (only run checks triggered by changed files).
+        #[arg(long, default_value_t = false)]
+        diff_aware: bool,
+
+        /// Base git ref for diff-aware mode.
+        #[arg(long)]
+        base: Option<String>,
+
+        /// Head git ref for diff-aware mode.
+        #[arg(long)]
+        head: Option<String>,
+
+        /// Run all checks even when diff-aware.
+        #[arg(long, default_value_t = false)]
+        always: bool,
+
+        /// Disable caching of repo state (forces full re-parse).
+        #[arg(long, default_value_t = false)]
+        no_cache: bool,
+
+        /// Custom cache directory (default: .builddiag-cache/).
+        #[arg(long)]
+        cache_dir: Option<Utf8PathBuf>,
+
+        /// Poll interval in milliseconds.
+        #[arg(long, default_value_t = 250)]
+        poll_ms: u64,
+
+        /// Debounce window in milliseconds.
+        #[arg(long, default_value_t = 300)]
+        debounce_ms: u64,
+
+        /// Ring terminal bell when exit status changes.
+        #[arg(long, default_value_t = false)]
+        notify: bool,
+
+        /// Do not clear the terminal between runs.
+        #[arg(long, default_value_t = false)]
+        no_clear: bool,
+
+        /// Limit runs (primarily for testing and scripted usage).
+        #[arg(long, hide = true)]
+        max_runs: Option<usize>,
+    },
+
+    /// Apply deterministic auto-fixes for unambiguous findings.
+    Fix {
+        /// Repository root.
+        #[arg(long, default_value = ".")]
+        root: Utf8PathBuf,
+
+        /// Optional config file (TOML).
+        #[arg(long)]
+        config: Option<Utf8PathBuf>,
+
+        /// Profile preset (oss, team, strict). Overrides config file profile.
+        #[arg(long, value_enum)]
+        profile: Option<ProfileArg>,
+
+        /// Print proposed changes without writing files.
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
+
+        /// Prompt before applying each proposed fix.
+        #[arg(long, default_value_t = false)]
+        interactive: bool,
+    },
+
     /// Render Markdown from an existing JSON report.
     Md {
         #[arg(long)]
@@ -181,6 +297,69 @@ enum Command {
         /// Output format: table (default) or json.
         #[arg(long, default_value = "table")]
         format: ListFormat,
+    },
+
+    /// Manage finding baselines used for regression-only checks.
+    Baseline {
+        #[command(subcommand)]
+        cmd: BaselineCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum BaselineCommand {
+    /// Create a new baseline snapshot from current findings.
+    Create {
+        /// Repository root.
+        #[arg(long, default_value = ".")]
+        root: Utf8PathBuf,
+
+        /// Optional config file (TOML).
+        #[arg(long)]
+        config: Option<Utf8PathBuf>,
+
+        /// Profile preset (oss, team, strict). Overrides config file profile.
+        #[arg(long, value_enum)]
+        profile: Option<ProfileArg>,
+
+        /// Output baseline path (default: <root>/.builddiag-baseline.json).
+        #[arg(long)]
+        out: Option<Utf8PathBuf>,
+
+        /// Disable caching of repo state (forces full re-parse).
+        #[arg(long, default_value_t = false)]
+        no_cache: bool,
+
+        /// Custom cache directory (default: .builddiag-cache/).
+        #[arg(long)]
+        cache_dir: Option<Utf8PathBuf>,
+    },
+
+    /// Update an existing baseline by merging current findings.
+    Update {
+        /// Repository root.
+        #[arg(long, default_value = ".")]
+        root: Utf8PathBuf,
+
+        /// Optional config file (TOML).
+        #[arg(long)]
+        config: Option<Utf8PathBuf>,
+
+        /// Profile preset (oss, team, strict). Overrides config file profile.
+        #[arg(long, value_enum)]
+        profile: Option<ProfileArg>,
+
+        /// Baseline path (default: <root>/.builddiag-baseline.json).
+        #[arg(long)]
+        out: Option<Utf8PathBuf>,
+
+        /// Disable caching of repo state (forces full re-parse).
+        #[arg(long, default_value_t = false)]
+        no_cache: bool,
+
+        /// Custom cache directory (default: .builddiag-cache/).
+        #[arg(long)]
+        cache_dir: Option<Utf8PathBuf>,
     },
 }
 
@@ -239,6 +418,7 @@ fn run_cli(cli: Cli) -> Result<i32> {
             profile,
             out,
             md,
+            baseline,
             artifacts_dir,
             annotations,
             format,
@@ -255,6 +435,7 @@ fn run_cli(cli: Cli) -> Result<i32> {
             profile,
             out.as_deref(),
             md.as_deref(),
+            baseline.as_deref(),
             artifacts_dir.as_deref(),
             annotations,
             format,
@@ -266,6 +447,54 @@ fn run_cli(cli: Cli) -> Result<i32> {
             no_cache,
             cache_dir.as_deref(),
         ),
+        Command::Watch {
+            root,
+            config,
+            profile,
+            out,
+            md,
+            baseline,
+            annotations,
+            format,
+            diff_aware,
+            base,
+            head,
+            always,
+            no_cache,
+            cache_dir,
+            poll_ms,
+            debounce_ms,
+            notify,
+            no_clear,
+            max_runs,
+        } => run_watch_cli(
+            &root,
+            config.as_deref(),
+            profile,
+            out.as_deref(),
+            md.as_deref(),
+            baseline.as_deref(),
+            annotations,
+            format,
+            diff_aware,
+            base.as_deref(),
+            head.as_deref(),
+            always,
+            no_cache,
+            cache_dir.as_deref(),
+            poll_ms,
+            debounce_ms,
+            notify,
+            no_clear,
+            max_runs,
+        ),
+        Command::Fix {
+            root,
+            config,
+            profile,
+            dry_run,
+            interactive,
+        } => run_fix_cli(&root, config.as_deref(), profile, dry_run, interactive),
         Command::Md { report, out } => {
             let bytes = std::fs::read(&report).with_context(|| format!("read {report}"))?;
             let report: builddiag_types::Report =
@@ -298,6 +527,7 @@ fn run_cli(cli: Cli) -> Result<i32> {
             list_checks(profile.map(Profile::from), format);
             Ok(0)
         }
+        Command::Baseline { cmd } => run_baseline_cli(cmd),
     }
 }
 
@@ -574,6 +804,91 @@ fn list_checks_table(profile_filter: Option<Profile>) -> String {
     out
 }
 
+fn run_baseline_cli(cmd: BaselineCommand) -> Result<i32> {
+    match cmd {
+        BaselineCommand::Create {
+            root,
+            config,
+            profile,
+            out,
+            no_cache,
+            cache_dir,
+        } => {
+            let out_path = baseline_path_for(&root, out.as_deref());
+            let result = run_check_command(
+                &root,
+                config.as_deref(),
+                profile,
+                None,
+                None,
+                None,
+                AnnotationFormat::None,
+                OutputFormat::Builddiag,
+                false,
+                None,
+                None,
+                true,
+                no_cache,
+                cache_dir.as_deref(),
+            )?;
+
+            let baseline = baseline::from_report(&result.run.report);
+            baseline::write(&out_path, &baseline)?;
+            println!(
+                "builddiag: wrote baseline to {} ({} entries)",
+                out_path,
+                baseline.entries.len()
+            );
+            Ok(0)
+        }
+        BaselineCommand::Update {
+            root,
+            config,
+            profile,
+            out,
+            no_cache,
+            cache_dir,
+        } => {
+            let out_path = baseline_path_for(&root, out.as_deref());
+            let mut existing = baseline::read_or_default(&out_path)?;
+            let result = run_check_command(
+                &root,
+                config.as_deref(),
+                profile,
+                None,
+                None,
+                None,
+                AnnotationFormat::None,
+                OutputFormat::Builddiag,
+                false,
+                None,
+                None,
+                true,
+                no_cache,
+                cache_dir.as_deref(),
+            )?;
+
+            let added = baseline::merge_report(&mut existing, &result.run.report)?;
+            baseline::write(&out_path, &existing)?;
+            println!(
+                "builddiag: updated baseline at {} ({} added, {} total)",
+                out_path,
+                added,
+                existing.entries.len()
+            );
+            Ok(0)
+        }
+    }
+}
+
+fn baseline_path_for(root: &Utf8Path, out: Option<&Utf8Path>) -> Utf8PathBuf {
+    match out {
+        Some(path) if path.is_absolute() => path.to_path_buf(),
+        Some(path) => root.join(path),
+        None => root.join(".builddiag-baseline.json"),
+    }
+}
+
 fn default_report_path(cfg: &Config, root: &Utf8Path) -> Utf8PathBuf {
     root.join(&cfg.defaults.out_dir).join("report.json")
 }
@@ -589,6 +904,7 @@ fn run_check_cli(
     profile: Option<ProfileArg>,
     out: Option<&Utf8Path>,
     md: Option<&Utf8Path>,
+    baseline: Option<&Utf8Path>,
     artifacts_dir: Option<&Utf8Path>,
     annotations: AnnotationFormat,
     format: OutputFormat,
@@ -632,6 +948,7 @@ fn run_check_cli(
         profile,
         effective_out.as_deref(),
         effective_md.as_deref(),
+        baseline,
         annotations,
         effective_format,
         diff_aware,
@@ -691,6 +1008,157 @@ fn run_check_cli(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn run_watch_cli(
+    root: &Utf8Path,
+    config: Option<&Utf8Path>,
+    profile: Option<ProfileArg>,
+    out: Option<&Utf8Path>,
+    md: Option<&Utf8Path>,
+    baseline: Option<&Utf8Path>,
+    annotations: AnnotationFormat,
+    format: OutputFormat,
+    diff_aware: bool,
+    base: Option<&str>,
+    head: Option<&str>,
+    always: bool,
+    no_cache: bool,
+    cache_dir: Option<&Utf8Path>,
+    poll_ms: u64,
+    debounce_ms: u64,
+    notify: bool,
+    no_clear: bool,
+    max_runs: Option<usize>,
+) -> Result<i32> {
+    let mut watch = WatchOptions::for_root(root);
+    watch.poll_interval = Duration::from_millis(poll_ms.max(1));
+    watch.debounce = Duration::from_millis(debounce_ms.max(1));
+    watch.clear_screen = !no_clear;
+    watch.notify_on_status_change = notify;
+    watch.max_runs = max_runs;
+    if let Some(path) = config {
+        let watched_path = if path.is_absolute() {
+            path.to_path_buf()
+        } else if let Ok(cwd) = std::env::current_dir() {
+            if let Some(utf8_cwd) = Utf8PathBuf::from_path_buf(cwd).ok() {
+                utf8_cwd.join(path)
+            } else {
+                root.join(path)
+            }
+        } else {
+            root.join(path)
+        };
+        watch.extra_files.insert(watched_path);
+    }
+
+    println!(
+        "builddiag: watching {} (poll={}ms, debounce={}ms)",
+        root,
+        poll_ms.max(1),
+        debounce_ms.max(1)
+    );
+    println!("builddiag: press Ctrl+C to stop");
+
+    run_watch_loop(&watch, || {
+        let code = run_check_cli(
+            root,
+            config,
+            profile,
+            out,
+            md,
+            baseline,
+            None,
+            annotations,
+            format,
+            Mode::Standard,
+            diff_aware,
+            base,
+            head,
+            always,
+            no_cache,
+            cache_dir,
+        )?;
+        println!("builddiag: watch run finished with exit code {code}");
+        Ok(code)
+    })
+}
+
+fn run_fix_cli(
+    root: &Utf8Path,
+    config: Option<&Utf8Path>,
+    profile: Option<ProfileArg>,
+    dry_run: bool,
+    interactive: bool,
+) -> Result<i32> {
+    let mut cfg: Config = load_config(config)?;
+    if let Some(profile_arg) = profile {
+        cfg.profile = profile_arg.into();
+    }
+
+    let plan = plan_fixes(root, &cfg)?;
+
+    if !plan.warnings.is_empty() {
+        for warning in &plan.warnings {
+            eprintln!("builddiag: warning: {warning}");
+        }
+    }
+
+    if plan.proposals.is_empty() {
+        println!("builddiag: no unambiguous fixes to apply");
+        return Ok(0);
+    }
+
+    println!("builddiag: planned {} fix(es):", plan.proposals.len());
+    for proposal in &plan.proposals {
+        println!(
+            "  - [{}] {} ({})",
+            proposal.kind.as_str(),
+            proposal.summary,
+            proposal.target
+        );
+    }
+
+    let result = apply_fixes(
+        root,
+        &cfg,
+        ApplyOptions {
+            dry_run,
+            interactive,
+        },
+        prompt_fix_confirmation,
+    )?;
+
+    if dry_run {
+        println!(
+            "builddiag: dry run complete ({} would apply, {} skipped)",
+            result.dry_run_actions, result.skipped
+        );
+    } else {
+        println!(
+            "builddiag: applied {} fix(es), skipped {}",
+            result.applied, result.skipped
+        );
+    }
+
+    Ok(0)
+}
+
+fn prompt_fix_confirmation(proposal: &FixProposal) -> Result<bool> {
+    print!(
+        "Apply [{}] {} ({})? [y/N]: ",
+        proposal.kind.as_str(),
+        proposal.summary,
+        proposal.target
+    );
+    io::stdout().flush().context("flush confirmation prompt")?;
+    let mut input = String::new();
+    io::stdin()
+        .read_line(&mut input)
+        .context("read confirmation input")?;
+    let normalized = input.trim().to_ascii_lowercase();
+    Ok(matches!(normalized.as_str(), "y" | "yes"))
+}
+
 fn finish_check_output_for(
     cmd_result: &CheckCommandResult,
     annotations: AnnotationFormat,
@@ -725,6 +1193,7 @@ fn run_check_command(
     profile: Option<ProfileArg>,
     out: Option<&Utf8Path>,
     md: Option<&Utf8Path>,
+    baseline_path: Option<&Utf8Path>,
     _annotations: AnnotationFormat,
     format: OutputFormat,
     diff_aware: bool,
@@ -735,6 +1204,7 @@ fn run_check_command(
     cache_dir: Option<&Utf8Path>,
 ) -> Result<CheckCommandResult> {
     let mut cfg: Config = load_config(config)?;
+    let fail_on = cfg.defaults.fail_on;
 
     // CLI --profile overrides config file profile
     if let Some(profile_arg) = profile {
@@ -776,15 +1246,15 @@ fn run_check_command(
         .map(Utf8PathBuf::from)
         .or_else(|| Some(default_md_path(&cfg, root)));
 
-    match format {
+    let mut result = match format {
         OutputFormat::Builddiag | OutputFormat::Diagnostics => {
             let run = run_check(root, &cfg, always, changed, cache_config.as_ref())?;
-            Ok(CheckCommandResult {
+            CheckCommandResult {
                 run,
                 out_json,
                 out_md,
                 sensor_report: None,
-            })
+            }
         }
         OutputFormat::Sensor => {
             let settings = builddiag_core::Settings {
@@ -796,7 +1266,7 @@ fn run_check_command(
                 substrate: None,
             };
             let result = builddiag_core::run(&settings)?;
-            Ok(CheckCommandResult {
+            CheckCommandResult {
                 run: builddiag_app::CheckRun {
                     report: result.report,
                     markdown: result.markdown,
@@ -806,9 +1276,85 @@ fn run_check_command(
                 out_json,
                 out_md,
                 sensor_report: Some(result.sensor_report),
-            })
+            }
         }
+    };
+
+    if let Some(path) = baseline_path {
+        apply_baseline(root, path, fail_on, &mut result)?;
     }
+
+    Ok(result)
+}
+
+fn apply_baseline(
+    root: &Utf8Path,
+    baseline_path: &Utf8Path,
+    fail_on: FailOn,
+    cmd_result: &mut CheckCommandResult,
+) -> Result<()> {
+    let resolved = baseline_path_for(root, Some(baseline_path));
+    let baseline = baseline::read(&resolved)?;
+    let filtered = baseline::filter_report(&cmd_result.run.report, &baseline)?;
+
+    cmd_result.run.report = filtered.report;
+    set_baseline_metadata(
+        &mut cmd_result.run.report,
+        &resolved,
+        baseline.entries.len(),
+        filtered.suppressed,
+        filtered.new_findings,
+    );
+    cmd_result.run.markdown = render_markdown(&cmd_result.run.report);
+    cmd_result.run.annotations = render_github_annotations(&cmd_result.run.report);
+    cmd_result.run.exit_code = exit_code_for(cmd_result.run.report.verdict, fail_on);
+
+    if let Some(existing_sensor) = cmd_result.sensor_report.take() {
+        let capabilities = existing_sensor
+            .run
+            .as_ref()
+            .map(|run| run.capabilities.clone())
+            .unwrap_or_default();
+        let artifacts = existing_sensor.artifacts;
+        let checks = baseline::checks_from_findings(&cmd_result.run.report.findings);
+        let mut sensor = builddiag_app::report_to_sensor(
+            &cmd_result.run.report,
+            &checks,
+            capabilities,
+            artifacts,
+        );
+        sensor.verdict.counts.suppressed = filtered.suppressed;
+        cmd_result.sensor_report = Some(sensor);
+    }
+
+    Ok(())
+}
+
+fn set_baseline_metadata(
+    report: &mut Report,
+    baseline_path: &Utf8Path,
+    baseline_entries: usize,
+    suppressed: usize,
+    new_findings: usize,
+) {
+    let baseline_value = serde_json::json!({
+        "path": baseline_path.as_str().replace('\\', "/"),
+        "entries": baseline_entries,
+        "suppressed": suppressed,
+        "new": new_findings
+    });
+
+    let mut root = match report.data.take() {
+        Some(serde_json::Value::Object(obj)) => obj,
+        Some(other) => {
+            let mut obj = serde_json::Map::new();
+            obj.insert("report_data".to_string(), other);
+            obj
+        }
+        None => serde_json::Map::new(),
+    };
+    root.insert("baseline".to_string(), baseline_value);
+    report.data = Some(serde_json::Value::Object(root));
 }
 
 /// Write the outputs and print annotations.
@@ -897,6 +1443,50 @@ edition = "2021"
         )
         .unwrap();
         std::fs::write(root.join("src/lib.rs"), "pub fn demo() {}").unwrap();
+        (temp, root)
+    }
+
+    fn create_fixable_workspace() -> (TempDir, Utf8PathBuf) {
+        let temp = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).unwrap();
+        std::fs::create_dir_all(root.join("crates/a/src")).unwrap();
+        std::fs::create_dir_all(root.join("scripts")).unwrap();
+
+        std::fs::write(
+            root.join("Cargo.toml"),
+            r#"[workspace]
+members = ["crates/a"]
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("crates/a/Cargo.toml"),
+            r#"[package]
+name = "a"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+"#,
+        )
+        .unwrap();
+        std::fs::write(root.join("crates/a/src/lib.rs"), "pub fn a() {}\n").unwrap();
+        std::fs::write(
+            root.join("rust-toolchain.toml"),
+            r#"[toolchain]
+channel = "1.75.0"
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("scripts/tools.toml"),
+            r#"[[tool]]
+name = "demo"
+files = ["scripts/tool.sh"]
+"#,
+        )
+        .unwrap();
+        std::fs::write(root.join("scripts/tool.sh"), "echo demo\n").unwrap();
+
         (temp, root)
     }
 
@@ -1074,6 +1664,7 @@ edition = "2021"
             None,
             None,
             None,
+            None,
             AnnotationFormat::None,
             OutputFormat::Sensor,
             Mode::Cockpit,
@@ -1108,6 +1699,7 @@ edition = "2021"
             Some(&out_json),
             None,
             None,
+            None,
             AnnotationFormat::None,
             OutputFormat::Builddiag,
             Mode::Cockpit,
@@ -1135,6 +1727,7 @@ edition = "2021"
                 profile: None,
                 out: None,
                 md: None,
+                baseline: None,
                 artifacts_dir: None,
                 annotations: AnnotationFormat::None,
                 format: OutputFormat::Builddiag,
@@ -1222,6 +1815,7 @@ edition = "2021"
                 profile: None,
                 out: None,
                 md: None,
+                baseline: None,
                 artifacts_dir: None,
                 annotations: AnnotationFormat::None,
                 format: OutputFormat::Builddiag,
@@ -1374,6 +1968,7 @@ edition = "2021"
             None,
             Some(&out_json),
             Some(&out_md),
+            None,
             AnnotationFormat::None,
             OutputFormat::Builddiag,
             false,
@@ -1393,6 +1988,7 @@ edition = "2021"
             None,
             Some(&out_json),
             Some(&out_md),
+            None,
             AnnotationFormat::None,
             OutputFormat::Sensor,
             false,
@@ -1419,6 +2015,7 @@ edition = "2021"
             None,
             Some(&out_json),
             Some(&out_md),
+            None,
             AnnotationFormat::None,
             OutputFormat::Diagnostics,
             false,
@@ -1448,6 +2045,7 @@ edition = "2021"
             None,
             None,
             None,
+            None,
             AnnotationFormat::None,
             OutputFormat::Builddiag,
             Mode::Standard,
@@ -1467,6 +2065,7 @@ edition = "2021"
 
         let exit = run_check_cli(
             &root,
+            None,
             None,
             None,
             None,
@@ -1493,6 +2092,7 @@ edition = "2021"
 
         let exit = run_check_cli(
             &root,
+            None,
             None,
             None,
             None,
@@ -1527,6 +2127,7 @@ edition = "2021"
             None,
             None,
             None,
+            None,
             Some(&artifacts_file),
             AnnotationFormat::None,
             OutputFormat::Builddiag,
@@ -1556,6 +2157,7 @@ edition = "2021"
             Some(ProfileArg::Strict),
             Some(&out_json),
             Some(&out_md),
+            None,
             AnnotationFormat::None,
             OutputFormat::Builddiag,
             true,
@@ -1716,5 +2318,59 @@ edition = "2021"
             },
         };
         assert_eq!(run_cli(cli).unwrap(), 0);
+    }
+
+    #[test]
+    fn test_run_fix_cli_applies_changes() {
+        let (_temp, root) = create_fixable_workspace();
+        let exit = run_fix_cli(&root, None, None, false, false).unwrap();
+        assert_eq!(exit, 0);
+
+        let manifest = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+        assert!(manifest.contains("resolver = \"2\""));
+        assert!(manifest.contains("rust-version = \"1.75.0\""));
+        assert!(root.join("scripts/tools.sha256").exists());
+    }
+
+    #[test]
+    fn test_run_fix_cli_dry_run_leaves_files_unchanged() {
+        let (_temp, root) = create_fixable_workspace();
+        let before_manifest = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+
+        let exit = run_fix_cli(&root, None, None, true, false).unwrap();
+        assert_eq!(exit, 0);
+
+        let after_manifest = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+        assert_eq!(before_manifest, after_manifest);
+        assert!(!root.join("scripts/tools.sha256").exists());
+    }
+
+    #[test]
+    fn test_run_watch_cli_with_max_runs_exits() {
+        let (_temp, root) = create_minimal_repo();
+        let exit = run_watch_cli(
+            &root,
+            None,
+            None,
+            None,
+            None,
+            None,
+            AnnotationFormat::None,
+            OutputFormat::Builddiag,
+            false,
+            None,
+            None,
+            false,
+            true,
+            None,
+            10,
+            10,
+            false,
+            true,
+            Some(1),
+        )
+        .unwrap();
+
+        assert!(exit == 0 || exit == 2);
     }
 }

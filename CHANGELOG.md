@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-02-16
+
 ### Added
 - `builddiag-core` crate: public library facade with a Clap-free API for embedding builddiag as a dependency.
 - Substrate bridge: `Settings.substrate` accepts pre-computed `Substrate` data, skipping disk I/O for in-process integrations.

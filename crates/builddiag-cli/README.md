@@ -15,4 +15,9 @@ builddiag check \
   --out artifacts/builddiag/report.json \
   --md artifacts/builddiag/comment.md \
   --annotations github
+
+# Baseline workflow
+builddiag baseline create --root .
+builddiag check --baseline .builddiag-baseline.json
+builddiag baseline update --root .
 ```

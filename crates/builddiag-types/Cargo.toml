@@ -5,8 +5,8 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "Internal types for builddiag (not intended for direct use)"
-keywords = ["rust", "build", "validation"]
+description = "Internal DTOs and schema types for builddiag (not intended for direct use)"
+keywords = ["rust", "build-contract", "schema"]
 categories = ["development-tools"]
 
 [dependencies]

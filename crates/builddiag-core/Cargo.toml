@@ -5,8 +5,8 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "Public library API for builddiag build contract validation"
-keywords = ["rust", "build", "validation", "ci"]
+description = "Public library API for the builddiag build-contract sensor"
+keywords = ["rust", "build-contract", "workspace", "ci", "diagnostics"]
 categories = ["development-tools"]
 
 [features]
@@ -14,10 +14,10 @@ default = ["cache"]
 cache = ["builddiag-app/cache"]
 
 [dependencies]
-builddiag-app = { path = "../builddiag-app", version = "0.2.0" }
-builddiag-repo = { path = "../builddiag-repo", version = "0.2.0" }
-builddiag-types = { path = "../builddiag-types", version = "0.2.0" }
-builddiag-domain = { path = "../builddiag-domain", version = "0.2.0" }
+builddiag-app = { path = "../builddiag-app", version = "0.3.0" }
+builddiag-repo = { path = "../builddiag-repo", version = "0.3.0" }
+builddiag-types = { path = "../builddiag-types", version = "0.3.0" }
+builddiag-domain = { path = "../builddiag-domain", version = "0.3.0" }
 anyhow.workspace = true
 camino.workspace = true
 chrono.workspace = true

@@ -1,0 +1,17 @@
+[package]
+name = "builddiag-watch"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Polling watch loop for builddiag check reruns"
+keywords = ["rust", "watch", "cli", "build", "validation"]
+categories = ["development-tools", "command-line-utilities"]
+
+[dependencies]
+anyhow.workspace = true
+camino.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

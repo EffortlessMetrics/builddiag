@@ -4,7 +4,7 @@ This document outlines the planned features and improvements for builddiag, orga
 
 ## Current Status
 
-**Latest Release:** v0.2.0 (2026-02-05)
+**Latest Release:** v0.3.0 (2026-02-16)
 - Core validation: MSRV, toolchain, checksums, workspace config
 - Output formats: JSON, Markdown, GitHub Actions annotations
 - Profile system: strict, team, oss presets
@@ -18,29 +18,29 @@ This document outlines the planned features and improvements for builddiag, orga
 ### Watch Mode
 Continuous validation during development with file system watching.
 
-- [ ] Implement `builddiag watch` subcommand
-- [ ] Watch Cargo.toml, rust-toolchain.toml, and checksums files
-- [ ] Debounce rapid file changes
-- [ ] Clear terminal and re-display results on change
+- [x] Implement `builddiag watch` subcommand
+- [x] Watch Cargo.toml, rust-toolchain.toml, and checksums files
+- [x] Debounce rapid file changes
+- [x] Clear terminal and re-display results on change
 - [ ] Optional desktop notifications for status changes
 
 ### Auto-Fix Mode
 Automatically fix certain issues where the correct action is unambiguous.
 
-- [ ] Implement `builddiag fix` subcommand
-- [ ] Auto-add missing `rust-version` to workspace Cargo.toml
-- [ ] Auto-update resolver to v2 in workspace
-- [ ] Auto-generate missing checksum entries
-- [ ] Dry-run mode showing proposed changes
-- [ ] Interactive mode for selective fixes
+- [x] Implement `builddiag fix` subcommand
+- [x] Auto-add missing `rust-version` to workspace Cargo.toml
+- [x] Auto-update resolver to v2 in workspace
+- [x] Auto-generate missing checksum entries
+- [x] Dry-run mode showing proposed changes
+- [x] Interactive mode for selective fixes
 
 ### Baseline and Suppressions
 Allow teams to acknowledge existing findings and track new regressions.
 
-- [ ] Support `.builddiag-baseline.json` file
-- [ ] `builddiag baseline create` to snapshot current findings
-- [ ] `builddiag baseline update` to add new findings
-- [ ] Report only new findings vs baseline in CI
+- [x] Support `.builddiag-baseline.json` file
+- [x] `builddiag baseline create` to snapshot current findings
+- [x] `builddiag baseline update` to add new findings
+- [x] Report only new findings vs baseline in CI
 - [ ] Inline suppression comments in Cargo.toml
 
 ---
@@ -231,7 +231,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development guidelines.
 |---------|-------|--------|
 | 0.1.0 | Core validation | ✅ Released |
 | 0.2.0 | Profiles, depguard, docs | ✅ Released |
-| 0.3.0 | Developer experience | Planned |
+| 0.3.0 | Developer experience | ✅ Released |
 | 0.4.0 | Extended checks | Planned |
 | 0.5.0 | Integration and tooling | Planned |
 | 0.6.0 | Scalability | Planned |

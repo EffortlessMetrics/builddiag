@@ -31,6 +31,21 @@ Options:
 - `--base`, `--head` - Git refs for diff-aware mode
 - `--always` - Checks to always run regardless of diff
 
+### watch
+Continuously rerun validation when Cargo/toolchain/checksum inputs change.
+```bash
+builddiag watch --root . --profile strict
+builddiag watch --poll-ms 200 --debounce-ms 400 --notify
+```
+
+### fix
+Apply deterministic fixes for unambiguous issues.
+```bash
+builddiag fix --root .
+builddiag fix --dry-run
+builddiag fix --interactive
+```
+
 ### md
 Render Markdown from existing JSON report.
 ```bash
@@ -72,7 +87,7 @@ builddiag list-checks --json
 
 ## Dependencies
 
-- `builddiag-app`, `builddiag-checks`, `builddiag-domain`, `builddiag-render`, `builddiag-types`
+- `builddiag-app`, `builddiag-watch`, `builddiag-fix`, `builddiag-checks`, `builddiag-domain`, `builddiag-render`, `builddiag-types`
 - External: anyhow, clap, camino, serde_json
 
 ## Testing

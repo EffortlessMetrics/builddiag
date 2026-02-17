@@ -5,8 +5,8 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "Dependency hygiene sensor for Rust workspaces (used by builddiag)"
-keywords = ["rust", "dependencies", "lint", "workspace"]
+description = "Dependency hygiene sensor for Rust workspaces (used by builddiag build-contract checks)"
+keywords = ["rust", "dependencies", "lint", "workspace", "policy"]
 categories = ["development-tools"]
 
 [dependencies]

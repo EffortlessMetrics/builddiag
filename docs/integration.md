@@ -8,7 +8,7 @@ Use `builddiag-core` to embed builddiag in your own tools without any CLI depend
 
 ```toml
 [dependencies]
-builddiag-core = { version = "0.2", features = [] }
+builddiag-core = { version = "0.3", features = [] }
 ```
 
 ```rust

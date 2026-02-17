@@ -1,0 +1,22 @@
+[package]
+name = "builddiag-fix"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Auto-fix planner/applier for builddiag build-contract findings"
+keywords = ["rust", "fix", "cli", "build", "validation"]
+categories = ["development-tools", "command-line-utilities"]
+
+[dependencies]
+anyhow.workspace = true
+camino.workspace = true
+toml.workspace = true
+sha2.workspace = true
+builddiag-domain = { path = "../builddiag-domain", version = "0.3.0" }
+builddiag-repo = { path = "../builddiag-repo", version = "0.3.0" }
+builddiag-types = { path = "../builddiag-types", version = "0.3.0" }
+
+[dev-dependencies]
+tempfile.workspace = true
