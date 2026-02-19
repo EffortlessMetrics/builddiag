@@ -44,13 +44,14 @@ members = ["crates/a""#,
     if let Some(ref msrv) = world.msrv
         && matches!(msrv.location, MsrvLocation::WorkspacePackage)
     {
+        let edition = world.workspace_edition.as_deref().unwrap_or("2021");
         workspace_toml.push_str(&format!(
             r#"
 [workspace.package]
 rust-version = "{}"
-edition = "2021"
+edition = "{}"
 "#,
-            msrv.version
+            msrv.version, edition
         ));
     }
 

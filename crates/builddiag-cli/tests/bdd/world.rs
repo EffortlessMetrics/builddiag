@@ -50,6 +50,9 @@ pub struct BuilddiagWorld {
     /// Additional crates in the workspace.
     pub additional_crates: Vec<String>,
 
+    /// Optional override for workspace.package.edition.
+    pub workspace_edition: Option<String>,
+
     /// Custom config file path (relative to workspace).
     pub config_path: Option<String>,
 
