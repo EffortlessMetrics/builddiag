@@ -417,13 +417,13 @@ fn then_report_exists_at_canonical_path(world: &mut BuilddiagWorld) {
     assert!(report.tool.is_some(), "report.tool should be present");
     assert!(report.run.is_some(), "report.run should be present");
 
-    if let Some(run) = &report.run {
-        if let Some(ended) = run.ended_at {
-            assert!(
-                ended >= run.started_at,
-                "run.ended_at should be >= run.started_at"
-            );
-        }
+    if let Some(run) = &report.run
+        && let Some(ended) = run.ended_at
+    {
+        assert!(
+            ended >= run.started_at,
+            "run.ended_at should be >= run.started_at"
+        );
     }
 
     for finding in &report.findings {

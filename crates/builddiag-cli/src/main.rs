@@ -1222,7 +1222,7 @@ fn run_watch_cli(
         let watched_path = if path.is_absolute() {
             path.to_path_buf()
         } else if let Ok(cwd) = std::env::current_dir() {
-            if let Some(utf8_cwd) = Utf8PathBuf::from_path_buf(cwd).ok() {
+            if let Ok(utf8_cwd) = Utf8PathBuf::from_path_buf(cwd) {
                 utf8_cwd.join(path)
             } else {
                 root.join(path)

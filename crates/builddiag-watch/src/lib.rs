@@ -177,7 +177,7 @@ fn collect_watched_files(root: &Utf8Path, dir: &Utf8Path, snapshot: &mut Snapsho
             {
                 continue;
             }
-            if let Some(utf8) = Utf8PathBuf::from_path_buf(path).ok() {
+            if let Ok(utf8) = Utf8PathBuf::from_path_buf(path) {
                 collect_watched_files(root, &utf8, snapshot)?;
             }
             continue;
