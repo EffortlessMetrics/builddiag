@@ -2112,8 +2112,10 @@ edition = "2021"
     #[test]
     fn run_selected_checks_propagates_errors() {
         let (_temp, mut repo) = repo_with_temp_root();
-        let mut config = Config::default();
-        config.profile = builddiag_types::Profile::Strict;
+        let mut config = Config {
+            profile: builddiag_types::Profile::Strict,
+            ..Config::default()
+        };
         config.policy.checksums.verify_local_files = true;
 
         let tools_dir = repo.root.join("scripts").join("tools");
