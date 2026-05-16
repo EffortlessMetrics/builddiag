@@ -42,6 +42,8 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
 
+mod msrv_consistent;
+
 /// Documentation for a check, used by the `explain` subcommand.
 #[derive(Debug, Clone)]
 pub struct CheckDocumentation {
@@ -472,7 +474,7 @@ fn execute_check(task: &CheckTask, repo: &RepoState, config: &Config) -> Result<
 
     let mut report = match task.def.id {
         "rust.msrv_defined" => check_msrv_defined(repo, config, severity)?,
-        "rust.msrv_consistent" => check_msrv_consistent(repo, config, severity)?,
+        "rust.msrv_consistent" => msrv_consistent::check_msrv_consistent(repo, config, severity)?,
         "rust.toolchain_pinning" => check_toolchain_pinning(repo, config, severity)?,
         "rust.toolchain_msrv_relation" => check_toolchain_msrv_relation(repo, config, severity)?,
         "tools.checksums_file_exists" => check_checksums_file_exists(repo, config, severity)?,
@@ -588,7 +590,7 @@ fn mk_location(path: Option<String>, line: Option<u32>) -> Option<Location> {
     })
 }
 
-fn mk_finding(
+pub(crate) fn mk_finding(
     severity: Severity,
     check_id: &str,
     code: &str,
@@ -677,110 +679,6 @@ fn check_msrv_defined(
 
     Ok(CheckReport {
         id: "rust.msrv_defined".to_string(),
-        status: check_status_from_findings(&findings),
-        findings,
-        skipped_reason: None,
-        skipped_detail: None,
-    })
-}
-
-fn check_msrv_consistent(
-    repo: &RepoState,
-    config: &Config,
-    default_sev: Severity,
-) -> Result<CheckReport> {
-    let mut findings = Vec::new();
-    let Some(workspace_msrv_raw) = repo.workspace.workspace_msrv.clone() else {
-        return Ok(CheckReport {
-            id: "rust.msrv_consistent".to_string(),
-            status: CheckStatus::Skip,
-            findings: Vec::new(),
-            skipped_reason: Some(check_skip_reasons::MISSING_PREREQUISITE.to_string()),
-            skipped_detail: Some("no workspace/package MSRV to compare".to_string()),
-        });
-    };
-
-    let workspace_msrv = match parse_rust_version(&workspace_msrv_raw) {
-        Ok(v) => v.to_string(),
-        Err(_) => {
-            findings.push(mk_finding(
-                default_sev,
-                "rust.msrv_consistent",
-                "invalid_msrv",
-                format!("Invalid workspace MSRV rust-version: {workspace_msrv_raw}"),
-                repo.cargo_root.as_ref().map(|p| rel_path(&repo.root, p)),
-                None,
-            ));
-            return Ok(CheckReport {
-                id: "rust.msrv_consistent".to_string(),
-                status: check_status_from_findings(&findings),
-                findings,
-                skipped_reason: None,
-                skipped_detail: None,
-            });
-        }
-    };
-
-    let allowlist: HashSet<String> = config.policy.msrv.allow_overrides.iter().cloned().collect();
-
-    for m in &repo.workspace.members {
-        let rel = rel_path(&repo.root, &m.manifest_path);
-
-        let effective = if let Some(rv) = &m.rust_version {
-            Some(rv.clone())
-        } else if m.rust_version_workspace {
-            Some(workspace_msrv.clone())
-        } else {
-            None
-        };
-
-        let Some(effective_raw) = effective else {
-            findings.push(mk_finding(
-                default_sev,
-                "rust.msrv_consistent",
-                "missing_member_msrv",
-                format!(
-                    "{}: missing package.rust-version (and not set to inherit from workspace)",
-                    m.name
-                ),
-                Some(rel),
-                None,
-            ));
-            continue;
-        };
-
-        let effective_norm = match parse_rust_version(&effective_raw) {
-            Ok(v) => v.to_string(),
-            Err(_) => {
-                findings.push(mk_finding(
-                    default_sev,
-                    "rust.msrv_consistent",
-                    "invalid_member_msrv",
-                    format!("{}: invalid rust-version '{effective_raw}'", m.name),
-                    Some(rel),
-                    None,
-                ));
-                continue;
-            }
-        };
-
-        if effective_norm != workspace_msrv {
-            let allowed = config.policy.msrv.allow_per_crate_override || allowlist.contains(&rel);
-            if !allowed {
-                findings.push(mk_finding(
-                    default_sev,
-                    "rust.msrv_consistent",
-                    "msrv_mismatch",
-                    format!("{}: rust-version {effective_norm} does not match workspace MSRV {workspace_msrv}", m.name),
-                    Some(rel),
-                    None,
-                ));
-            }
-        }
-    }
-
-    Ok(CheckReport {
-        id: "rust.msrv_consistent".to_string(),
         status: check_status_from_findings(&findings),
         findings,
         skipped_reason: None,
@@ -1419,7 +1317,7 @@ fn check_member_ordering(
     })
 }
 
-fn rel_path(root: &camino::Utf8Path, p: &camino::Utf8Path) -> String {
+pub(crate) fn rel_path(root: &camino::Utf8Path, p: &camino::Utf8Path) -> String {
     p.strip_prefix(root)
         .ok()
         .unwrap_or(p)
@@ -2359,7 +2257,8 @@ edition = "2021"
         let config = Config::default();
 
         // Act
-        let report = check_msrv_consistent(&repo, &config, Severity::Error).unwrap();
+        let report =
+            msrv_consistent::check_msrv_consistent(&repo, &config, Severity::Error).unwrap();
 
         // Assert: Pass, all members consistent
         assert_eq!(report.status, CheckStatus::Pass);
@@ -2377,7 +2276,8 @@ edition = "2021"
         let config = Config::default();
 
         // Act
-        let report = check_msrv_consistent(&repo, &config, Severity::Error).unwrap();
+        let report =
+            msrv_consistent::check_msrv_consistent(&repo, &config, Severity::Error).unwrap();
 
         // Assert: Fail, member has mismatched MSRV
         assert_eq!(report.status, CheckStatus::Fail);
@@ -2392,7 +2292,8 @@ edition = "2021"
         let config = Config::default();
 
         // Act
-        let report = check_msrv_consistent(&repo, &config, Severity::Error).unwrap();
+        let report =
+            msrv_consistent::check_msrv_consistent(&repo, &config, Severity::Error).unwrap();
 
         // Assert: Skip, no workspace MSRV to compare
         assert_eq!(report.status, CheckStatus::Skip);
@@ -2408,7 +2309,8 @@ edition = "2021"
         let repo = mock_repo_with_members(Some("not-a-version"), vec![]);
         let config = Config::default();
 
-        let report = check_msrv_consistent(&repo, &config, Severity::Error).unwrap();
+        let report =
+            msrv_consistent::check_msrv_consistent(&repo, &config, Severity::Error).unwrap();
 
         assert_eq!(report.status, CheckStatus::Fail);
         assert!(report.findings.iter().any(|f| f.code == "invalid_msrv"));
@@ -2420,7 +2322,8 @@ edition = "2021"
         let repo = mock_repo_with_members(Some("1.70.0"), members);
         let config = Config::default();
 
-        let report = check_msrv_consistent(&repo, &config, Severity::Error).unwrap();
+        let report =
+            msrv_consistent::check_msrv_consistent(&repo, &config, Severity::Error).unwrap();
 
         assert_eq!(report.status, CheckStatus::Fail);
         assert!(
@@ -2439,7 +2342,8 @@ edition = "2021"
         let config = Config::default();
 
         // Act
-        let report = check_msrv_consistent(&repo, &config, Severity::Error).unwrap();
+        let report =
+            msrv_consistent::check_msrv_consistent(&repo, &config, Severity::Error).unwrap();
 
         // Assert: Fail, member missing MSRV
         assert_eq!(report.status, CheckStatus::Fail);
@@ -2460,7 +2364,8 @@ edition = "2021"
         config.policy.msrv.allow_per_crate_override = true;
 
         // Act
-        let report = check_msrv_consistent(&repo, &config, Severity::Error).unwrap();
+        let report =
+            msrv_consistent::check_msrv_consistent(&repo, &config, Severity::Error).unwrap();
 
         // Assert: Pass, override allowed
         assert_eq!(report.status, CheckStatus::Pass);
