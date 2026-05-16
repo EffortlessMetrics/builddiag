@@ -774,6 +774,18 @@ fn normalize_for_comparison(json: &str) -> Result<String> {
             );
             git.insert("dirty".to_string(), serde_json::Value::Bool(false));
         }
+
+        // Normalize host info (os/arch differ between dev and CI machines).
+        if let Some(host) = run.get_mut("host").and_then(|h| h.as_object_mut()) {
+            host.insert(
+                "os".to_string(),
+                serde_json::Value::String("NORMALIZED".to_string()),
+            );
+            host.insert(
+                "arch".to_string(),
+                serde_json::Value::String("NORMALIZED".to_string()),
+            );
+        }
     }
 
     serde_json::to_string_pretty(&value).context("serialize normalized JSON")

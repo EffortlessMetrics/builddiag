@@ -356,21 +356,38 @@ exclude = ["crates/{}"]
 proptest! {
     /// Property: to_repo_relative result never starts with the root path
     #[test]
-    fn prop_repo_relative_removes_root(
-        root_segments in prop::collection::vec("[a-z]+", 2..4),
-        file_segments in prop::collection::vec("[a-z]+", 1..3)
-    ) {
-        let root_path = format!("/{}", root_segments.join("/"));
-        let file_path = format!("{}/{}", root_path, file_segments.join("/"));
+    fn prop_repo_relative_removes_root(file_segments in prop::collection::vec("[a-z]{1,8}", 1..4)) {
+        let temp_dir = TempDir::new().unwrap();
+        let root_std = temp_dir.path().join("workspace");
+        std::fs::create_dir_all(&root_std).unwrap();
 
-        let root = Utf8Path::new(&root_path);
-        let file = Utf8Path::new(&file_path);
+        let mut file_std = root_std.clone();
+        for segment in &file_segments {
+            file_std = file_std.join(segment);
+        }
+        if let Some(parent) = file_std.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(&file_std, "").unwrap();
 
+        let root = Utf8Path::from_path(&root_std).unwrap();
+        let file = Utf8Path::from_path(&file_std).unwrap();
         let relative = to_repo_relative(root, file);
 
-        // Result should not start with a slash (unless it's not under root)
-        if file_path.starts_with(&root_path) {
-            prop_assert!(!relative.starts_with('/'), "Relative path should not start with /: {}", relative);
-        }
+        prop_assert!(
+            !relative.starts_with('/'),
+            "Relative path should not start with /: {}",
+            relative
+        );
+        prop_assert!(
+            !relative.contains('\\'),
+            "Relative path should not contain backslashes: {}",
+            relative
+        );
+        prop_assert!(
+            !relative.starts_with(root.as_str()),
+            "Relative path should not include absolute root prefix: {}",
+            relative
+        );
     }
 }

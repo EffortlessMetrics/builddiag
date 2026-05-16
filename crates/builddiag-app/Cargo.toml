@@ -5,8 +5,10 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "Internal orchestration for builddiag (not intended for direct use)"
-keywords = ["rust", "build", "validation"]
+description = "Internal orchestration engine for builddiag runs, receipt assembly, and artifact writing"
+readme = "README.md"
+documentation = "https://docs.rs/builddiag-app"
+keywords = ["rust", "builddiag", "orchestration", "report", "receipt"]
 categories = ["development-tools"]
 
 [features]
@@ -18,11 +20,11 @@ anyhow.workspace = true
 serde_json.workspace = true
 chrono.workspace = true
 camino.workspace = true
-builddiag-types = { path = "../builddiag-types", version = "0.2.0" }
-builddiag-domain = { path = "../builddiag-domain", version = "0.2.0" }
-builddiag-repo = { path = "../builddiag-repo", version = "0.2.0" }
-builddiag-checks = { path = "../builddiag-checks", version = "0.2.0" }
-builddiag-render = { path = "../builddiag-render", version = "0.2.0" }
+builddiag-types = { path = "../builddiag-types", version = "0.3.0" }
+builddiag-domain = { path = "../builddiag-domain", version = "0.3.0" }
+builddiag-repo = { path = "../builddiag-repo", version = "0.3.0" }
+builddiag-checks = { path = "../builddiag-checks", version = "0.3.0" }
+builddiag-render = { path = "../builddiag-render", version = "0.3.0" }
 toml.workspace = true
 
 [dev-dependencies]

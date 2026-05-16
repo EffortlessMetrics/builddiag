@@ -2,6 +2,7 @@
 //!
 //! This module implements Given/When/Then steps for BDD scenarios.
 
+use builddiag_types::{Report, SensorReport};
 use cucumber::{given, then, when};
 use serde_json::Value;
 use std::path::PathBuf;
@@ -134,9 +135,33 @@ out_dir = "{}"
     world.out_dir_override = Some(value);
 }
 
+#[given(expr = "the output format is {string}")]
+fn given_output_format(world: &mut BuilddiagWorld, value: String) {
+    world.extra_args.push("--format".to_string());
+    world.extra_args.push(value);
+}
+
+#[given(expr = "the check mode is {string}")]
+fn given_check_mode(world: &mut BuilddiagWorld, value: String) {
+    world.extra_args.push("--mode".to_string());
+    world.extra_args.push(value);
+}
+
+#[given(expr = "artifacts are written to {string}")]
+fn given_artifacts_dir(world: &mut BuilddiagWorld, value: String) {
+    world.extra_args.push("--artifacts-dir".to_string());
+    world.extra_args.push(value.clone());
+    world.artifacts_dir_override = Some(value);
+}
+
 #[given(expr = "the config file is named {string}")]
 fn given_config_file_name(world: &mut BuilddiagWorld, name: String) {
     world.config_path = Some(name);
+}
+
+#[given("the config file is invalid")]
+fn given_invalid_config(world: &mut BuilddiagWorld) {
+    world.config_content = Some("[defaults".to_string());
 }
 
 #[given(expr = "the workspace has crates {string}")]
@@ -147,6 +172,94 @@ fn given_additional_crates(world: &mut BuilddiagWorld, crates: String) {
             world.additional_crates.push(name.to_string());
         }
     }
+}
+
+#[given(expr = "the workspace edition is {string}")]
+fn given_workspace_edition(world: &mut BuilddiagWorld, edition: String) {
+    world.workspace_edition = Some(edition);
+}
+
+#[given("the crate is missing publish metadata")]
+fn given_crate_missing_publish_metadata(world: &mut BuilddiagWorld) {
+    world.custom_files.insert(
+        "crates/a/Cargo.toml".to_string(),
+        r#"[package]
+name = "a"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+"#
+        .to_string(),
+    );
+}
+
+#[given("the crate is publish-disabled and missing publish metadata")]
+fn given_crate_publish_disabled_missing_publish_metadata(world: &mut BuilddiagWorld) {
+    world.custom_files.insert(
+        "crates/a/Cargo.toml".to_string(),
+        r#"[package]
+name = "a"
+version = "0.1.0"
+publish = false
+edition.workspace = true
+rust-version.workspace = true
+"#
+        .to_string(),
+    );
+}
+
+#[given("the workspace has conflicting serde versions across members")]
+fn given_workspace_has_conflicting_serde_versions(world: &mut BuilddiagWorld) {
+    if !world.additional_crates.iter().any(|c| c == "b") {
+        world.additional_crates.push("b".to_string());
+    }
+
+    world.custom_files.insert(
+        "crates/a/Cargo.toml".to_string(),
+        r#"[package]
+name = "a"
+version = "0.1.0"
+description = "crate a"
+license = "MIT"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde = "1.0.188"
+"#
+        .to_string(),
+    );
+
+    world.custom_files.insert(
+        "crates/b/Cargo.toml".to_string(),
+        r#"[package]
+name = "b"
+version = "0.1.0"
+description = "crate b"
+license = "MIT"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde = "1.0.200"
+"#
+        .to_string(),
+    );
+}
+
+#[given("the crate has a binary target")]
+fn given_crate_has_binary_target(world: &mut BuilddiagWorld) {
+    world.custom_files.insert(
+        "crates/a/src/main.rs".to_string(),
+        "fn main() {}\n".to_string(),
+    );
+}
+
+#[given("the workspace has a Cargo.lock file")]
+fn given_workspace_has_lockfile(world: &mut BuilddiagWorld) {
+    world
+        .custom_files
+        .insert("Cargo.lock".to_string(), String::new());
 }
 
 // =============================================================================
@@ -170,6 +283,8 @@ fn when_run_check_with_profile(world: &mut BuilddiagWorld, profile: String) {
 fn when_run_check_with_flag(world: &mut BuilddiagWorld, flag: String, value: String) {
     if flag == "out" {
         world.explicit_out = Some(value.clone());
+    } else if flag == "artifacts-dir" {
+        world.artifacts_dir_override = Some(value.clone());
     }
     world.extra_args.push(format!("--{}", flag));
     world.extra_args.push(value);
@@ -292,6 +407,262 @@ fn then_report_exists_at_canonical_path(world: &mut BuilddiagWorld) {
         "Expected report to exist at canonical path {:?}",
         report_path
     );
+
+    let content = std::fs::read_to_string(&report_path)
+        .unwrap_or_else(|_| panic!("failed to read report at {:?}", report_path));
+    let report: Report = serde_json::from_str(&content)
+        .unwrap_or_else(|_| panic!("report does not match builddiag report contract"));
+
+    assert_eq!(report.schema, Report::SCHEMA_V1);
+    assert!(report.tool.is_some(), "report.tool should be present");
+    assert!(report.run.is_some(), "report.run should be present");
+
+    if let Some(run) = &report.run
+        && let Some(ended) = run.ended_at
+    {
+        assert!(
+            ended >= run.started_at,
+            "run.ended_at should be >= run.started_at"
+        );
+    }
+
+    for finding in &report.findings {
+        assert!(
+            !finding.check_id.trim().is_empty(),
+            "finding.check_id should be non-empty"
+        );
+        assert!(
+            !finding.code.trim().is_empty(),
+            "finding.code should be non-empty"
+        );
+        assert!(
+            !finding.message.trim().is_empty(),
+            "finding.message should be non-empty"
+        );
+        if let Some(location) = &finding.location {
+            assert!(
+                !location.path.contains('\\'),
+                "finding path should use forward slashes: {}",
+                location.path
+            );
+        }
+    }
+
+    if let Some(summary) = &report.summary {
+        assert_eq!(
+            summary.total_findings,
+            report.findings.len(),
+            "summary.total_findings should match findings length"
+        );
+    }
+}
+
+#[then("the sensor report should exist at the canonical path")]
+fn then_sensor_report_exists_at_canonical_path(world: &mut BuilddiagWorld) {
+    let report_path = canonical_report_path(world);
+    assert!(
+        report_path.exists(),
+        "Expected sensor report to exist at canonical path {:?}",
+        report_path
+    );
+
+    let report = read_sensor_report(world);
+    assert_eq!(report.schema, SensorReport::SCHEMA_V1);
+    assert!(report.tool.is_some(), "sensor.tool should be present");
+    assert!(report.run.is_some(), "sensor.run should be present");
+
+    if let Some(run) = &report.run
+        && let Some(ended) = run.ended_at
+    {
+        assert!(
+            ended >= run.started_at,
+            "sensor.run.ended_at should be >= sensor.run.started_at"
+        );
+    }
+
+    let mut info = 0usize;
+    let mut warn = 0usize;
+    let mut error = 0usize;
+    for finding in &report.findings {
+        assert!(
+            !finding.check_id.trim().is_empty(),
+            "sensor finding.check_id should be non-empty"
+        );
+        assert!(
+            !finding.code.trim().is_empty(),
+            "sensor finding.code should be non-empty"
+        );
+        assert!(
+            !finding.message.trim().is_empty(),
+            "sensor finding.message should be non-empty"
+        );
+        assert!(
+            finding.fingerprint.len() == 64
+                && finding.fingerprint.chars().all(|c| c.is_ascii_hexdigit()),
+            "sensor finding fingerprint should be 64-char hex: {}",
+            finding.fingerprint
+        );
+        if let Some(location) = &finding.location {
+            assert!(
+                !location.path.contains('\\'),
+                "sensor finding path should use forward slashes: {}",
+                location.path
+            );
+        }
+        match finding.severity {
+            builddiag_types::Severity::Info => info += 1,
+            builddiag_types::Severity::Warn => warn += 1,
+            builddiag_types::Severity::Error => error += 1,
+        }
+    }
+
+    assert_eq!(
+        report.verdict.counts.info, info,
+        "sensor verdict info count should match findings"
+    );
+    assert_eq!(
+        report.verdict.counts.warn, warn,
+        "sensor verdict warn count should match findings"
+    );
+    assert_eq!(
+        report.verdict.counts.error, error,
+        "sensor verdict error count should match findings"
+    );
+}
+
+#[then(expr = "the sensor report verdict status should be {string}")]
+fn then_sensor_report_verdict_status(world: &mut BuilddiagWorld, expected_status: String) {
+    let report = read_sensor_report(world);
+    let actual = match report.verdict.status {
+        builddiag_types::VerdictStatus::Pass => "pass",
+        builddiag_types::VerdictStatus::Warn => "warn",
+        builddiag_types::VerdictStatus::Fail => "fail",
+        builddiag_types::VerdictStatus::Skip => "skip",
+    };
+    assert_eq!(
+        actual, expected_status,
+        "Expected sensor verdict status '{}' but got '{}'",
+        expected_status, actual
+    );
+}
+
+#[then(expr = "the sensor report verdict should include reason {string}")]
+fn then_sensor_report_verdict_reason(world: &mut BuilddiagWorld, expected_reason: String) {
+    let report = read_sensor_report(world);
+    assert!(
+        report.verdict.reasons.iter().any(|r| r == &expected_reason),
+        "Expected sensor verdict reasons {:?} to include '{}'",
+        report.verdict.reasons,
+        expected_reason
+    );
+}
+
+#[then(expr = "the sensor report verdict data should include {string} in {string}")]
+fn then_sensor_report_verdict_data_contains(
+    world: &mut BuilddiagWorld,
+    expected_value: String,
+    key: String,
+) {
+    let report = read_sensor_report(world);
+    let data = report
+        .verdict
+        .data
+        .as_ref()
+        .expect("sensor verdict data should be present");
+    let values = data
+        .get(&key)
+        .and_then(|v| v.as_array())
+        .unwrap_or_else(|| {
+            panic!(
+                "sensor verdict data should contain an array at key '{}'",
+                key
+            )
+        });
+    let found = values
+        .iter()
+        .any(|v| v.as_str() == Some(expected_value.as_str()));
+    assert!(
+        found,
+        "Expected sensor verdict data '{}' to include '{}', got {:?}",
+        key, expected_value, values
+    );
+}
+
+#[then(expr = "the sensor report should include capabilities {string}")]
+fn then_sensor_report_has_capabilities(world: &mut BuilddiagWorld, names: String) {
+    let report = read_sensor_report(world);
+    let run = report
+        .run
+        .as_ref()
+        .expect("sensor run should be present with capabilities");
+    for name in names.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+        assert!(
+            run.capabilities.contains_key(name),
+            "Expected capability '{}' to be present, got keys {:?}",
+            name,
+            run.capabilities.keys().collect::<Vec<_>>()
+        );
+    }
+}
+
+#[then(expr = "the sensor capability {string} should be {string}")]
+fn then_sensor_report_capability_status(
+    world: &mut BuilddiagWorld,
+    capability: String,
+    expected_status: String,
+) {
+    let report = read_sensor_report(world);
+    let run = report
+        .run
+        .as_ref()
+        .expect("sensor run should be present with capabilities");
+    let actual = run
+        .capabilities
+        .get(&capability)
+        .unwrap_or_else(|| panic!("Expected capability '{}' to exist", capability))
+        .status;
+    let actual_status = match actual {
+        builddiag_types::CapabilityStatus::Available => "available",
+        builddiag_types::CapabilityStatus::Unavailable => "unavailable",
+        builddiag_types::CapabilityStatus::Skipped => "skipped",
+    };
+    assert_eq!(
+        actual_status, expected_status,
+        "Expected capability '{}' to be '{}' but got '{}'",
+        capability, expected_status, actual_status
+    );
+}
+
+#[then(expr = "the sensor report should include artifact {string} at {string}")]
+fn then_sensor_report_has_artifact(world: &mut BuilddiagWorld, name: String, path: String) {
+    let report = read_sensor_report(world);
+    let found = report
+        .artifacts
+        .iter()
+        .any(|artifact| artifact.name == name && artifact.path == path);
+    assert!(
+        found,
+        "Expected sensor artifact '{}' at '{}' to be present",
+        name, path
+    );
+}
+
+#[then(expr = "the file {string} should have schema {string}")]
+fn then_file_has_schema(world: &mut BuilddiagWorld, path: String, expected_schema: String) {
+    let full_path = world.workspace_path().join(&path);
+    let content = std::fs::read_to_string(&full_path)
+        .unwrap_or_else(|_| panic!("failed to read file at {:?}", full_path));
+    let value: Value = serde_json::from_str(&content)
+        .unwrap_or_else(|_| panic!("failed to parse JSON at {:?}", full_path));
+    let actual = value
+        .get("schema")
+        .and_then(|v| v.as_str())
+        .unwrap_or_else(|| panic!("schema not found in {:?}", full_path));
+    assert_eq!(
+        actual, expected_schema,
+        "Expected schema '{}' at {:?}, got '{}'",
+        expected_schema, full_path, actual
+    );
 }
 
 #[then(expr = "the report verdict should be {string}")]
@@ -343,6 +714,27 @@ fn then_report_includes_finding(
     );
 }
 
+#[then(expr = "the report should not include finding {string} {string}")]
+fn then_report_does_not_include_finding(
+    world: &mut BuilddiagWorld,
+    check_id: String,
+    code: String,
+) {
+    let report = read_report(world);
+    let findings = report["findings"]
+        .as_array()
+        .expect("findings not found in report");
+    let found = findings.iter().any(|f| {
+        f["check_id"].as_str() == Some(check_id.as_str())
+            && f["code"].as_str() == Some(code.as_str())
+    });
+    assert!(
+        !found,
+        "Expected finding ({}, {}) to be absent in report",
+        check_id, code
+    );
+}
+
 #[then(expr = "the report should not include any {string} findings")]
 fn then_report_has_no_findings_with_severity(world: &mut BuilddiagWorld, severity: String) {
     let report = read_report(world);
@@ -360,6 +752,13 @@ fn then_report_has_no_findings_with_severity(world: &mut BuilddiagWorld, severit
 }
 
 fn canonical_report_path(world: &BuilddiagWorld) -> PathBuf {
+    if let Some(ref artifacts_dir) = world.artifacts_dir_override {
+        return world
+            .workspace_path()
+            .join(artifacts_dir)
+            .join("report.json");
+    }
+
     if let Some(ref out) = world.explicit_out {
         let out_path = PathBuf::from(out);
         if out_path.is_absolute() {
@@ -381,4 +780,12 @@ fn read_report(world: &BuilddiagWorld) -> Value {
         .unwrap_or_else(|_| panic!("failed to read report.json at {:?}", report_path));
     serde_json::from_str(&content)
         .unwrap_or_else(|_| panic!("failed to parse report.json at {:?}", report_path))
+}
+
+fn read_sensor_report(world: &BuilddiagWorld) -> SensorReport {
+    let report_path = canonical_report_path(world);
+    let content = std::fs::read_to_string(&report_path)
+        .unwrap_or_else(|_| panic!("failed to read sensor report at {:?}", report_path));
+    serde_json::from_str(&content)
+        .unwrap_or_else(|_| panic!("failed to parse sensor report at {:?}", report_path))
 }

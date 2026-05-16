@@ -35,6 +35,9 @@ pub struct BuilddiagWorld {
     /// Override for defaults.out_dir from config.
     pub out_dir_override: Option<String>,
 
+    /// Override for --artifacts-dir from CLI args.
+    pub artifacts_dir_override: Option<String>,
+
     /// Explicit --out path if provided.
     pub explicit_out: Option<String>,
 
@@ -46,6 +49,9 @@ pub struct BuilddiagWorld {
 
     /// Additional crates in the workspace.
     pub additional_crates: Vec<String>,
+
+    /// Optional override for workspace.package.edition.
+    pub workspace_edition: Option<String>,
 
     /// Custom config file path (relative to workspace).
     pub config_path: Option<String>,

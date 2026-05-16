@@ -36,13 +36,13 @@ fn create_valid_workspace(dir: &TempDir) {
         dir,
         "Cargo.toml",
         r#"[workspace]
-resolver = "2"
-members = ["crates/a"]
+    resolver = "2"
+    members = ["crates/a"]
 
-[workspace.package]
-rust-version = "1.75.0"
-edition = "2021"
-"#,
+    [workspace.package]
+    rust-version = "1.92.0"
+    edition = "2021"
+    "#,
     );
 
     write_file(
@@ -61,8 +61,8 @@ rust-version.workspace = true
         dir,
         "rust-toolchain.toml",
         r#"[toolchain]
-channel = "1.75.0"
-"#,
+    channel = "1.92.0"
+    "#,
     );
 
     write_file(dir, "scripts/tools.sha256", "");
@@ -101,13 +101,13 @@ fn exit_code_0_when_warnings_with_fail_on_error() {
         &dir,
         "Cargo.toml",
         r#"[workspace]
-resolver = "2"
-members = ["crates/a"]
+    resolver = "2"
+    members = ["crates/a"]
 
-[workspace.package]
-rust-version = "1.75.0"
-edition = "2021"
-"#,
+    [workspace.package]
+    rust-version = "1.92.0"
+    edition = "2021"
+    "#,
     );
 
     write_file(
@@ -126,8 +126,8 @@ rust-version.workspace = true
         &dir,
         "rust-toolchain.toml",
         r#"[toolchain]
-channel = "1.75.0"
-"#,
+    channel = "1.92.0"
+    "#,
     );
 
     write_file(&dir, "scripts/tools.sha256", "");

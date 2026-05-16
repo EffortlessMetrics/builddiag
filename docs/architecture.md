@@ -36,8 +36,11 @@ A clean split that matches ports/adapters:
 
 ```
 builddiag-cli      CLI entry point, argument parsing (clap)
+       ↓           ↘
+builddiag-watch    Polling watch loop + change detection
+builddiag-fix      Deterministic auto-fix planner/applier
        ↓
-builddiag-core     Public library facade (Clap-free, embeddable)
+builddiag-core     builddiag-baseline (finding baseline snapshots + filtering)
        ↓
 builddiag-app      Orchestration, config loading, atomic output writing
        ↓
@@ -65,7 +68,10 @@ Each crate has its own `CLAUDE.md` with detailed documentation.
 | `builddiag-checks` | Check implementations and documentation registry |
 | `builddiag-render` | Output rendering: Markdown, GitHub annotations |
 | `builddiag-app` | Orchestration: config loading, check coordination, atomic writes |
+| `builddiag-watch` | Polling watch loop (Cargo/toolchain/checksum change detection + debounce) |
+| `builddiag-fix` | Deterministic auto-fixes for workspace MSRV/resolver/checksums |
 | `builddiag-core` | Public library facade: Clap-free API, substrate bridge, dual-format output |
+| `builddiag-baseline` | Baseline schema + filtering (report only new findings vs baseline) |
 | `builddiag-cli` | CLI: argument parsing, command routing, exit codes |
 | `depguard` | Dependency hygiene library (integrated by builddiag-checks) |
 

@@ -5,8 +5,10 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "Internal checks for builddiag (not intended for direct use)"
-keywords = ["rust", "build", "validation", "lint"]
+description = "Check registry and implementations for builddiag workspace contract validation"
+readme = "README.md"
+documentation = "https://docs.rs/builddiag-checks"
+keywords = ["rust", "builddiag", "lint", "policy", "workspace"]
 categories = ["development-tools"]
 
 [features]
@@ -19,10 +21,10 @@ anyhow.workspace = true
 globset.workspace = true
 sha2.workspace = true
 hex.workspace = true
-builddiag-types = { path = "../builddiag-types", version = "0.2.0" }
-builddiag-domain = { path = "../builddiag-domain", version = "0.2.0" }
-builddiag-repo = { path = "../builddiag-repo", version = "0.2.0" }
-depguard = { path = "../depguard", version = "0.2.0" }
+builddiag-types = { path = "../builddiag-types", version = "0.3.0" }
+builddiag-domain = { path = "../builddiag-domain", version = "0.3.0" }
+builddiag-repo = { path = "../builddiag-repo", version = "0.3.0" }
+depguard = { path = "../depguard", version = "0.3.0" }
 camino.workspace = true
 rayon = { workspace = true, optional = true }
 rustsec = { workspace = true, optional = true }

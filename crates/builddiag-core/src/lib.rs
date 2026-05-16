@@ -213,8 +213,10 @@ mod tests {
     fn run_returns_error_for_missing_root() {
         let temp = TempDir::new().unwrap();
         let missing = Utf8PathBuf::from_path_buf(temp.path().join("missing")).unwrap();
-        let mut settings = Settings::default();
-        settings.root = missing;
+        let settings = Settings {
+            root: missing,
+            ..Settings::default()
+        };
 
         let result = run(&settings);
         assert!(result.is_err());
@@ -255,14 +257,14 @@ mod tests {
             manifests: vec![ManifestInfo {
                 path: "Cargo.toml".to_string(),
                 name: Some("valid-workspace".to_string()),
-                msrv: Some("1.75".to_string()),
+                msrv: Some("1.92".to_string()),
                 edition: Some("2024".to_string()),
             }],
             has_toolchain: true,
-            toolchain_channel: Some("1.75.0".to_string()),
+            toolchain_channel: Some("1.92.0".to_string()),
             has_checksums: false,
             has_lockfile: false,
-            workspace_msrv: Some("1.75".to_string()),
+            workspace_msrv: Some("1.92".to_string()),
         };
 
         let settings = Settings {

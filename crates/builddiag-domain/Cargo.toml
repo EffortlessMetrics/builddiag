@@ -5,8 +5,10 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "Internal domain logic for builddiag (not intended for direct use)"
-keywords = ["rust", "build", "validation"]
+description = "Pure domain logic for builddiag verdicts, summaries, version parsing, and fingerprints"
+readme = "README.md"
+documentation = "https://docs.rs/builddiag-domain"
+keywords = ["rust", "builddiag", "domain", "verdict", "policy"]
 categories = ["development-tools"]
 
 [dependencies]
@@ -15,7 +17,7 @@ semver.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 hex.workspace = true
-builddiag-types = { path = "../builddiag-types", version = "0.2.0" }
+builddiag-types = { path = "../builddiag-types", version = "0.3.0" }
 
 [dev-dependencies]
 insta.workspace = true

@@ -63,7 +63,7 @@ resolver = "2"
 members = ["crates/a"]
 
 [workspace.package]
-rust-version = "1.75.0"
+rust-version = "1.92.0"
 edition = "2021"
 "#,
     );
@@ -84,7 +84,7 @@ rust-version.workspace = true
         &dir,
         "rust-toolchain.toml",
         r#"[toolchain]
-channel = "1.75.0"
+channel = "1.92.0"
 "#,
     );
 
