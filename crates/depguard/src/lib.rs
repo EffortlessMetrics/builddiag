@@ -755,4 +755,124 @@ edition = "2021"
         assert!(!dir_strs.iter().any(|d| d.contains(".git")));
         assert!(!dir_strs.iter().any(|d| d.ends_with("target")));
     }
+
+    #[test]
+    fn test_check_workspace_missing_root_manifest() {
+        let temp = TempDir::new().unwrap();
+        let root = Utf8PathBuf::try_from(temp.path().to_path_buf()).unwrap();
+
+        let err = check_workspace(&root, &Config::default()).unwrap_err();
+        let msg = format!("{:#}", err);
+        assert!(
+            msg.contains("read") || msg.contains("Cargo.toml"),
+            "expected error to mention read or path, got: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn test_check_workspace_malformed_root_manifest() {
+        let temp = TempDir::new().unwrap();
+        let root = Utf8PathBuf::try_from(temp.path().to_path_buf()).unwrap();
+        std::fs::write(root.join("Cargo.toml"), "[workspace\nthis = not valid").unwrap();
+
+        let err = check_workspace(&root, &Config::default()).unwrap_err();
+        let msg = format!("{:#}", err);
+        assert!(
+            msg.contains("parse") || msg.contains("Cargo.toml"),
+            "expected error to mention parse or path, got: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn test_check_workspace_malformed_member_manifest() {
+        let (_temp, root) = create_test_workspace(
+            r#"
+[workspace]
+members = ["crates/foo"]
+"#,
+            &[("crates/foo", "[package\nname = busted")],
+        );
+
+        let err = check_workspace(&root, &Config::default()).unwrap_err();
+        let msg = format!("{:#}", err);
+        assert!(
+            msg.contains("parse") || msg.contains("crates/foo"),
+            "expected error to mention parse or member path, got: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn test_check_workspace_invalid_glob_pattern() {
+        let temp = TempDir::new().unwrap();
+        let root = Utf8PathBuf::try_from(temp.path().to_path_buf()).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            r#"
+[workspace]
+members = ["[invalid-glob*"]
+"#,
+        )
+        .unwrap();
+
+        let err = check_workspace(&root, &Config::default()).unwrap_err();
+        let msg = format!("{:#}", err);
+        assert!(
+            msg.contains("glob") || msg.contains("invalid"),
+            "expected error to mention glob or invalid, got: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn test_walkdir_nonexistent_path() {
+        let temp = TempDir::new().unwrap();
+        let root = Utf8PathBuf::try_from(temp.path().to_path_buf()).unwrap();
+        let missing = root.join("does/not/exist");
+
+        // walkdir treats non-directory roots (including nonexistent paths)
+        // as an empty walk and returns Ok with no entries.
+        let dirs = walkdir(&missing).unwrap();
+        assert!(dirs.is_empty());
+    }
+
+    #[test]
+    fn test_check_workspace_skips_missing_manifest_but_checks_others() {
+        // One member directory exists without Cargo.toml (exercising the
+        // `!manifest_path.exists() { continue; }` branch) while a sibling
+        // member is present and should still be checked.
+        let temp = TempDir::new().unwrap();
+        let root = Utf8PathBuf::try_from(temp.path().to_path_buf()).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            r#"
+[workspace]
+members = ["crates/missing", "crates/present"]
+"#,
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.join("crates/missing")).unwrap();
+        std::fs::create_dir_all(root.join("crates/present")).unwrap();
+        std::fs::write(
+            root.join("crates/present/Cargo.toml"),
+            r#"
+[package]
+name = "present"
+version = "0.1.0"
+
+[dependencies]
+serde = "*"
+"#,
+        )
+        .unwrap();
+
+        let findings = check_workspace(&root, &Config::default()).unwrap();
+        assert!(
+            findings.iter().any(|f| f.code == "wildcard_version"),
+            "expected the present member to be checked, got findings: {:?}",
+            findings
+        );
+    }
 }
