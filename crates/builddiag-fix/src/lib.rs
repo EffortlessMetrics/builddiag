@@ -160,7 +160,7 @@ where
         ..ApplyResult::default()
     };
 
-    for (action, proposal) in actions.into_iter().zip(proposals.into_iter()) {
+    for (action, proposal) in actions.into_iter().zip(proposals) {
         if options.interactive && !confirm(&proposal)? {
             result.skipped += 1;
             continue;

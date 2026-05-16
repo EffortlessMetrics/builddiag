@@ -1396,7 +1396,8 @@ diff_aware = "yes"
         static GIT_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
         fn git_lock() -> std::sync::MutexGuard<'static, ()> {
-            GIT_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+            let mutex = GIT_LOCK.get_or_init(|| Mutex::new(()));
+            mutex.lock().unwrap_or_else(|e| e.into_inner())
         }
 
         struct EnvGuard {
@@ -1432,6 +1433,8 @@ diff_aware = "yes"
             let status = Command::new("git")
                 .arg("-C")
                 .arg(root)
+                .arg("-c")
+                .arg("commit.gpgsign=false")
                 .args(args)
                 .status()
                 .expect("git should run");

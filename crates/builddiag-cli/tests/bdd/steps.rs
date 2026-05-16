@@ -517,15 +517,15 @@ fn then_sensor_report_exists_at_canonical_path(world: &mut BuilddiagWorld) {
     }
 
     assert_eq!(
-        report.verdict.counts.info as usize, info,
+        report.verdict.counts.info, info,
         "sensor verdict info count should match findings"
     );
     assert_eq!(
-        report.verdict.counts.warn as usize, warn,
+        report.verdict.counts.warn, warn,
         "sensor verdict warn count should match findings"
     );
     assert_eq!(
-        report.verdict.counts.error as usize, error,
+        report.verdict.counts.error, error,
         "sensor verdict error count should match findings"
     );
 }
