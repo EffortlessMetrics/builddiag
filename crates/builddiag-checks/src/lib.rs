@@ -2095,7 +2095,12 @@ edition = "2021"
 
     #[test]
     fn execute_check_covers_all_builtin_checks() {
-        let (_temp, repo) = repo_with_temp_root();
+        let (_temp, mut repo) = repo_with_temp_root();
+        // Skip the security advisory check: with `--all-features` (security)
+        // it tries to load a real Cargo.lock from the test root and fetch the
+        // RustSec database online. Setting lockfile_exists=false makes the
+        // check short-circuit to Skip regardless of feature state.
+        repo.lockfile_exists = false;
         let config = Config::default();
 
         for def in BUILTIN_CHECKS {
@@ -3255,6 +3260,7 @@ weird = 1
         assert!(report.skipped_detail.unwrap().contains("Cargo.lock"));
     }
 
+    #[cfg(not(feature = "security"))]
     #[test]
     fn security_advisory_skips_without_feature() {
         let repo = mock_repo_state();
@@ -3262,9 +3268,12 @@ weird = 1
 
         let report = check_security_advisory(&repo, &config, Severity::Error).unwrap();
 
-        // Without the 'security' feature, check should skip
+        // Without the 'security' feature, check should skip with FEATURE_NOT_AVAILABLE.
         assert_eq!(report.status, CheckStatus::Skip);
-        assert!(report.skipped_reason.is_some());
+        assert_eq!(
+            report.skipped_reason.as_deref(),
+            Some(check_skip_reasons::FEATURE_NOT_AVAILABLE)
+        );
     }
 
     // =========================================================================
