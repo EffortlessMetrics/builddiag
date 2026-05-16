@@ -457,4 +457,156 @@ mod tests {
         let resolved = config.cache_dir_abs(root);
         assert_eq!(resolved, abs_dir);
     }
+
+    // =========================================================================
+    // Error-path coverage tests
+    // =========================================================================
+
+    #[test]
+    fn test_cache_load_malformed_json_returns_err() {
+        let temp_dir = TempDir::new().unwrap();
+        let cache_dir = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+        // Write a malformed JSON cache file.
+        fs::create_dir_all(&cache_dir).unwrap();
+        let cache_path = cache_dir.join(CACHE_FILE);
+        fs::write(&cache_path, "{not valid json").unwrap();
+
+        let result = RepoStateCache::load(&cache_dir);
+        // Implementation returns Err with context for parse failures.
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("parse cache file"));
+    }
+
+    #[test]
+    fn test_cache_load_unreadable_file_returns_err() {
+        // Cache file path is a directory (not a file) so read_to_string errors.
+        let temp_dir = TempDir::new().unwrap();
+        let cache_dir = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+        // Create a directory at the cache file's expected path so the `exists()`
+        // check passes but `read_to_string` fails.
+        let cache_path = cache_dir.join(CACHE_FILE);
+        fs::create_dir_all(&cache_path).unwrap();
+
+        let result = RepoStateCache::load(&cache_dir);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("read cache file"));
+    }
+
+    #[test]
+    fn test_cache_save_creates_missing_parent_directories() {
+        let temp_dir = TempDir::new().unwrap();
+        let cache_dir = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
+            .unwrap()
+            .join("nested/sub/cache-dir");
+        // Parent directories don't yet exist.
+        assert!(!cache_dir.exists());
+
+        let cache = RepoStateCache::new();
+        cache.save(&cache_dir).unwrap();
+
+        assert!(cache_dir.join(CACHE_FILE).exists());
+    }
+
+    #[test]
+    fn test_cache_save_fails_when_dir_path_is_a_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+        // Create a file at the location we'll attempt to use as cache dir.
+        let dir_as_file = root.join("not-a-dir");
+        fs::write(&dir_as_file, "I am a file").unwrap();
+
+        let cache = RepoStateCache::new();
+        let result = cache.save(&dir_as_file);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("create cache directory"));
+    }
+
+    #[test]
+    fn test_cache_delete_no_op_when_missing() {
+        let temp_dir = TempDir::new().unwrap();
+        let cache_dir = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+        // No cache file exists.
+        let cache_path = cache_dir.join(CACHE_FILE);
+        assert!(!cache_path.exists());
+
+        // Should succeed without error.
+        RepoStateCache::delete(&cache_dir).unwrap();
+        assert!(!cache_path.exists());
+    }
+
+    #[test]
+    fn test_cache_invalidates_after_file_modification() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+        let file_path = temp_dir.path().join("tracked.txt");
+        fs::write(&file_path, "original").unwrap();
+
+        let meta = get_file_meta(&root, Utf8Path::new("tracked.txt"))
+            .unwrap()
+            .unwrap();
+        assert!(is_cache_valid(&root, &meta));
+
+        // Modify content - hash should differ.
+        fs::write(&file_path, "modified content here").unwrap();
+        assert!(!is_cache_valid(&root, &meta));
+    }
+
+    #[test]
+    fn test_cache_disabled_config_flags() {
+        let config = CacheConfig::disabled();
+        assert!(!config.enabled);
+        // Cache dir defaults still present.
+        assert_eq!(config.cache_dir.as_str(), DEFAULT_CACHE_DIR);
+    }
+
+    #[test]
+    fn test_save_then_load_roundtrip_preserves_members() {
+        let temp_dir = TempDir::new().unwrap();
+        let cache_dir = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+
+        let mut cache = RepoStateCache::new();
+        cache.members.insert(
+            "crates/foo/Cargo.toml".to_string(),
+            CachedMember {
+                meta: FileMeta {
+                    path: "crates/foo/Cargo.toml".to_string(),
+                    mtime: 0,
+                    content_hash: "deadbeef".to_string(),
+                },
+                name: "foo".to_string(),
+                rust_version: Some("1.70.0".to_string()),
+                rust_version_workspace: false,
+                edition: Some("2021".to_string()),
+                edition_workspace: false,
+                has_binary_target: false,
+            },
+        );
+        cache.save(&cache_dir).unwrap();
+
+        let loaded = RepoStateCache::load(&cache_dir).unwrap().unwrap();
+        assert_eq!(loaded.members.len(), 1);
+        let m = loaded.members.get("crates/foo/Cargo.toml").unwrap();
+        assert_eq!(m.name, "foo");
+        assert_eq!(m.rust_version.as_deref(), Some("1.70.0"));
+        assert_eq!(m.edition.as_deref(), Some("2021"));
+    }
+
+    #[test]
+    fn test_get_file_meta_with_absolute_path_outside_root_keeps_path() {
+        // When absolute path is not under root, strip_prefix fails and the
+        // implementation falls back to the original path string.
+        let temp_dir_a = TempDir::new().unwrap();
+        let temp_dir_b = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(temp_dir_a.path().to_path_buf()).unwrap();
+        let abs_path = temp_dir_b.path().join("outside.txt");
+        fs::write(&abs_path, "data").unwrap();
+        let abs_utf8 = Utf8PathBuf::from_path_buf(abs_path).unwrap();
+
+        let meta = get_file_meta(&root, &abs_utf8).unwrap().unwrap();
+        // Path should be the original absolute path (strip_prefix failed).
+        assert_eq!(meta.path, abs_utf8.as_str());
+    }
 }
