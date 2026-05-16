@@ -5,16 +5,16 @@
     "version": "0.2.0"
   },
   "run": {
-    "started_at": "2026-02-07T05:09:21.340758400Z",
-    "ended_at": "2026-02-07T05:09:21.386785400Z",
-    "duration_ms": 46,
+    "started_at": "2026-04-03T05:00:13.594895036Z",
+    "ended_at": "2026-04-03T05:00:13.614618249Z",
+    "duration_ms": 19,
     "host": {
-      "os": "windows",
+      "os": "linux",
       "arch": "x86_64"
     },
     "git": {
-      "commit": "96efe3f0349b6112103fc3d8f373c29d45c3d66c",
-      "branch": "main",
+      "commit": "13fcd4ee6d26e596f63b9815fa6f0e7b39f2a34d",
+      "branch": "claude/fix-ci-parallel-agents-4NLDA",
       "dirty": true
     },
     "capabilities": {
@@ -38,15 +38,33 @@
     }
   },
   "verdict": {
-    "status": "pass",
+    "status": "warn",
     "counts": {
       "info": 5,
-      "warn": 0,
+      "warn": 1,
       "error": 0,
       "suppressed": 0
+    },
+    "reasons": [
+      "checks_warned"
+    ],
+    "data": {
+      "warned_checks": [
+        "rust.toolchain_msrv_relation"
+      ]
     }
   },
   "findings": [
+    {
+      "check_id": "rust.toolchain_msrv_relation",
+      "code": "toolchain_msrv_mismatch",
+      "severity": "warn",
+      "message": "Toolchain (1.85.0) must equal MSRV (1.92.0)",
+      "fingerprint": "17fa828093b9cfb71af5e8be571076b762f621bace863c598bd96c361013c90e",
+      "location": {
+        "path": "rust-toolchain.toml"
+      }
+    },
     {
       "check_id": "workspace.publish_ready",
       "code": "missing_description",
