@@ -417,6 +417,9 @@ enum InitHooksFormat {
 #[cfg(test)]
 static MAIN_ARGS: Mutex<Option<Vec<std::ffi::OsString>>> = Mutex::new(None);
 
+#[cfg(test)]
+static MAIN_ARGS_TEST_LOCK: Mutex<()> = Mutex::new(());
+
 fn main() -> std::process::ExitCode {
     let cli = Cli::parse_from(main_args());
     let code = run_main(cli);
@@ -2102,6 +2105,9 @@ files = ["scripts/tool.sh"]
 
     #[test]
     fn test_main_uses_injected_args() {
+        let _guard = super::MAIN_ARGS_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let args = vec![
             std::ffi::OsString::from("builddiag"),
             std::ffi::OsString::from("list-checks"),
@@ -2113,6 +2119,9 @@ files = ["scripts/tool.sh"]
 
     #[test]
     fn test_main_args_falls_back_to_env() {
+        let _guard = super::MAIN_ARGS_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         *super::MAIN_ARGS.lock().unwrap() = None;
         let args = main_args();
         assert!(!args.is_empty());
