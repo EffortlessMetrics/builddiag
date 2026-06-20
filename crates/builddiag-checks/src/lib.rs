@@ -119,20 +119,30 @@ fn execute_check(task: &CheckTask, repo: &RepoState, config: &Config) -> Result<
         "rust.msrv_consistent" => check_msrv_consistent(repo, config, severity)?,
         "rust.toolchain_pinning" => check_toolchain_pinning(repo, config, severity)?,
         "rust.toolchain_msrv_relation" => check_toolchain_msrv_relation(repo, config, severity)?,
+        #[cfg(feature = "checksums")]
         "tools.checksums_file_exists" => check_checksums_file_exists(repo, config, severity)?,
+        #[cfg(feature = "checksums")]
         "tools.checksums_format" => check_checksums_format(repo, config, severity)?,
+        #[cfg(feature = "checksums")]
         "tools.checksums_coverage" => check_checksums_coverage(repo, config, severity)?,
+        #[cfg(feature = "checksums")]
         "tools.checksums_verify_local" => check_checksums_verify_local(repo, config, severity)?,
         "workspace.resolver_v2" => check_workspace_resolver(repo, config, severity)?,
+        #[cfg(feature = "deps")]
         "deps.wildcard_version" => check_deps_wildcard(repo, config, severity)?,
+        #[cfg(feature = "deps")]
         "deps.path_missing_version" => check_deps_path_version(repo, config, severity)?,
+        #[cfg(feature = "deps")]
         "deps.workspace_inheritance" => check_deps_workspace_inheritance(repo, config, severity)?,
         "workspace.edition_consistent" => check_edition_consistent(repo, config, severity)?,
         "workspace.member_ordering" => check_member_ordering(repo, config, severity)?,
+        #[cfg(feature = "deps")]
         "deps.lockfile_present" => check_lockfile_present(repo, config, severity)?,
         "workspace.publish_ready" => check_publish_ready(repo, config, severity)?,
         "rust.edition_deprecations" => check_edition_deprecations(repo, config, severity)?,
+        #[cfg(feature = "deps")]
         "deps.duplicate_versions" => check_duplicate_versions(repo, config, severity)?,
+        #[cfg(feature = "deps")]
         "deps.security_advisory" => check_security_advisory(repo, config, severity)?,
         _ => return Err(anyhow!("unknown check id: {}", task.def.id)),
     };
@@ -587,6 +597,7 @@ fn check_toolchain_msrv_relation(
     })
 }
 
+#[cfg(feature = "checksums")]
 fn check_checksums_file_exists(
     repo: &RepoState,
     config: &Config,
@@ -595,6 +606,7 @@ fn check_checksums_file_exists(
     builddiag_checks_checksums::check_checksums_file_exists(repo, config, default_sev)
 }
 
+#[cfg(feature = "checksums")]
 fn check_checksums_format(
     repo: &RepoState,
     _config: &Config,
@@ -603,6 +615,7 @@ fn check_checksums_format(
     builddiag_checks_checksums::check_checksums_format(repo, _config, default_sev)
 }
 
+#[cfg(feature = "checksums")]
 fn check_checksums_coverage(
     repo: &RepoState,
     config: &Config,
@@ -611,6 +624,7 @@ fn check_checksums_coverage(
     builddiag_checks_checksums::check_checksums_coverage(repo, config, default_sev)
 }
 
+#[cfg(feature = "checksums")]
 fn check_checksums_verify_local(
     repo: &RepoState,
     config: &Config,
@@ -857,6 +871,7 @@ fn rel_path(root: &camino::Utf8Path, p: &camino::Utf8Path) -> String {
     to_repo_relative(root, p)
 }
 
+#[cfg(feature = "deps")]
 fn check_deps_wildcard(
     repo: &RepoState,
     _config: &Config,
@@ -865,6 +880,7 @@ fn check_deps_wildcard(
     builddiag_checks_deps::check_deps_wildcard(repo, _config, default_sev)
 }
 
+#[cfg(feature = "deps")]
 fn check_deps_path_version(
     repo: &RepoState,
     _config: &Config,
@@ -873,6 +889,7 @@ fn check_deps_path_version(
     builddiag_checks_deps::check_deps_path_version(repo, _config, default_sev)
 }
 
+#[cfg(feature = "deps")]
 fn check_deps_workspace_inheritance(
     repo: &RepoState,
     _config: &Config,
@@ -881,6 +898,7 @@ fn check_deps_workspace_inheritance(
     builddiag_checks_deps::check_deps_workspace_inheritance(repo, _config, default_sev)
 }
 
+#[cfg(feature = "deps")]
 fn check_lockfile_present(
     repo: &RepoState,
     _config: &Config,
@@ -1087,6 +1105,7 @@ fn check_edition_deprecations(
 }
 
 /// Check for duplicate dependency versions across workspace members.
+#[cfg(feature = "deps")]
 fn check_duplicate_versions(
     repo: &RepoState,
     _config: &Config,
@@ -1096,6 +1115,7 @@ fn check_duplicate_versions(
 }
 
 /// Check dependencies against RustSec advisory database.
+#[cfg(feature = "deps")]
 fn check_security_advisory(
     repo: &RepoState,
     config: &Config,
