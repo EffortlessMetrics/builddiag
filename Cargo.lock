@@ -335,9 +335,9 @@ version = "0.3.0"
 dependencies = [
  "anyhow",
  "builddiag-domain",
+ "builddiag-paths",
  "builddiag-repo",
  "builddiag-types",
- "camino",
  "hex",
  "sha2",
 ]

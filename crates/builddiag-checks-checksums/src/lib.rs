@@ -35,14 +35,6 @@ fn mk_finding(
     }
 }
 
-fn rel_path(root: &camino::Utf8Path, p: &camino::Utf8Path) -> String {
-    p.strip_prefix(root)
-        .ok()
-        .unwrap_or(p)
-        .as_str()
-        .replace('\\', "/")
-}
-
 /// Ensures a checksums file exists when policy requires it.
 pub fn check_checksums_file_exists(
     repo: &RepoState,
@@ -90,7 +82,7 @@ pub fn check_checksums_format(
     let mut seen_paths = HashSet::new();
 
     for e in &cks.entries {
-        let rel = rel_path(&repo.root, &cks.path);
+        let rel = builddiag_paths::to_repo_relative(&repo.root, &cks.path);
 
         if e.hash.len() != 64 || hex::decode(&e.hash).is_err() {
             findings.push(mk_finding(

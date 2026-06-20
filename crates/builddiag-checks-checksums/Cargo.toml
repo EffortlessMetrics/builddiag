@@ -14,8 +14,8 @@ categories = ["development-tools"]
 [dependencies]
 anyhow.workspace = true
 builddiag-domain = { path = "../builddiag-domain", version = "0.3.0" }
+builddiag-paths = { path = "../builddiag-paths", version = "0.3.0" }
 builddiag-repo = { path = "../builddiag-repo", version = "0.3.0" }
 builddiag-types = { path = "../builddiag-types", version = "0.3.0" }
-camino.workspace = true
 sha2.workspace = true
 hex.workspace = true
