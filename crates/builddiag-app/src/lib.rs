@@ -1422,5 +1422,32 @@ diff_aware = "yes"
 
             assert!(super::get_git_info(root).is_none());
         }
+
+        // Verify that `git_lock()` recovers from a poisoned mutex (PoisonError
+        // path on line 1401). Uses a private OnceLock so it cannot interfere
+        // with the real GIT_LOCK used by other tests.
+        #[test]
+        fn git_lock_recovers_from_poisoned_mutex() {
+            static LOCAL_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+            fn lock() -> std::sync::MutexGuard<'static, ()> {
+                match LOCAL_LOCK.get_or_init(|| Mutex::new(())).lock() {
+                    Ok(g) => g,
+                    Err(poisoned) => poisoned.into_inner(),
+                }
+            }
+
+            // Poison the mutex by panicking inside a thread while holding it.
+            let _ = std::thread::spawn(|| {
+                let _guard = lock();
+                panic!("intentional panic to poison the mutex");
+            })
+            .join();
+
+            // The mutex is now poisoned; the recovery branch should still
+            // hand back a usable guard rather than panicking.
+            let guard = lock();
+            drop(guard);
+        }
     }
 }

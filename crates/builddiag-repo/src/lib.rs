@@ -2338,4 +2338,417 @@ rust-version = 1
         let err = parse_package_inheritable_string(&value, "rust-version").unwrap_err();
         assert!(err.to_string().contains("unsupported type"));
     }
+
+    // =========================================================================
+    // Error-path coverage tests
+    // =========================================================================
+
+    #[test]
+    fn load_repo_state_errors_on_nonexistent_root() {
+        // Canonicalize fails when the path does not exist.
+        let bogus = Utf8Path::new("/this/path/should/not/exist/builddiag-test-xyz");
+        let result = load_repo_state(bogus, &Config::default(), None);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("canonicalize"));
+    }
+
+    #[test]
+    fn load_repo_state_errors_on_malformed_cargo_toml() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+        // Write a malformed Cargo.toml.
+        std::fs::write(root.join("Cargo.toml"), "not [valid toml === broken").unwrap();
+
+        let result = load_repo_state(&root, &Config::default(), None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn load_repo_state_propagates_tools_manifest_parse_error() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+
+        std::fs::write(root.join("Cargo.toml"), make_package_toml("demo")).unwrap();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/lib.rs"), "").unwrap();
+        std::fs::create_dir_all(root.join("scripts")).unwrap();
+        // Broken tools.toml so that toml::from_str fails.
+        std::fs::write(
+            root.join("scripts/tools.toml"),
+            "this is = not valid toml ===",
+        )
+        .unwrap();
+
+        let result = load_repo_state(&root, &Config::default(), None);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("parse tools manifest") || err_msg.contains("tools.toml"));
+    }
+
+    #[test]
+    fn parse_rust_toolchain_toml_errors_for_missing_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let missing = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
+            .unwrap()
+            .join("missing-toolchain.toml");
+        let result = parse_rust_toolchain_toml(&missing);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("read"));
+    }
+
+    #[test]
+    fn parse_rust_toolchain_toml_errors_for_malformed_toml() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("rust-toolchain.toml");
+        std::fs::write(&path, "this is === not valid toml").unwrap();
+        let p = Utf8PathBuf::from_path_buf(path).unwrap();
+
+        let result = parse_rust_toolchain_toml(&p);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("parse"));
+    }
+
+    #[test]
+    fn parse_rust_toolchain_toml_errors_when_no_channel_anywhere() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("rust-toolchain.toml");
+        // Valid TOML but no toolchain.channel and no top-level channel.
+        std::fs::write(&path, "[other]\nkey = \"value\"\n").unwrap();
+        let p = Utf8PathBuf::from_path_buf(path).unwrap();
+
+        let result = parse_rust_toolchain_toml(&p);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("missing toolchain.channel"));
+    }
+
+    #[test]
+    fn find_toolchain_uses_legacy_when_only_legacy_exists() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+        std::fs::write(root.join("rust-toolchain"), "1.65.0\n").unwrap();
+        let tc = find_toolchain(&root, "rust-toolchain.toml")
+            .unwrap()
+            .unwrap();
+        assert_eq!(tc.channel, "1.65.0");
+        assert!(tc.path.as_str().ends_with("rust-toolchain"));
+    }
+
+    #[test]
+    fn metadata_errors_for_non_workspace_path() {
+        let temp_dir = TempDir::new().unwrap();
+        // Path doesn't exist or is not a Cargo manifest.
+        let manifest_path = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
+            .unwrap()
+            .join("not-a-manifest.toml");
+        let result = metadata(&manifest_path);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("cargo metadata"));
+    }
+
+    #[test]
+    fn load_workspace_errors_for_malformed_root_manifest() {
+        // cargo_metadata will reject a malformed Cargo.toml.
+        let temp_dir = TempDir::new().unwrap();
+        let manifest_path = temp_dir.path().join("Cargo.toml");
+        std::fs::write(&manifest_path, "not [valid toml ===").unwrap();
+        let path = Utf8PathBuf::from_path_buf(manifest_path).unwrap();
+
+        let result = load_workspace(&path);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_package_inheritable_string_returns_workspace_inheritance() {
+        // Cover the Table branch (key.workspace = true).
+        let manifest = r#"
+[package]
+name = "demo"
+version = "0.1.0"
+rust-version.workspace = true
+"#;
+        let value: toml::Value = toml::from_str(manifest).unwrap();
+        let (rv, inherits) = parse_package_inheritable_string(&value, "rust-version").unwrap();
+        assert!(rv.is_none());
+        assert!(inherits);
+    }
+
+    #[test]
+    fn parse_package_inheritable_string_handles_table_without_workspace_key() {
+        // Table syntax without `workspace = true` should give (None, false).
+        let manifest = r#"
+[package]
+name = "demo"
+version = "0.1.0"
+
+[package.rust-version]
+other = "value"
+"#;
+        let value: toml::Value = toml::from_str(manifest).unwrap();
+        let (rv, inherits) = parse_package_inheritable_string(&value, "rust-version").unwrap();
+        assert!(rv.is_none());
+        assert!(!inherits);
+    }
+
+    #[test]
+    fn parse_package_inheritable_string_returns_none_without_package() {
+        let value: toml::Value = toml::from_str("[other]\nkey = 1\n").unwrap();
+        let (rv, inherits) = parse_package_inheritable_string(&value, "rust-version").unwrap();
+        assert!(rv.is_none());
+        assert!(!inherits);
+    }
+
+    #[test]
+    fn parse_package_inheritable_string_returns_none_without_key() {
+        let manifest = r#"
+[package]
+name = "demo"
+version = "0.1.0"
+"#;
+        let value: toml::Value = toml::from_str(manifest).unwrap();
+        let (rv, inherits) = parse_package_inheritable_string(&value, "rust-version").unwrap();
+        assert!(rv.is_none());
+        assert!(!inherits);
+    }
+
+    #[test]
+    fn parse_workspace_root_falls_back_to_package_msrv() {
+        // No workspace section, but package has rust-version: function should
+        // return that as msrv.
+        let manifest = r#"
+[package]
+name = "x"
+version = "0.1.0"
+rust-version = "1.71.0"
+"#;
+        let value: toml::Value = toml::from_str(manifest).unwrap();
+        let (msrv, _edition, _resolver, is_workspace) = parse_workspace_root(&value).unwrap();
+        assert_eq!(msrv.as_deref(), Some("1.71.0"));
+        assert!(!is_workspace);
+    }
+
+    #[test]
+    fn parse_workspace_root_extracts_workspace_settings() {
+        let manifest = r#"
+[workspace]
+resolver = "2"
+members = []
+
+[workspace.package]
+rust-version = "1.72.0"
+edition = "2021"
+"#;
+        let value: toml::Value = toml::from_str(manifest).unwrap();
+        let (msrv, edition, resolver, is_workspace) = parse_workspace_root(&value).unwrap();
+        assert_eq!(msrv.as_deref(), Some("1.72.0"));
+        assert_eq!(edition.as_deref(), Some("2021"));
+        assert_eq!(resolver.as_deref(), Some("2"));
+        assert!(is_workspace);
+    }
+
+    #[test]
+    fn discover_workspace_errors_for_malformed_manifest() {
+        let temp_dir = TempDir::new().unwrap();
+        let manifest_path = temp_dir.path().join("Cargo.toml");
+        std::fs::write(&manifest_path, "not [valid toml ===").unwrap();
+        let path = Utf8PathBuf::from_path_buf(manifest_path).unwrap();
+
+        let result = discover_workspace(&path);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn discover_workspace_errors_for_missing_manifest() {
+        let temp_dir = TempDir::new().unwrap();
+        let missing = temp_dir.path().join("does-not-exist/Cargo.toml");
+        let path = Utf8PathBuf::from_path_buf(missing).unwrap();
+
+        let result = discover_workspace(&path);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn discover_workspace_errors_when_member_manifest_unreadable() {
+        // Create a workspace where the glob expansion includes a member dir
+        // whose Cargo.toml is itself broken.
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        let manifest_path = root.join("Cargo.toml");
+        std::fs::write(&manifest_path, make_workspace_toml(&["crates/broken"])).unwrap();
+
+        std::fs::create_dir_all(root.join("crates/broken")).unwrap();
+        // Member manifest exists but is malformed.
+        std::fs::write(root.join("crates/broken/Cargo.toml"), "not [valid toml ===").unwrap();
+
+        let path = Utf8PathBuf::from_path_buf(manifest_path).unwrap();
+        let result = discover_workspace(&path);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn workspace_model_member_paths_returns_multiple() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        let manifest_path = root.join("Cargo.toml");
+        std::fs::write(
+            &manifest_path,
+            make_workspace_toml(&["crates/a", "crates/b"]),
+        )
+        .unwrap();
+
+        std::fs::create_dir_all(root.join("crates/a")).unwrap();
+        std::fs::create_dir_all(root.join("crates/b")).unwrap();
+        std::fs::write(root.join("crates/a/Cargo.toml"), make_package_toml("a")).unwrap();
+        std::fs::write(root.join("crates/b/Cargo.toml"), make_package_toml("b")).unwrap();
+
+        let path = Utf8PathBuf::from_path_buf(manifest_path).unwrap();
+        let model = discover_workspace(&path).unwrap();
+
+        let paths = model.member_paths();
+        assert_eq!(paths.len(), 2);
+        assert!(paths.contains(&"crates/a/Cargo.toml"));
+        assert!(paths.contains(&"crates/b/Cargo.toml"));
+        assert!(model.has_members());
+        assert_eq!(model.member_count(), 2);
+    }
+
+    #[test]
+    fn expand_workspace_patterns_errors_on_invalid_exclude_glob() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+
+        // `[` without a matching `]` is an invalid glob.
+        let result = expand_workspace_patterns(&root, &[], &["[invalid".to_string()]);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("invalid exclude glob pattern"));
+    }
+
+    #[test]
+    fn expand_glob_pattern_errors_on_invalid_glob() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+        // Create the base directory so the function reaches the glob construction.
+        std::fs::create_dir_all(root.join("base")).unwrap();
+
+        // Invalid character class glob inside the base directory.
+        let result = expand_glob_pattern(&root, "base/[unterminated");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_checksums_errors_for_missing_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let missing = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
+            .unwrap()
+            .join("missing.sha256");
+        let result = parse_checksums(&missing);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("read"));
+    }
+
+    // =========================================================================
+    // Tests for maybe_parse_numeric_version (uncovered helper)
+    // =========================================================================
+
+    #[test]
+    fn maybe_parse_numeric_version_returns_none_for_stable() {
+        assert!(maybe_parse_numeric_version("stable").unwrap().is_none());
+        assert!(maybe_parse_numeric_version("STABLE").unwrap().is_none());
+    }
+
+    #[test]
+    fn maybe_parse_numeric_version_returns_none_for_beta() {
+        assert!(maybe_parse_numeric_version("beta").unwrap().is_none());
+    }
+
+    #[test]
+    fn maybe_parse_numeric_version_returns_none_for_nightly() {
+        assert!(maybe_parse_numeric_version("nightly").unwrap().is_none());
+        assert!(
+            maybe_parse_numeric_version("nightly-2024-01-15")
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn maybe_parse_numeric_version_returns_normalized_version() {
+        let v = maybe_parse_numeric_version("1.70.0").unwrap();
+        assert_eq!(v.as_deref(), Some("1.70.0"));
+
+        let v = maybe_parse_numeric_version("1.70").unwrap();
+        // Should be parseable (parse_rust_version normalizes shorthand).
+        assert!(v.is_some());
+    }
+
+    #[test]
+    fn maybe_parse_numeric_version_errors_on_garbage() {
+        let result = maybe_parse_numeric_version("not-a-version-xyz");
+        assert!(result.is_err());
+    }
+
+    // =========================================================================
+    // load_repo_state_cached coverage (feature = "cache")
+    // =========================================================================
+
+    #[cfg(feature = "cache")]
+    #[test]
+    fn load_repo_state_cached_hits_existing_cache_on_second_call() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+        std::fs::write(root.join("Cargo.toml"), make_package_toml("demo")).unwrap();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/lib.rs"), "").unwrap();
+
+        let config = Config::default();
+        let cache_cfg = CacheConfig::default();
+
+        // First call: cache miss (no cache yet) -> writes cache.
+        let _state1 = load_repo_state_cached(&root, &config, None, Some(&cache_cfg)).unwrap();
+        let cache_file = cache_cfg.cache_dir_abs(&root).join("repo-state.json");
+        assert!(cache_file.exists());
+
+        // Second call: cache hit branch (load returns Some) executes successfully.
+        let state2 = load_repo_state_cached(&root, &config, None, Some(&cache_cfg)).unwrap();
+        assert!(state2.cargo_root.is_some());
+    }
+
+    #[cfg(feature = "cache")]
+    #[test]
+    fn load_repo_state_cached_with_corrupt_existing_cache_still_succeeds() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+        std::fs::write(root.join("Cargo.toml"), make_package_toml("demo")).unwrap();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/lib.rs"), "").unwrap();
+
+        let config = Config::default();
+        let cache_cfg = CacheConfig::default();
+        let cache_dir = cache_cfg.cache_dir_abs(&root);
+        std::fs::create_dir_all(&cache_dir).unwrap();
+        // Corrupt cache file - implementation uses `.ok().flatten()` so it
+        // silently treats this as a cache miss.
+        std::fs::write(cache_dir.join("repo-state.json"), "{garbage").unwrap();
+
+        let state = load_repo_state_cached(&root, &config, None, Some(&cache_cfg)).unwrap();
+        assert!(state.cargo_root.is_some());
+    }
+
+    #[cfg(feature = "cache")]
+    #[test]
+    fn load_repo_state_cached_errors_on_nonexistent_root() {
+        let bogus = Utf8Path::new("/definitely/not/a/real/path/builddiag-xyz");
+        let config = Config::default();
+        let cache_cfg = CacheConfig::default();
+        let result = load_repo_state_cached(bogus, &config, None, Some(&cache_cfg));
+        assert!(result.is_err());
+    }
 }

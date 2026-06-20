@@ -5,16 +5,16 @@
     "version": "0.3.0"
   },
   "run": {
-    "started_at": "2026-02-16T12:46:13.957111500Z",
-    "ended_at": "2026-02-16T12:46:18.715849100Z",
-    "duration_ms": 4758,
+    "started_at": "2026-06-20T07:34:02.962809Z",
+    "ended_at": "2026-06-20T07:34:03.888289100Z",
+    "duration_ms": 925,
     "host": {
       "os": "windows",
       "arch": "x86_64"
     },
     "git": {
-      "commit": "13fcd4ee6d26e596f63b9815fa6f0e7b39f2a34d",
-      "branch": "main",
+      "commit": "19ed65f87ee102d97d91c5a79dc46192d573f8cb",
+      "branch": "add-fix-watch-hooks-crates",
       "dirty": true
     },
     "capabilities": {
