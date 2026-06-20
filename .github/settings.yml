@@ -1,5 +1,5 @@
 # .github/settings.yml
 repository:
-  description: "CLI tool to validate the build contract of Rust repositories"
+  description: "Offline build-contract sensor for Rust workspaces (JSON receipts + PR-ready Markdown)"
   homepage: "https://github.com/EffortlessMetrics/builddiag"
-  topics: rust, cli, build, validation, msrv, devex, receipts, cockpit
+  topics: rust, build-contract, workspace, cli, ci, policy, diagnostics, receipts, github-actions, cockpit

@@ -1,0 +1,24 @@
+[package]
+name = "builddiag-checks-catalog"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Stable, versioned check metadata and built-in registry for builddiag checks"
+readme = "README.md"
+documentation = "https://docs.rs/builddiag-checks-catalog"
+keywords = ["rust", "builddiag", "checks", "lint", "policy"]
+categories = ["development-tools"]
+
+[features]
+default = ["msrv", "toolchain", "checksums", "workspace", "deps", "publish"]
+msrv = []
+toolchain = []
+checksums = []
+workspace = []
+deps = []
+publish = []
+
+[dependencies]
+builddiag-types = { path = "../builddiag-types", version = "0.3.0" }

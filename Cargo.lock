@@ -242,16 +242,22 @@ dependencies = [
 
 [[package]]
 name = "builddiag"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
  "builddiag-app",
+ "builddiag-baseline",
  "builddiag-checks",
  "builddiag-core",
  "builddiag-domain",
+ "builddiag-fix",
+ "builddiag-hooks",
+ "builddiag-output-contract",
  "builddiag-render",
+ "builddiag-testkit",
  "builddiag-types",
+ "builddiag-watch",
  "camino",
  "chrono",
  "clap",
@@ -265,11 +271,12 @@ dependencies = [
 
 [[package]]
 name = "builddiag-app"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "builddiag-checks",
  "builddiag-domain",
+ "builddiag-receipt",
  "builddiag-render",
  "builddiag-repo",
  "builddiag-types",
@@ -281,8 +288,63 @@ dependencies = [
 ]
 
 [[package]]
+name = "builddiag-baseline"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "builddiag-domain",
+ "builddiag-types",
+ "camino",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "builddiag-checks"
-version = "0.2.0"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "builddiag-checks-catalog",
+ "builddiag-checks-checksums",
+ "builddiag-checks-deps",
+ "builddiag-domain",
+ "builddiag-paths",
+ "builddiag-repo",
+ "builddiag-types",
+ "camino",
+ "globset",
+ "hex",
+ "proptest",
+ "rayon",
+ "sha2",
+ "tempfile",
+ "toml",
+]
+
+[[package]]
+name = "builddiag-checks-catalog"
+version = "0.3.0"
+dependencies = [
+ "builddiag-types",
+]
+
+[[package]]
+name = "builddiag-checks-checksums"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "builddiag-domain",
+ "builddiag-paths",
+ "builddiag-repo",
+ "builddiag-types",
+ "hex",
+ "sha2",
+]
+
+[[package]]
+name = "builddiag-checks-deps"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "builddiag-domain",
@@ -290,19 +352,13 @@ dependencies = [
  "builddiag-types",
  "camino",
  "depguard",
- "globset",
- "hex",
- "proptest",
- "rayon",
  "rustsec",
- "sha2",
- "tempfile",
  "toml",
 ]
 
 [[package]]
 name = "builddiag-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "builddiag-app",
@@ -316,7 +372,7 @@ dependencies = [
 
 [[package]]
 name = "builddiag-domain"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "builddiag-types",
@@ -330,8 +386,55 @@ dependencies = [
 ]
 
 [[package]]
+name = "builddiag-fix"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "builddiag-domain",
+ "builddiag-repo",
+ "builddiag-types",
+ "camino",
+ "sha2",
+ "tempfile",
+ "toml",
+]
+
+[[package]]
+name = "builddiag-hooks"
+version = "0.3.0"
+
+[[package]]
+name = "builddiag-output-contract"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "builddiag-types",
+ "serde_json",
+]
+
+[[package]]
+name = "builddiag-paths"
+version = "0.3.0"
+dependencies = [
+ "camino",
+ "proptest",
+ "tempfile",
+]
+
+[[package]]
+name = "builddiag-receipt"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "builddiag-domain",
+ "builddiag-types",
+ "chrono",
+ "tempfile",
+]
+
+[[package]]
 name = "builddiag-render"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "builddiag-types",
  "chrono",
@@ -341,10 +444,12 @@ dependencies = [
 
 [[package]]
 name = "builddiag-repo"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "builddiag-domain",
+ "builddiag-paths",
+ "builddiag-testkit",
  "builddiag-types",
  "camino",
  "cargo_metadata",
@@ -359,8 +464,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "builddiag-testkit"
+version = "0.3.0"
+dependencies = [
+ "assert_cmd",
+]
+
+[[package]]
 name = "builddiag-types"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "proptest",
@@ -368,6 +480,15 @@ dependencies = [
  "serde",
  "serde_json",
  "toml",
+]
+
+[[package]]
+name = "builddiag-watch"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "camino",
+ "tempfile",
 ]
 
 [[package]]
@@ -756,7 +877,7 @@ checksum = "d7a1e2f27636f116493b8b860f5546edb47c8d8f8ea73e1d2a20be88e28d1fea"
 
 [[package]]
 name = "depguard"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "camino",

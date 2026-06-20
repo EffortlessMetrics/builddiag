@@ -21,9 +21,9 @@
 
 use anyhow::{Context, Result, anyhow};
 use builddiag_checks::run_selected_checks;
-use builddiag_domain::{
-    build_sensor_verdict, determine_verdict, exit_code_for, finding_to_sensor,
-    sort_findings_canonical, summarize,
+use builddiag_domain::{determine_verdict, exit_code_for, sort_findings_canonical, summarize};
+pub use builddiag_receipt::{
+    build_capabilities, build_capabilities_with_substrate, create_error_receipt, report_to_sensor,
 };
 use builddiag_render::{render_github_annotations, render_markdown};
 #[cfg(feature = "cache")]
@@ -33,12 +33,11 @@ use builddiag_repo::load_repo_state;
 #[cfg(feature = "cache")]
 use builddiag_repo::load_repo_state_cached;
 use builddiag_types::{
-    Artifact, Capability, CheckReport, Config, Finding, GitInfo, HostInfo, Report, RunInfo,
-    SENSOR_REPORT_SCHEMA_V1, SensorReport, SensorRunInfo, Severity, ToolInfo, Verdict,
+    CheckReport, Config, GitInfo, HostInfo, Report, RunInfo, SensorReport, ToolInfo,
 };
 use camino::Utf8Path;
-use chrono::{DateTime, Utc};
-use std::collections::{BTreeMap, BTreeSet};
+use chrono::Utc;
+use std::collections::BTreeSet;
 use std::fs;
 use std::process::Command;
 
@@ -269,208 +268,8 @@ fn get_git_info(root: &Utf8Path) -> Option<GitInfo> {
 }
 
 // =============================================================================
-// Sensor Report Support (sensor.report.v1) - Cockpit CI Governance
+// Receipt and sensor helpers
 // =============================================================================
-
-/// Build capabilities map based on repository state and configuration.
-///
-/// Tracks "No Green By Omission" - explicitly recording what features
-/// were or weren't available during the run.
-///
-/// # Capability Keys
-///
-/// - `git`: Whether git information was available
-/// - `config`: Whether configuration file was loaded
-/// - `toolchain`: Whether rust-toolchain.toml was found
-/// - `checksums`: Whether checksums file was found
-/// - `diff_aware`: Whether diff-aware mode was used
-pub fn build_capabilities(
-    config: &Config,
-    git_info: Option<&GitInfo>,
-    has_toolchain: bool,
-    has_checksums: bool,
-    diff_aware_used: bool,
-) -> BTreeMap<String, Capability> {
-    build_capabilities_inner(
-        config,
-        git_info,
-        has_toolchain,
-        has_checksums,
-        diff_aware_used,
-        false,
-    )
-}
-
-/// Build capabilities map, optionally including substrate capability.
-pub fn build_capabilities_with_substrate(
-    config: &Config,
-    git_info: Option<&GitInfo>,
-    has_toolchain: bool,
-    has_checksums: bool,
-    diff_aware_used: bool,
-    substrate_used: bool,
-) -> BTreeMap<String, Capability> {
-    build_capabilities_inner(
-        config,
-        git_info,
-        has_toolchain,
-        has_checksums,
-        diff_aware_used,
-        substrate_used,
-    )
-}
-
-fn build_capabilities_inner(
-    config: &Config,
-    git_info: Option<&GitInfo>,
-    has_toolchain: bool,
-    has_checksums: bool,
-    diff_aware_used: bool,
-    substrate_used: bool,
-) -> BTreeMap<String, Capability> {
-    let mut caps = BTreeMap::new();
-
-    // Git capability
-    if git_info.is_some() {
-        caps.insert("git".to_string(), Capability::available());
-    } else {
-        caps.insert(
-            "git".to_string(),
-            Capability::unavailable("git repository not detected"),
-        );
-    }
-
-    // Config capability (always available since we have defaults)
-    caps.insert("config".to_string(), Capability::available());
-
-    // Toolchain capability
-    if has_toolchain {
-        caps.insert("toolchain".to_string(), Capability::available());
-    } else {
-        caps.insert(
-            "toolchain".to_string(),
-            Capability::unavailable("rust-toolchain.toml not found"),
-        );
-    }
-
-    // Checksums capability
-    if has_checksums {
-        caps.insert("checksums".to_string(), Capability::available());
-    } else if !config.policy.checksums.require_file {
-        caps.insert(
-            "checksums".to_string(),
-            Capability::skipped("checksums not required by config"),
-        );
-    } else {
-        caps.insert(
-            "checksums".to_string(),
-            Capability::unavailable("checksums file not found"),
-        );
-    }
-
-    // Diff-aware capability
-    if diff_aware_used {
-        caps.insert("diff_aware".to_string(), Capability::available());
-    } else if config.defaults.diff_aware {
-        caps.insert(
-            "diff_aware".to_string(),
-            Capability::unavailable("could not compute git diff"),
-        );
-    } else {
-        caps.insert(
-            "diff_aware".to_string(),
-            Capability::skipped("diff-aware mode not enabled"),
-        );
-    }
-
-    // Substrate capability
-    if substrate_used {
-        caps.insert("substrate".to_string(), Capability::available());
-    }
-
-    caps
-}
-
-/// Convert a builddiag Report to a SensorReport.
-///
-/// Transforms the builddiag-native report format to the sensor.report.v1
-/// format compatible with Cockpit CI governance ecosystem.
-pub fn report_to_sensor(
-    report: &Report,
-    checks: &[CheckReport],
-    capabilities: BTreeMap<String, Capability>,
-    artifacts: Vec<Artifact>,
-) -> SensorReport {
-    // Convert findings to sensor findings with fingerprints
-    let sensor_findings = report
-        .findings
-        .iter()
-        .map(|f| finding_to_sensor(f, None, None))
-        .collect();
-
-    // Build sensor run info with capabilities
-    let sensor_run = report.run.as_ref().map(|run| SensorRunInfo {
-        started_at: run.started_at,
-        ended_at: run.ended_at,
-        duration_ms: run.duration_ms,
-        host: run.host.clone(),
-        git: run.git.clone(),
-        capabilities,
-    });
-
-    SensorReport {
-        schema: SENSOR_REPORT_SCHEMA_V1.to_string(),
-        tool: report.tool.clone(),
-        run: sensor_run,
-        verdict: build_sensor_verdict(report.verdict, checks),
-        findings: sensor_findings,
-        artifacts,
-        data: report.data.clone(),
-    }
-}
-
-/// Create an error receipt when an internal error occurs.
-///
-/// In Cockpit mode, we need to produce a valid report even when the tool
-/// fails internally. This creates a minimal report with the error information.
-///
-/// Uses canonical tool-error identity:
-/// - `check_id = "tool.runtime"`
-/// - `code = "runtime_error"`
-/// - `severity = error`
-/// - `verdict = Error` (maps to `fail` in sensor format)
-pub fn create_error_receipt(started_at: DateTime<Utc>, error: &anyhow::Error) -> Report {
-    let end = Utc::now();
-    let duration_ms = (end - started_at).num_milliseconds().max(0) as u64;
-
-    Report {
-        schema: REPORT_SCHEMA_V1.to_string(),
-        tool: Some(ToolInfo {
-            name: "builddiag".to_string(),
-            version: env!("CARGO_PKG_VERSION").to_string(),
-        }),
-        run: Some(RunInfo {
-            started_at,
-            ended_at: Some(end),
-            duration_ms,
-            host: HostInfo {
-                os: std::env::consts::OS.to_string(),
-                arch: std::env::consts::ARCH.to_string(),
-            },
-            git: None,
-        }),
-        verdict: Verdict::Error,
-        findings: vec![Finding {
-            check_id: "tool.runtime".to_string(),
-            code: "runtime_error".to_string(),
-            severity: Severity::Error,
-            message: format!("Internal error: {error:#}"),
-            location: None,
-        }],
-        summary: None,
-        data: None,
-    }
-}
 
 /// Extended check run result that includes sensor format data.
 pub struct SensorCheckRun {
@@ -499,7 +298,15 @@ pub fn run_check_with_sensor(
 
     let repo_state = load_repo_state_cached(root, config, changed_files, cache_config)?;
 
-    run_check_with_sensor_inner(root, config, allow_all, repo_state, start, diff_aware_used)
+    run_check_with_sensor_inner(
+        root,
+        config,
+        allow_all,
+        repo_state,
+        start,
+        diff_aware_used,
+        false,
+    )
 }
 
 /// Run checks and produce both builddiag and sensor format reports (without caching).
@@ -515,7 +322,15 @@ pub fn run_check_with_sensor(
 
     let repo_state = load_repo_state(root, config, changed_files)?;
 
-    run_check_with_sensor_inner(root, config, allow_all, repo_state, start, diff_aware_used)
+    run_check_with_sensor_inner(
+        root,
+        config,
+        allow_all,
+        repo_state,
+        start,
+        diff_aware_used,
+        false,
+    )
 }
 
 /// Inner implementation of run_check_with_sensor.
@@ -526,6 +341,7 @@ fn run_check_with_sensor_inner(
     repo_state: builddiag_repo::RepoState,
     start: chrono::DateTime<Utc>,
     diff_aware_used: bool,
+    substrate_used: bool,
 ) -> Result<SensorCheckRun> {
     // Determine capability states from repo
     let has_toolchain = repo_state.toolchain.is_some();
@@ -579,13 +395,24 @@ fn run_check_with_sensor_inner(
     let exit_code = exit_code_for(verdict, config.defaults.fail_on);
 
     // Build capabilities and sensor report
-    let capabilities = build_capabilities(
-        config,
-        git_info.as_ref(),
-        has_toolchain,
-        has_checksums,
-        diff_aware_used,
-    );
+    let capabilities = if substrate_used {
+        build_capabilities_with_substrate(
+            config,
+            git_info.as_ref(),
+            has_toolchain,
+            has_checksums,
+            diff_aware_used,
+            substrate_used,
+        )
+    } else {
+        build_capabilities(
+            config,
+            git_info.as_ref(),
+            has_toolchain,
+            has_checksums,
+            diff_aware_used,
+        )
+    };
 
     let sensor_report = report_to_sensor(&report, &checks, capabilities, vec![]);
 
@@ -616,12 +443,23 @@ pub fn run_check_with_sensor_from_repo_state(
     let start = Utc::now();
     let diff_aware_used = repo_state.changed_files.is_some();
 
-    run_check_with_sensor_inner(root, config, allow_all, repo_state, start, diff_aware_used)
+    run_check_with_sensor_inner(
+        root,
+        config,
+        allow_all,
+        repo_state,
+        start,
+        diff_aware_used,
+        true,
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use builddiag_types::{
+        Artifact, Capability, Finding, SENSOR_REPORT_SCHEMA_V1, Severity, Verdict,
+    };
     use camino::Utf8PathBuf;
     use tempfile::TempDir;
 
@@ -1379,11 +1217,38 @@ diff_aware = "yes"
                 .expect("path should be valid UTF-8");
             let config = Config::default();
             let repo_state = builddiag_repo::load_repo_state(&root, &config, None).unwrap();
-            let result =
-                run_check_with_sensor_inner(&root, &config, true, repo_state, Utc::now(), false);
+            let result = run_check_with_sensor_inner(
+                &root,
+                &config,
+                true,
+                repo_state,
+                Utc::now(),
+                false,
+                false,
+            );
             assert!(result.is_err());
             let err_msg = format!("{:#}", result.err().expect("expected error"));
             assert!(err_msg.contains("Cargo.toml") || err_msg.contains("read"));
+        }
+
+        #[cfg(feature = "with-substrate")]
+        #[test]
+        fn run_check_with_sensor_from_repo_state_marks_substrate_capability() {
+            let (_temp, root) = create_minimal_repo();
+            let config = Config::default();
+            let repo_state = builddiag_repo::load_repo_state(&root, &config, None).unwrap();
+            let run =
+                run_check_with_sensor_from_repo_state(&root, &config, false, repo_state).unwrap();
+
+            let capabilities = run
+                .sensor_report
+                .run
+                .expect("sensor run should be present")
+                .capabilities;
+            assert!(
+                capabilities.contains_key("substrate"),
+                "expected substrate capability marker from repo-state path"
+            );
         }
     }
 

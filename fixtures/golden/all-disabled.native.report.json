@@ -2,19 +2,19 @@
   "schema": "builddiag.report.v1",
   "tool": {
     "name": "builddiag",
-    "version": "0.2.0"
+    "version": "0.3.0"
   },
   "run": {
-    "started_at": "2026-04-03T05:00:15.613698915Z",
-    "ended_at": "2026-04-03T05:00:15.633582193Z",
-    "duration_ms": 19,
+    "started_at": "2026-06-20T07:34:32.072000200Z",
+    "ended_at": "2026-06-20T07:34:32.142116600Z",
+    "duration_ms": 70,
     "host": {
-      "os": "linux",
+      "os": "windows",
       "arch": "x86_64"
     },
     "git": {
-      "commit": "13fcd4ee6d26e596f63b9815fa6f0e7b39f2a34d",
-      "branch": "claude/fix-ci-parallel-agents-4NLDA",
+      "commit": "19ed65f87ee102d97d91c5a79dc46192d573f8cb",
+      "branch": "add-fix-watch-hooks-crates",
       "dirty": true
     }
   },

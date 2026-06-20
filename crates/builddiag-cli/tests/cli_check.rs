@@ -1093,6 +1093,110 @@ fn cockpit_mode_explicit_out_skips_default() {
     );
 }
 
+/// Test: inline `builddiag:ignore` comments in Cargo.toml suppress targeted findings.
+#[test]
+fn check_inline_suppression_comment_filters_matching_finding() {
+    let dir = TempDir::new().unwrap();
+
+    write_file(
+        &dir,
+        "Cargo.toml",
+        r#"[workspace]
+resolver = "2"
+members = ["crates/a"]
+
+[workspace.package]
+rust-version = "1.75.0"
+edition = "2021"
+"#,
+    );
+    write_file(
+        &dir,
+        "crates/a/Cargo.toml",
+        r#"[package]
+name = "a"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+serde = "*"
+"#,
+    );
+    write_file(&dir, "crates/a/src/lib.rs", "pub fn a() {}\n");
+    write_file(
+        &dir,
+        "rust-toolchain.toml",
+        r#"[toolchain]
+channel = "1.75.0"
+"#,
+    );
+    write_file(&dir, "scripts/tools.sha256", "");
+
+    let mut first = get_builddiag_cmd();
+    first
+        .arg("check")
+        .arg("--root")
+        .arg(dir.path())
+        .arg("--profile")
+        .arg("strict")
+        .arg("--always");
+    first.assert().code(2);
+
+    let report_path = dir.path().join("artifacts/builddiag/report.json");
+    let first_report: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&report_path).unwrap()).unwrap();
+    let first_findings = first_report["findings"].as_array().unwrap();
+    assert!(
+        first_findings
+            .iter()
+            .any(|f| f["code"].as_str() == Some("wildcard_version")),
+        "wildcard_version should be present before suppression"
+    );
+
+    write_file(
+        &dir,
+        "crates/a/Cargo.toml",
+        r#"[package]
+name = "a"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+serde = "*" # builddiag:ignore wildcard_version
+"#,
+    );
+
+    let mut second = get_builddiag_cmd();
+    second
+        .arg("check")
+        .arg("--root")
+        .arg(dir.path())
+        .arg("--profile")
+        .arg("strict")
+        .arg("--always");
+    second.assert().success().code(0);
+
+    let second_report: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&report_path).unwrap()).unwrap();
+    let second_findings = second_report["findings"].as_array().unwrap();
+    assert!(
+        second_findings
+            .iter()
+            .all(|f| f["code"].as_str() != Some("wildcard_version")),
+        "wildcard_version should be suppressed by inline comment"
+    );
+    assert_eq!(
+        second_report["data"]["inline_suppressions"]["suppressed"]
+            .as_u64()
+            .unwrap_or(0),
+        1
+    );
+}
+
 // =============================================================================
 // Error message tests
 // =============================================================================

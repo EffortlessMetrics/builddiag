@@ -1,0 +1,21 @@
+[package]
+name = "builddiag-output-contract"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Validation helpers for builddiag report contracts (builddiag.report.v1 / sensor.report.v1)"
+documentation = "https://docs.rs/builddiag-output-contract"
+keywords = ["rust", "builddiag", "report", "contract", "sensor"]
+categories = ["development-tools"]
+
+[dependencies]
+anyhow.workspace = true
+serde_json.workspace = true
+builddiag-types = { path = "../builddiag-types", version = "0.3.0" }
+
+[features]
+default = ["report", "sensor"]
+report = []
+sensor = []

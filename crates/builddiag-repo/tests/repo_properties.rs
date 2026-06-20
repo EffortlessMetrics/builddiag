@@ -5,111 +5,22 @@
 //! - No duplicates: each manifest appears exactly once
 //! - Glob expansion correctness: patterns match expected directories
 
-use builddiag_repo::{discover_workspace, normalize_slashes, to_repo_relative};
-use camino::{Utf8Path, Utf8PathBuf};
+use builddiag_repo::discover_workspace;
+use builddiag_testkit::repo::{is_windows_reserved, make_package_toml, make_workspace_toml};
+use camino::Utf8PathBuf;
 use proptest::prelude::*;
 use std::collections::HashSet;
 use tempfile::TempDir;
 
 // ============================================================================
-// Path Normalization Properties
-// ============================================================================
-
-proptest! {
-    /// Property: normalize_slashes is idempotent
-    #[test]
-    fn prop_normalize_slashes_idempotent(path in "[a-z/\\\\]+") {
-        let once = normalize_slashes(&path);
-        let twice = normalize_slashes(&once);
-        prop_assert_eq!(once, twice);
-    }
-
-    /// Property: normalize_slashes never contains backslashes
-    #[test]
-    fn prop_normalize_slashes_no_backslashes(path in "[a-z/\\\\]+") {
-        let normalized = normalize_slashes(&path);
-        prop_assert!(!normalized.contains('\\'));
-    }
-
-    /// Property: normalize_slashes preserves path segments
-    #[test]
-    fn prop_normalize_slashes_preserves_segments(segments in prop::collection::vec("[a-z]+", 1..5)) {
-        // Join with backslashes
-        let backslash_path = segments.join("\\");
-        // Join with forward slashes
-        let forward_path = segments.join("/");
-
-        let normalized = normalize_slashes(&backslash_path);
-        prop_assert_eq!(normalized, forward_path);
-    }
-}
-
-// ============================================================================
 // Workspace Discovery Properties
 // ============================================================================
-
-/// Helper to create a minimal Cargo.toml for a package.
-fn make_package_toml(name: &str) -> String {
-    format!(
-        r#"[package]
-name = "{name}"
-version = "0.1.0"
-edition = "2021"
-"#
-    )
-}
-
-/// Helper to create a workspace Cargo.toml with members.
-fn make_workspace_toml(members: &[&str]) -> String {
-    let members_str: Vec<String> = members.iter().map(|m| format!("\"{}\"", m)).collect();
-    format!(
-        r#"[workspace]
-resolver = "2"
-members = [
-    {}
-]
-"#,
-        members_str.join(",\n    ")
-    )
-}
 
 /// Strategy for generating valid crate names (lowercase alphanumeric with hyphens).
 fn crate_name_strategy() -> impl Strategy<Value = String> {
     "[a-z][a-z0-9-]{0,10}[a-z0-9]?".prop_filter("non-empty and valid", |s| {
         !s.is_empty() && !s.starts_with('-') && !s.ends_with('-') && !is_windows_reserved(s)
     })
-}
-
-/// Returns `true` if the name is a Windows reserved device name.
-///
-/// These names (CON, PRN, AUX, NUL, COM1-9, LPT1-9) cannot be used as
-/// file or directory names on Windows and will cause I/O failures.
-fn is_windows_reserved(name: &str) -> bool {
-    matches!(
-        name.to_ascii_uppercase().as_str(),
-        "CON"
-            | "PRN"
-            | "AUX"
-            | "NUL"
-            | "COM1"
-            | "COM2"
-            | "COM3"
-            | "COM4"
-            | "COM5"
-            | "COM6"
-            | "COM7"
-            | "COM8"
-            | "COM9"
-            | "LPT1"
-            | "LPT2"
-            | "LPT3"
-            | "LPT4"
-            | "LPT5"
-            | "LPT6"
-            | "LPT7"
-            | "LPT8"
-            | "LPT9"
-    )
 }
 
 /// Strategy for generating a set of unique crate names.
@@ -345,32 +256,6 @@ exclude = ["crates/{}"]
                 "Included path {} should be in results",
                 included_path
             );
-        }
-    }
-}
-
-// ============================================================================
-// to_repo_relative Properties
-// ============================================================================
-
-proptest! {
-    /// Property: to_repo_relative result never starts with the root path
-    #[test]
-    fn prop_repo_relative_removes_root(
-        root_segments in prop::collection::vec("[a-z]+", 2..4),
-        file_segments in prop::collection::vec("[a-z]+", 1..3)
-    ) {
-        let root_path = format!("/{}", root_segments.join("/"));
-        let file_path = format!("{}/{}", root_path, file_segments.join("/"));
-
-        let root = Utf8Path::new(&root_path);
-        let file = Utf8Path::new(&file_path);
-
-        let relative = to_repo_relative(root, file);
-
-        // Result should not start with a slash (unless it's not under root)
-        if file_path.starts_with(&root_path) {
-            prop_assert!(!relative.starts_with('/'), "Relative path should not start with /: {}", relative);
         }
     }
 }

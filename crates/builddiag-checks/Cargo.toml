@@ -5,29 +5,45 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "Internal checks for builddiag (not intended for direct use)"
-keywords = ["rust", "build", "validation", "lint"]
+description = "Check registry and implementations for builddiag workspace contract validation"
+readme = "README.md"
+documentation = "https://docs.rs/builddiag-checks"
+keywords = ["rust", "builddiag", "lint", "policy", "workspace"]
 categories = ["development-tools"]
 
 [features]
-default = ["parallel"]
+default = ["parallel", "msrv", "toolchain", "checksums", "workspace", "deps", "publish"]
 parallel = ["dep:rayon"]
-security = ["dep:rustsec"]
+security = ["builddiag-checks-deps/security"]
+msrv = ["builddiag-checks-catalog/msrv"]
+toolchain = ["builddiag-checks-catalog/toolchain"]
+checksums = [
+    "builddiag-checks-catalog/checksums",
+    "builddiag-checks-checksums",
+]
+workspace = ["builddiag-checks-catalog/workspace"]
+deps = [
+    "builddiag-checks-catalog/deps",
+    "builddiag-checks-deps",
+]
+publish = ["builddiag-checks-catalog/publish"]
 
 [dependencies]
 anyhow.workspace = true
 globset.workspace = true
-sha2.workspace = true
-hex.workspace = true
-builddiag-types = { path = "../builddiag-types", version = "0.2.0" }
-builddiag-domain = { path = "../builddiag-domain", version = "0.2.0" }
-builddiag-repo = { path = "../builddiag-repo", version = "0.2.0" }
-depguard = { path = "../depguard", version = "0.2.0" }
+builddiag-types = { path = "../builddiag-types", version = "0.3.0" }
+builddiag-domain = { path = "../builddiag-domain", version = "0.3.0" }
+builddiag-repo = { path = "../builddiag-repo", version = "0.3.0" }
+builddiag-paths = { path = "../builddiag-paths", version = "0.3.0" }
+builddiag-checks-deps = { path = "../builddiag-checks-deps", version = "0.3.0", optional = true }
+builddiag-checks-checksums = { path = "../builddiag-checks-checksums", version = "0.3.0", optional = true }
+builddiag-checks-catalog = { path = "../builddiag-checks-catalog", version = "0.3.0" }
 camino.workspace = true
 rayon = { workspace = true, optional = true }
-rustsec = { workspace = true, optional = true }
 toml.workspace = true
 
 [dev-dependencies]
 proptest = "1.4"
+sha2.workspace = true
+hex.workspace = true
 tempfile.workspace = true

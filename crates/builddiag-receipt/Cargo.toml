@@ -1,0 +1,25 @@
+[package]
+name = "builddiag-receipt"
+description = "Receipt and sensor interoperability primitives for builddiag"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+documentation = "https://docs.rs/builddiag-receipt"
+keywords = ["rust", "builddiag", "receipt", "sensor", "ci"]
+categories = ["development-tools", "command-line-utilities"]
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+builddiag-domain = { path = "../builddiag-domain", version = "0.3.0" }
+builddiag-types = { path = "../builddiag-types", version = "0.3.0" }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[features]
+default = ["with-substrate"]
+with-substrate = []

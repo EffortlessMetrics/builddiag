@@ -5,8 +5,10 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "Dependency hygiene sensor for Rust workspaces (used by builddiag)"
-keywords = ["rust", "dependencies", "lint", "workspace"]
+description = "Dependency hygiene checks for Cargo workspaces (wildcards, path versions, inheritance)"
+readme = "README.md"
+documentation = "https://docs.rs/depguard"
+keywords = ["rust", "dependencies", "workspace", "cargo", "lint"]
 categories = ["development-tools"]
 
 [dependencies]

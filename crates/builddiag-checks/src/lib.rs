@@ -28,8 +28,12 @@
 //! Use [`CHECK_DOCS`] to access documentation for all available checks,
 //! including descriptions, remediation help, and related finding codes.
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Result, anyhow};
+pub use builddiag_checks_catalog::{
+    BUILTIN_CHECKS, CHECK_DOCS, CheckDef, CheckDocumentation, explain_check,
+};
 use builddiag_domain::{check_status_from_findings, parse_rust_version};
+use builddiag_paths::to_repo_relative;
 use builddiag_repo::{RepoState, maybe_parse_numeric_version};
 use builddiag_types::{
     CheckConfig, CheckReport, CheckStatus, Config, Finding, Location, RelationToMsrv, Severity,
@@ -38,367 +42,7 @@ use builddiag_types::{
 use globset::{Glob, GlobSet, GlobSetBuilder};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
-use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, BTreeSet, HashSet};
-use std::fs;
-
-/// Documentation for a check, used by the `explain` subcommand.
-#[derive(Debug, Clone)]
-pub struct CheckDocumentation {
-    /// Check ID (e.g., "rust.msrv_defined").
-    pub id: &'static str,
-    /// Human-readable name.
-    pub name: &'static str,
-    /// Detailed description of what the check validates.
-    pub description: &'static str,
-    /// Short help text for remediation.
-    pub help: &'static str,
-    /// Optional documentation URL.
-    pub url: Option<&'static str>,
-    /// Finding codes this check can produce.
-    pub codes: &'static [&'static str],
-}
-
-/// Registry of check documentation.
-pub static CHECK_DOCS: &[CheckDocumentation] = &[
-    CheckDocumentation {
-        id: "rust.msrv_defined",
-        name: "MSRV Defined",
-        description: "Validates that the Minimum Supported Rust Version (MSRV) is explicitly \
-                      defined in Cargo.toml. MSRV helps users and CI systems know which Rust \
-                      version is required to build your crate.",
-        help: "Add `rust-version = \"1.XX.0\"` to your workspace Cargo.toml under \
-               [workspace.package] or [package].",
-        url: Some("https://doc.rust-lang.org/cargo/reference/manifest.html#the-rust-version-field"),
-        codes: &["missing_msrv", "invalid_msrv_defined"],
-    },
-    CheckDocumentation {
-        id: "rust.msrv_consistent",
-        name: "MSRV Consistent",
-        description: "Validates that all workspace members have consistent MSRV values. \
-                      Inconsistent MSRV across crates can cause confusing build failures.",
-        help: "Ensure all crates either inherit from workspace.package.rust-version or \
-               explicitly set the same rust-version.",
-        url: Some("https://doc.rust-lang.org/cargo/reference/workspaces.html"),
-        codes: &[
-            "invalid_msrv",
-            "missing_member_msrv",
-            "invalid_member_msrv",
-            "msrv_mismatch",
-        ],
-    },
-    CheckDocumentation {
-        id: "rust.toolchain_pinning",
-        name: "Toolchain Pinning",
-        description: "Validates that rust-toolchain.toml pins the Rust version to a specific \
-                      release (e.g., \"1.75.0\") rather than a moving target like \"stable\".",
-        help: "Create rust-toolchain.toml with `channel = \"1.XX.0\"` to pin the version.",
-        url: Some("https://rust-lang.github.io/rustup/overrides.html#the-toolchain-file"),
-        codes: &[
-            "missing_toolchain",
-            "nightly_disallowed",
-            "unpinned_channel",
-            "invalid_toolchain_version",
-        ],
-    },
-    CheckDocumentation {
-        id: "rust.toolchain_msrv_relation",
-        name: "Toolchain-MSRV Relation",
-        description: "Validates that the pinned toolchain version matches or exceeds the MSRV. \
-                      This ensures CI tests against the version users will actually use.",
-        help: "Set your toolchain channel to match your MSRV, or configure \
-               policy.toolchain.relation_to_msrv = \"at_least\" to allow newer toolchains.",
-        url: None,
-        codes: &["toolchain_msrv_mismatch"],
-    },
-    CheckDocumentation {
-        id: "tools.checksums_file_exists",
-        name: "Checksums File Exists",
-        description: "Validates that the tools checksums file (scripts/tools.sha256) exists. \
-                      This file contains SHA256 hashes for tool binaries to verify integrity.",
-        help: "Create scripts/tools.sha256 with checksums in the format: \
-               `<sha256hash>  <filepath>`",
-        url: None,
-        codes: &["missing_checksums"],
-    },
-    CheckDocumentation {
-        id: "tools.checksums_format",
-        name: "Checksums Format",
-        description: "Validates that the checksums file has valid format: 64-character hex \
-                      SHA256 hashes followed by file paths, no duplicates.",
-        help: "Ensure each line follows the format: `<64-char-sha256>  <filepath>`. \
-               Generate with: `sha256sum <file>`",
-        url: None,
-        codes: &["invalid_hash", "missing_path", "duplicate_path"],
-    },
-    CheckDocumentation {
-        id: "tools.checksums_coverage",
-        name: "Checksums Coverage",
-        description: "Validates that all tool files listed in the tools manifest have \
-                      corresponding checksum entries.",
-        help: "Add missing checksums for all files listed in scripts/tools.toml.",
-        url: None,
-        codes: &["missing_checksum", "unexpected_checksum"],
-    },
-    CheckDocumentation {
-        id: "tools.checksums_verify_local",
-        name: "Checksums Verify Local",
-        description: "Verifies that local tool files match their recorded checksums. \
-                      Detects tampering or corruption of tool binaries.",
-        help: "Re-download or regenerate tools with mismatched checksums, then update \
-               scripts/tools.sha256.",
-        url: None,
-        codes: &["missing_tool_file", "hash_mismatch"],
-    },
-    CheckDocumentation {
-        id: "workspace.resolver_v2",
-        name: "Workspace Resolver v2",
-        description: "Validates that Cargo workspaces use resolver version 2. Resolver v2 \
-                      has better feature unification and is required for edition 2021+.",
-        help: "Add `resolver = \"2\"` to your [workspace] section in Cargo.toml.",
-        url: Some(
-            "https://doc.rust-lang.org/cargo/reference/resolver.html#feature-resolver-version-2",
-        ),
-        codes: &["resolver_not_v2"],
-    },
-    CheckDocumentation {
-        id: "deps.wildcard_version",
-        name: "No Wildcard Versions",
-        description: "Validates that dependencies do not use wildcard version specifications (\"*\"). \
-                      Wildcard versions are fragile and can cause unexpected breakage.",
-        help: "Replace `foo = \"*\"` with a specific version like `foo = \"1.0\"`.",
-        url: None,
-        codes: &["wildcard_version"],
-    },
-    CheckDocumentation {
-        id: "deps.path_missing_version",
-        name: "Path Dependencies Have Version",
-        description: "Validates that path dependencies also specify a version. Path-only \
-                      dependencies cannot be published to crates.io.",
-        help: "Add a version field: `foo = { path = \"../foo\", version = \"0.1\" }`.",
-        url: None,
-        codes: &["path_missing_version"],
-    },
-    CheckDocumentation {
-        id: "deps.workspace_inheritance",
-        name: "Workspace Inheritance",
-        description: "Suggests using workspace dependency inheritance when a dependency is \
-                      defined in workspace.dependencies.",
-        help: "Use `foo.workspace = true` instead of duplicating the version.",
-        url: None,
-        codes: &["missing_workspace_inheritance"],
-    },
-    CheckDocumentation {
-        id: "workspace.edition_consistent",
-        name: "Edition Consistent",
-        description: "Validates that all workspace members use the same Rust edition. \
-                      Inconsistent editions across crates can cause confusing behavior differences.",
-        help: "Ensure all crates either inherit from workspace.package.edition or \
-               explicitly set the same edition.",
-        url: Some("https://doc.rust-lang.org/edition-guide/"),
-        codes: &[
-            "invalid_workspace_edition",
-            "missing_member_edition",
-            "invalid_member_edition",
-            "edition_mismatch",
-        ],
-    },
-    CheckDocumentation {
-        id: "workspace.member_ordering",
-        name: "Member Ordering",
-        description: "Validates that workspace members in [workspace.members] are sorted \
-                      alphabetically. Sorted members improve readability and reduce merge conflicts.",
-        help: "Sort the members array alphabetically in Cargo.toml.",
-        url: None,
-        codes: &["members_not_sorted"],
-    },
-    CheckDocumentation {
-        id: "deps.lockfile_present",
-        name: "Lockfile Present",
-        description: "Validates that Cargo.lock exists for binary crates. \
-                      A lockfile ensures reproducible builds for applications.",
-        help: "Run `cargo build` to generate Cargo.lock and commit it to version control.",
-        url: Some(
-            "https://doc.rust-lang.org/cargo/faq.html#why-do-binaries-have-cargolock-in-version-control-but-not-libraries",
-        ),
-        codes: &[
-            "missing_lockfile_for_binary",
-            "unexpected_lockfile_for_library",
-        ],
-    },
-    CheckDocumentation {
-        id: "workspace.publish_ready",
-        name: "Publish Ready",
-        description: "Validates that publishable crates have required metadata for crates.io. \
-                      Required fields include description and license (or license-file). \
-                      Recommended fields include repository, documentation, and keywords.",
-        help: "Add the missing metadata fields to your Cargo.toml [package] section.",
-        url: Some("https://doc.rust-lang.org/cargo/reference/manifest.html#the-package-section"),
-        codes: &[
-            "missing_description",
-            "missing_license",
-            "missing_repository",
-            "missing_documentation",
-            "missing_readme",
-        ],
-    },
-    CheckDocumentation {
-        id: "rust.edition_deprecations",
-        name: "Edition Deprecations",
-        description: "Warns about deprecated edition features and migration opportunities. \
-                      Older editions may have deprecated syntax or missing modern features.",
-        help: "Consider migrating to a newer Rust edition using `cargo fix --edition`.",
-        url: Some("https://doc.rust-lang.org/edition-guide/"),
-        codes: &["deprecated_edition", "edition_migration_available"],
-    },
-    CheckDocumentation {
-        id: "deps.duplicate_versions",
-        name: "Duplicate Dependency Versions",
-        description: "Detects when the same dependency is specified with different versions \
-                      across workspace members. This can lead to larger binaries and \
-                      potential compatibility issues.",
-        help: "Unify dependency versions using [workspace.dependencies] inheritance.",
-        url: Some(
-            "https://doc.rust-lang.org/cargo/reference/workspaces.html#the-dependencies-table",
-        ),
-        codes: &["duplicate_dependency_version"],
-    },
-    CheckDocumentation {
-        id: "deps.security_advisory",
-        name: "Security Advisory",
-        description: "Checks dependencies against the RustSec advisory database for known \
-                      security vulnerabilities. Requires the 'security' feature to be enabled.",
-        help: "Update affected dependencies to patched versions or review advisories for mitigations.",
-        url: Some("https://rustsec.org/"),
-        codes: &[
-            "security_vulnerability",
-            "security_unmaintained",
-            "security_yanked",
-        ],
-    },
-];
-
-/// Look up documentation for a check ID or finding code.
-///
-/// Returns `Some(CheckDocumentation)` if found, `None` otherwise.
-pub fn explain_check(check_or_code: &str) -> Option<&'static CheckDocumentation> {
-    // First try exact match on check ID
-    if let Some(doc) = CHECK_DOCS.iter().find(|d| d.id == check_or_code) {
-        return Some(doc);
-    }
-
-    // Then try finding by code
-    CHECK_DOCS.iter().find(|d| d.codes.contains(&check_or_code))
-}
-
-pub struct CheckDef {
-    pub id: &'static str,
-    pub default_severity: Severity,
-    pub default_triggers: &'static [&'static str],
-}
-
-pub const BUILTIN_CHECKS: &[CheckDef] = &[
-    CheckDef {
-        id: "rust.msrv_defined",
-        default_severity: Severity::Error,
-        default_triggers: &["Cargo.toml", "**/Cargo.toml"],
-    },
-    CheckDef {
-        id: "rust.msrv_consistent",
-        default_severity: Severity::Error,
-        default_triggers: &["Cargo.toml", "**/Cargo.toml"],
-    },
-    CheckDef {
-        id: "rust.toolchain_pinning",
-        default_severity: Severity::Error,
-        default_triggers: &["rust-toolchain", "rust-toolchain.toml"],
-    },
-    CheckDef {
-        id: "rust.toolchain_msrv_relation",
-        default_severity: Severity::Error,
-        default_triggers: &[
-            "rust-toolchain",
-            "rust-toolchain.toml",
-            "Cargo.toml",
-            "**/Cargo.toml",
-        ],
-    },
-    CheckDef {
-        id: "tools.checksums_file_exists",
-        default_severity: Severity::Error,
-        default_triggers: &["scripts/tools.sha256"],
-    },
-    CheckDef {
-        id: "tools.checksums_format",
-        default_severity: Severity::Error,
-        default_triggers: &["scripts/tools.sha256"],
-    },
-    CheckDef {
-        id: "tools.checksums_coverage",
-        default_severity: Severity::Error,
-        default_triggers: &["scripts/tools.sha256", "scripts/tools.toml"],
-    },
-    CheckDef {
-        id: "tools.checksums_verify_local",
-        default_severity: Severity::Warn,
-        default_triggers: &["scripts/tools.sha256"],
-    },
-    CheckDef {
-        id: "workspace.resolver_v2",
-        default_severity: Severity::Warn,
-        default_triggers: &["Cargo.toml"],
-    },
-    CheckDef {
-        id: "deps.wildcard_version",
-        default_severity: Severity::Warn,
-        default_triggers: &["Cargo.toml", "**/Cargo.toml"],
-    },
-    CheckDef {
-        id: "deps.path_missing_version",
-        default_severity: Severity::Warn,
-        default_triggers: &["Cargo.toml", "**/Cargo.toml"],
-    },
-    CheckDef {
-        id: "deps.workspace_inheritance",
-        default_severity: Severity::Info,
-        default_triggers: &["Cargo.toml", "**/Cargo.toml"],
-    },
-    CheckDef {
-        id: "workspace.edition_consistent",
-        default_severity: Severity::Error,
-        default_triggers: &["Cargo.toml", "**/Cargo.toml"],
-    },
-    CheckDef {
-        id: "workspace.member_ordering",
-        default_severity: Severity::Info,
-        default_triggers: &["Cargo.toml"],
-    },
-    CheckDef {
-        id: "deps.lockfile_present",
-        default_severity: Severity::Warn,
-        default_triggers: &["Cargo.lock", "Cargo.toml"],
-    },
-    CheckDef {
-        id: "workspace.publish_ready",
-        default_severity: Severity::Warn,
-        default_triggers: &["Cargo.toml", "**/Cargo.toml"],
-    },
-    CheckDef {
-        id: "rust.edition_deprecations",
-        default_severity: Severity::Info,
-        default_triggers: &["Cargo.toml", "**/Cargo.toml"],
-    },
-    CheckDef {
-        id: "deps.duplicate_versions",
-        default_severity: Severity::Warn,
-        default_triggers: &["Cargo.toml", "**/Cargo.toml", "Cargo.lock"],
-    },
-    CheckDef {
-        id: "deps.security_advisory",
-        default_severity: Severity::Error,
-        default_triggers: &["Cargo.lock", "Cargo.toml"],
-    },
-];
+use std::collections::{BTreeSet, HashSet};
 
 /// Information needed to run a single check.
 struct CheckTask<'a> {
@@ -475,20 +119,30 @@ fn execute_check(task: &CheckTask, repo: &RepoState, config: &Config) -> Result<
         "rust.msrv_consistent" => check_msrv_consistent(repo, config, severity)?,
         "rust.toolchain_pinning" => check_toolchain_pinning(repo, config, severity)?,
         "rust.toolchain_msrv_relation" => check_toolchain_msrv_relation(repo, config, severity)?,
+        #[cfg(feature = "checksums")]
         "tools.checksums_file_exists" => check_checksums_file_exists(repo, config, severity)?,
+        #[cfg(feature = "checksums")]
         "tools.checksums_format" => check_checksums_format(repo, config, severity)?,
+        #[cfg(feature = "checksums")]
         "tools.checksums_coverage" => check_checksums_coverage(repo, config, severity)?,
+        #[cfg(feature = "checksums")]
         "tools.checksums_verify_local" => check_checksums_verify_local(repo, config, severity)?,
         "workspace.resolver_v2" => check_workspace_resolver(repo, config, severity)?,
+        #[cfg(feature = "deps")]
         "deps.wildcard_version" => check_deps_wildcard(repo, config, severity)?,
+        #[cfg(feature = "deps")]
         "deps.path_missing_version" => check_deps_path_version(repo, config, severity)?,
+        #[cfg(feature = "deps")]
         "deps.workspace_inheritance" => check_deps_workspace_inheritance(repo, config, severity)?,
         "workspace.edition_consistent" => check_edition_consistent(repo, config, severity)?,
         "workspace.member_ordering" => check_member_ordering(repo, config, severity)?,
+        #[cfg(feature = "deps")]
         "deps.lockfile_present" => check_lockfile_present(repo, config, severity)?,
         "workspace.publish_ready" => check_publish_ready(repo, config, severity)?,
         "rust.edition_deprecations" => check_edition_deprecations(repo, config, severity)?,
+        #[cfg(feature = "deps")]
         "deps.duplicate_versions" => check_duplicate_versions(repo, config, severity)?,
+        #[cfg(feature = "deps")]
         "deps.security_advisory" => check_security_advisory(repo, config, severity)?,
         _ => return Err(anyhow!("unknown check id: {}", task.def.id)),
     };
@@ -943,246 +597,40 @@ fn check_toolchain_msrv_relation(
     })
 }
 
+#[cfg(feature = "checksums")]
 fn check_checksums_file_exists(
     repo: &RepoState,
     config: &Config,
     default_sev: Severity,
 ) -> Result<CheckReport> {
-    let mut findings = Vec::new();
-    if repo.tools_checksums.is_none() && config.policy.checksums.require_file {
-        findings.push(mk_finding(
-            default_sev,
-            "tools.checksums_file_exists",
-            "missing_checksums",
-            "Missing scripts/tools.sha256",
-            Some(config.paths.tools_checksums.clone()),
-            None,
-        ));
-    }
-
-    Ok(CheckReport {
-        id: "tools.checksums_file_exists".to_string(),
-        status: check_status_from_findings(&findings),
-        findings,
-        skipped_reason: None,
-        skipped_detail: None,
-    })
+    builddiag_checks_checksums::check_checksums_file_exists(repo, config, default_sev)
 }
 
+#[cfg(feature = "checksums")]
 fn check_checksums_format(
     repo: &RepoState,
     _config: &Config,
     default_sev: Severity,
 ) -> Result<CheckReport> {
-    let Some(cks) = &repo.tools_checksums else {
-        return Ok(CheckReport {
-            id: "tools.checksums_format".to_string(),
-            status: CheckStatus::Skip,
-            findings: Vec::new(),
-            skipped_reason: Some(check_skip_reasons::MISSING_PREREQUISITE.to_string()),
-            skipped_detail: Some("no checksums file".to_string()),
-        });
-    };
-
-    let mut findings = Vec::new();
-    let mut seen_paths = HashSet::new();
-
-    for e in &cks.entries {
-        let rel = rel_path(&repo.root, &cks.path);
-
-        // Hash must be 64 hex chars.
-        if e.hash.len() != 64 || hex::decode(&e.hash).is_err() {
-            findings.push(mk_finding(
-                default_sev,
-                "tools.checksums_format",
-                "invalid_hash",
-                format!("Invalid sha256 hash for path '{}': '{}'", e.path, e.hash),
-                Some(rel.clone()),
-                Some(e.line as u32),
-            ));
-        }
-
-        if e.path.trim().is_empty() {
-            findings.push(mk_finding(
-                default_sev,
-                "tools.checksums_format",
-                "missing_path",
-                "Checksum line missing path",
-                Some(rel.clone()),
-                Some(e.line as u32),
-            ));
-        } else if !seen_paths.insert(e.path.clone()) {
-            findings.push(mk_finding(
-                default_sev,
-                "tools.checksums_format",
-                "duplicate_path",
-                format!("Duplicate checksum entry for path '{}'", e.path),
-                Some(rel.clone()),
-                Some(e.line as u32),
-            ));
-        }
-    }
-
-    Ok(CheckReport {
-        id: "tools.checksums_format".to_string(),
-        status: check_status_from_findings(&findings),
-        findings,
-        skipped_reason: None,
-        skipped_detail: None,
-    })
+    builddiag_checks_checksums::check_checksums_format(repo, _config, default_sev)
 }
 
+#[cfg(feature = "checksums")]
 fn check_checksums_coverage(
     repo: &RepoState,
     config: &Config,
     default_sev: Severity,
 ) -> Result<CheckReport> {
-    if !config.policy.checksums.require_coverage {
-        return Ok(CheckReport {
-            id: "tools.checksums_coverage".to_string(),
-            status: CheckStatus::Skip,
-            findings: Vec::new(),
-            skipped_reason: Some(check_skip_reasons::DISABLED_BY_POLICY.to_string()),
-            skipped_detail: Some("coverage not required by policy".to_string()),
-        });
-    }
-
-    let Some(cks) = &repo.tools_checksums else {
-        return Ok(CheckReport {
-            id: "tools.checksums_coverage".to_string(),
-            status: CheckStatus::Skip,
-            findings: Vec::new(),
-            skipped_reason: Some(check_skip_reasons::MISSING_PREREQUISITE.to_string()),
-            skipped_detail: Some("no checksums file".to_string()),
-        });
-    };
-
-    let Some((_manifest_path, manifest)) = &repo.tools_manifest else {
-        return Ok(CheckReport {
-            id: "tools.checksums_coverage".to_string(),
-            status: CheckStatus::Skip,
-            findings: Vec::new(),
-            skipped_reason: Some(check_skip_reasons::MISSING_PREREQUISITE.to_string()),
-            skipped_detail: Some("no tools manifest".to_string()),
-        });
-    };
-
-    let have: HashSet<String> = cks.entries.iter().map(|e| e.path.clone()).collect();
-    let mut expected = HashSet::new();
-    for t in &manifest.tool {
-        for f in &t.files {
-            expected.insert(f.clone());
-        }
-    }
-
-    let mut findings = Vec::new();
-
-    for f in expected.difference(&have) {
-        findings.push(mk_finding(
-            default_sev,
-            "tools.checksums_coverage",
-            "missing_checksum",
-            format!("Missing checksum entry for expected tool file '{}'", f),
-            Some(config.paths.tools_checksums.clone()),
-            None,
-        ));
-    }
-
-    // extras are usually benign; mark warn by default, still overrideable.
-    for f in have.difference(&expected) {
-        findings.push(mk_finding(
-            Severity::Warn,
-            "tools.checksums_coverage",
-            "unexpected_checksum",
-            format!(
-                "Checksum contains entry not present in tools manifest: '{}'",
-                f
-            ),
-            Some(config.paths.tools_checksums.clone()),
-            None,
-        ));
-    }
-
-    Ok(CheckReport {
-        id: "tools.checksums_coverage".to_string(),
-        status: check_status_from_findings(&findings),
-        findings,
-        skipped_reason: None,
-        skipped_detail: None,
-    })
+    builddiag_checks_checksums::check_checksums_coverage(repo, config, default_sev)
 }
 
+#[cfg(feature = "checksums")]
 fn check_checksums_verify_local(
     repo: &RepoState,
     config: &Config,
     default_sev: Severity,
 ) -> Result<CheckReport> {
-    if !config.policy.checksums.verify_local_files {
-        return Ok(CheckReport {
-            id: "tools.checksums_verify_local".to_string(),
-            status: CheckStatus::Skip,
-            findings: Vec::new(),
-            skipped_reason: Some(check_skip_reasons::DISABLED_BY_POLICY.to_string()),
-            skipped_detail: Some("local verification not enabled".to_string()),
-        });
-    }
-    let Some(cks) = &repo.tools_checksums else {
-        return Ok(CheckReport {
-            id: "tools.checksums_verify_local".to_string(),
-            status: CheckStatus::Skip,
-            findings: Vec::new(),
-            skipped_reason: Some(check_skip_reasons::MISSING_PREREQUISITE.to_string()),
-            skipped_detail: Some("no checksums file".to_string()),
-        });
-    };
-
-    let mut findings = Vec::new();
-
-    for e in &cks.entries {
-        let p = repo.root.join(&e.path);
-        if !p.exists() {
-            findings.push(mk_finding(
-                Severity::Warn,
-                "tools.checksums_verify_local",
-                "missing_tool_file",
-                format!(
-                    "Tool file '{}' not found on disk (skipping hash verify)",
-                    e.path
-                ),
-                Some(e.path.clone()),
-                None,
-            ));
-            continue;
-        }
-
-        let bytes = fs::read(&p).with_context(|| format!("read {}", p))?;
-        let mut hasher = Sha256::new();
-        hasher.update(&bytes);
-        let got = format!("{:x}", hasher.finalize());
-        let want = e.hash.to_ascii_lowercase();
-
-        if got != want {
-            findings.push(mk_finding(
-                default_sev,
-                "tools.checksums_verify_local",
-                "hash_mismatch",
-                format!(
-                    "Hash mismatch for '{}': expected {}, got {}",
-                    e.path, want, got
-                ),
-                Some(e.path.clone()),
-                None,
-            ));
-        }
-    }
-
-    Ok(CheckReport {
-        id: "tools.checksums_verify_local".to_string(),
-        status: check_status_from_findings(&findings),
-        findings,
-        skipped_reason: None,
-        skipped_detail: None,
-    })
+    builddiag_checks_checksums::check_checksums_verify_local(repo, config, default_sev)
 }
 
 fn check_workspace_resolver(
@@ -1420,183 +868,43 @@ fn check_member_ordering(
 }
 
 fn rel_path(root: &camino::Utf8Path, p: &camino::Utf8Path) -> String {
-    p.strip_prefix(root)
-        .ok()
-        .unwrap_or(p)
-        .as_str()
-        .replace('\\', "/")
+    to_repo_relative(root, p)
 }
 
+#[cfg(feature = "deps")]
 fn check_deps_wildcard(
     repo: &RepoState,
     _config: &Config,
     default_sev: Severity,
 ) -> Result<CheckReport> {
-    let depguard_config = depguard::Config {
-        check_wildcards: true,
-        check_path_version: false,
-        check_workspace_inheritance: false,
-        severity: depguard::Severity::Warn,
-        ignore: Vec::new(),
-    };
-
-    let depguard_findings = depguard::check_workspace(&repo.root, &depguard_config)?;
-
-    let findings: Vec<Finding> = depguard_findings
-        .into_iter()
-        .filter(|f| f.code == "wildcard_version")
-        .map(|f| {
-            mk_finding(
-                default_sev,
-                "deps.wildcard_version",
-                &f.code,
-                f.message,
-                f.path,
-                f.line,
-            )
-        })
-        .collect();
-
-    Ok(CheckReport {
-        id: "deps.wildcard_version".to_string(),
-        status: check_status_from_findings(&findings),
-        findings,
-        skipped_reason: None,
-        skipped_detail: None,
-    })
+    builddiag_checks_deps::check_deps_wildcard(repo, _config, default_sev)
 }
 
+#[cfg(feature = "deps")]
 fn check_deps_path_version(
     repo: &RepoState,
     _config: &Config,
     default_sev: Severity,
 ) -> Result<CheckReport> {
-    let depguard_config = depguard::Config {
-        check_wildcards: false,
-        check_path_version: true,
-        check_workspace_inheritance: false,
-        severity: depguard::Severity::Warn,
-        ignore: Vec::new(),
-    };
-
-    let depguard_findings = depguard::check_workspace(&repo.root, &depguard_config)?;
-
-    let findings: Vec<Finding> = depguard_findings
-        .into_iter()
-        .filter(|f| f.code == "path_missing_version")
-        .map(|f| {
-            mk_finding(
-                default_sev,
-                "deps.path_missing_version",
-                &f.code,
-                f.message,
-                f.path,
-                f.line,
-            )
-        })
-        .collect();
-
-    Ok(CheckReport {
-        id: "deps.path_missing_version".to_string(),
-        status: check_status_from_findings(&findings),
-        findings,
-        skipped_reason: None,
-        skipped_detail: None,
-    })
+    builddiag_checks_deps::check_deps_path_version(repo, _config, default_sev)
 }
 
+#[cfg(feature = "deps")]
 fn check_deps_workspace_inheritance(
     repo: &RepoState,
     _config: &Config,
     default_sev: Severity,
 ) -> Result<CheckReport> {
-    let depguard_config = depguard::Config {
-        check_wildcards: false,
-        check_path_version: false,
-        check_workspace_inheritance: true,
-        severity: depguard::Severity::Info,
-        ignore: Vec::new(),
-    };
-
-    let depguard_findings = depguard::check_workspace(&repo.root, &depguard_config)?;
-
-    let findings: Vec<Finding> = depguard_findings
-        .into_iter()
-        .filter(|f| f.code == "missing_workspace_inheritance")
-        .map(|f| {
-            mk_finding(
-                default_sev,
-                "deps.workspace_inheritance",
-                &f.code,
-                f.message,
-                f.path,
-                f.line,
-            )
-        })
-        .collect();
-
-    Ok(CheckReport {
-        id: "deps.workspace_inheritance".to_string(),
-        status: check_status_from_findings(&findings),
-        findings,
-        skipped_reason: None,
-        skipped_detail: None,
-    })
+    builddiag_checks_deps::check_deps_workspace_inheritance(repo, _config, default_sev)
 }
 
+#[cfg(feature = "deps")]
 fn check_lockfile_present(
     repo: &RepoState,
     _config: &Config,
     default_sev: Severity,
 ) -> Result<CheckReport> {
-    const CHECK_ID: &str = "deps.lockfile_present";
-    let mut findings = Vec::new();
-
-    // Determine if workspace has any binary targets
-    let has_any_binary = repo.workspace.members.iter().any(|m| m.has_binary_target);
-
-    if has_any_binary && !repo.lockfile_exists {
-        // Binary crate without Cargo.lock
-        let binary_crates: Vec<&str> = repo
-            .workspace
-            .members
-            .iter()
-            .filter(|m| m.has_binary_target)
-            .map(|m| m.name.as_str())
-            .collect();
-
-        let message = if binary_crates.len() == 1 {
-            format!(
-                "Cargo.lock is missing but crate '{}' has binary targets; \
-                 lockfile ensures reproducible builds",
-                binary_crates[0]
-            )
-        } else {
-            format!(
-                "Cargo.lock is missing but {} crates have binary targets ({}); \
-                 lockfile ensures reproducible builds",
-                binary_crates.len(),
-                binary_crates.join(", ")
-            )
-        };
-
-        findings.push(mk_finding(
-            default_sev,
-            CHECK_ID,
-            "missing_lockfile_for_binary",
-            message,
-            Some("Cargo.lock".to_string()),
-            None,
-        ));
-    }
-
-    Ok(CheckReport {
-        id: CHECK_ID.to_string(),
-        status: check_status_from_findings(&findings),
-        findings,
-        skipped_reason: None,
-        skipped_detail: None,
-    })
+    builddiag_checks_deps::check_lockfile_present(repo, _config, default_sev)
 }
 
 /// Check that publishable crates have required metadata.
@@ -1797,192 +1105,23 @@ fn check_edition_deprecations(
 }
 
 /// Check for duplicate dependency versions across workspace members.
+#[cfg(feature = "deps")]
 fn check_duplicate_versions(
     repo: &RepoState,
     _config: &Config,
     default_sev: Severity,
 ) -> Result<CheckReport> {
-    const CHECK_ID: &str = "deps.duplicate_versions";
-    let mut findings = Vec::new();
-
-    // Collect all dependency versions across workspace members
-    // Map: dependency name -> Map<version -> list of crates using it>
-    let mut dep_versions: BTreeMap<String, BTreeMap<String, Vec<String>>> = BTreeMap::new();
-
-    // Parse each member's Cargo.toml for dependencies
-    for m in &repo.workspace.members {
-        let manifest_txt = match fs::read_to_string(&m.manifest_path) {
-            Ok(txt) => txt,
-            Err(_) => continue,
-        };
-        let manifest: toml::Value = match toml::from_str(&manifest_txt) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-
-        // Check all dependency sections
-        for section in ["dependencies", "dev-dependencies", "build-dependencies"] {
-            if let Some(deps) = manifest.get(section).and_then(|d| d.as_table()) {
-                for (dep_name, dep_value) in deps {
-                    // Skip workspace inherited deps
-                    if let Some(table) = dep_value.as_table()
-                        && table
-                            .get("workspace")
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(false)
-                    {
-                        continue;
-                    }
-
-                    // Extract version
-                    let version = match dep_value {
-                        toml::Value::String(v) => Some(v.clone()),
-                        toml::Value::Table(t) => {
-                            t.get("version").and_then(|v| v.as_str()).map(String::from)
-                        }
-                        _ => None,
-                    };
-
-                    if let Some(ver) = version {
-                        dep_versions
-                            .entry(dep_name.clone())
-                            .or_default()
-                            .entry(ver)
-                            .or_default()
-                            .push(m.name.clone());
-                    }
-                }
-            }
-        }
-    }
-
-    // Find dependencies with multiple versions
-    for (dep_name, versions) in &dep_versions {
-        if versions.len() > 1 {
-            let version_list: Vec<String> = versions
-                .iter()
-                .map(|(ver, crates)| format!("{} (used by: {})", ver, crates.join(", ")))
-                .collect();
-
-            findings.push(mk_finding(
-                default_sev,
-                CHECK_ID,
-                "duplicate_dependency_version",
-                format!(
-                    "dependency '{}' has multiple versions: {}",
-                    dep_name,
-                    version_list.join("; ")
-                ),
-                Some("Cargo.toml".to_string()),
-                None,
-            ));
-        }
-    }
-
-    Ok(CheckReport {
-        id: CHECK_ID.to_string(),
-        status: check_status_from_findings(&findings),
-        findings,
-        skipped_reason: None,
-        skipped_detail: None,
-    })
+    builddiag_checks_deps::check_duplicate_versions(repo, _config, default_sev)
 }
 
 /// Check dependencies against RustSec advisory database.
-///
-/// This check is a placeholder that requires the `security` feature.
-/// When enabled, it will use the rustsec crate to check for vulnerabilities.
+#[cfg(feature = "deps")]
 fn check_security_advisory(
     repo: &RepoState,
-    _config: &Config,
-    _default_sev: Severity,
-) -> Result<CheckReport> {
-    const CHECK_ID: &str = "deps.security_advisory";
-
-    // Check if Cargo.lock exists (required for security scanning)
-    if !repo.lockfile_exists {
-        return Ok(CheckReport {
-            id: CHECK_ID.to_string(),
-            status: CheckStatus::Skip,
-            findings: Vec::new(),
-            skipped_reason: Some(check_skip_reasons::MISSING_PREREQUISITE.to_string()),
-            skipped_detail: Some(
-                "Cargo.lock not found; required for security scanning".to_string(),
-            ),
-        });
-    }
-
-    // Placeholder: Security check requires the rustsec crate
-    // For now, return a skip status indicating the feature is not enabled
-    #[cfg(not(feature = "security"))]
-    {
-        Ok(CheckReport {
-            id: CHECK_ID.to_string(),
-            status: CheckStatus::Skip,
-            findings: Vec::new(),
-            skipped_reason: Some(check_skip_reasons::FEATURE_NOT_AVAILABLE.to_string()),
-            skipped_detail: Some(
-                "security advisory check requires the 'security' feature to be enabled".to_string(),
-            ),
-        })
-    }
-
-    #[cfg(feature = "security")]
-    {
-        check_security_advisory_impl(repo, _config, _default_sev)
-    }
-}
-
-/// Implementation of security advisory check when the feature is enabled.
-#[cfg(feature = "security")]
-fn check_security_advisory_impl(
-    repo: &RepoState,
-    _config: &Config,
+    config: &Config,
     default_sev: Severity,
 ) -> Result<CheckReport> {
-    const CHECK_ID: &str = "deps.security_advisory";
-    let mut findings = Vec::new();
-
-    use rustsec::{Database, Lockfile};
-
-    // Load the advisory database
-    let db = Database::fetch().context("failed to fetch RustSec advisory database")?;
-
-    // Load Cargo.lock
-    let lockfile_path = repo.root.join("Cargo.lock");
-    let lockfile = Lockfile::load(&lockfile_path)
-        .with_context(|| format!("failed to load {}", lockfile_path))?;
-
-    // Check for vulnerabilities
-    let vulns = db.vulnerabilities(&lockfile);
-
-    for vuln in vulns.iter() {
-        let advisory = &vuln.advisory;
-        let pkg = &vuln.package;
-
-        findings.push(mk_finding(
-            default_sev,
-            CHECK_ID,
-            "security_vulnerability",
-            format!(
-                "{} {} has security advisory {}: {}",
-                pkg.name, pkg.version, advisory.id, advisory.title
-            ),
-            Some("Cargo.lock".to_string()),
-            None,
-        ));
-    }
-
-    // Note: Unmaintained/yanked warnings are not available in rustsec 0.30 public API
-    // These would require using cargo-audit or a different approach
-
-    Ok(CheckReport {
-        id: CHECK_ID.to_string(),
-        status: check_status_from_findings(&findings),
-        findings,
-        skipped_reason: None,
-        skipped_detail: None,
-    })
+    builddiag_checks_deps::check_security_advisory(repo, config, default_sev)
 }
 
 #[cfg(test)]
@@ -1993,7 +1132,8 @@ mod tests {
     };
     use builddiag_types::{CheckConfig, Config, MsrvSource, RelationToMsrv, Severity};
     use camino::Utf8PathBuf;
-    use std::collections::BTreeSet;
+    use sha2::{Digest, Sha256};
+    use std::collections::{BTreeMap, BTreeSet};
     use tempfile::TempDir;
 
     /// Helper to create a minimal RepoState for testing
@@ -2117,11 +1257,17 @@ edition = "2021"
     #[test]
     fn run_selected_checks_propagates_errors() {
         let (_temp, mut repo) = repo_with_temp_root();
-        let mut config = Config {
+        let config = Config {
             profile: builddiag_types::Profile::Strict,
+            policy: builddiag_types::Policy {
+                checksums: builddiag_types::ChecksumsPolicy {
+                    verify_local_files: true,
+                    ..builddiag_types::ChecksumsPolicy::default()
+                },
+                ..builddiag_types::Policy::default()
+            },
             ..Config::default()
         };
-        config.policy.checksums.verify_local_files = true;
 
         let tools_dir = repo.root.join("scripts").join("tools");
         std::fs::create_dir_all(&tools_dir).expect("create tools dir");

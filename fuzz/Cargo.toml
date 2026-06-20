@@ -17,6 +17,7 @@ arbitrary = { version = "1.4.2", features = ["derive"] }
 
 # Crates to fuzz
 builddiag-domain = { path = "../crates/builddiag-domain" }
+builddiag-paths = { path = "../crates/builddiag-paths" }
 builddiag-render = { path = "../crates/builddiag-render" }
 builddiag-repo = { path = "../crates/builddiag-repo" }
 builddiag-types = { path = "../crates/builddiag-types" }
@@ -64,6 +65,13 @@ bench = false
 [[bin]]
 name = "fuzz_render"
 path = "fuzz_targets/fuzz_render.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_paths"
+path = "fuzz_targets/fuzz_paths.rs"
 test = false
 doc = false
 bench = false

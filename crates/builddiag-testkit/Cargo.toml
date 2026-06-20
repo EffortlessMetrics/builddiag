@@ -1,0 +1,17 @@
+[package]
+name = "builddiag-testkit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Shared helpers for builddiag tests and BDD scenarios"
+
+[features]
+default = ["fs"]
+fs = []
+cli = ["dep:assert_cmd"]
+
+[dependencies]
+assert_cmd = { version = "2.1.2", optional = true }
+
