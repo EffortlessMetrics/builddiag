@@ -253,7 +253,9 @@ dependencies = [
  "builddiag-domain",
  "builddiag-fix",
  "builddiag-hooks",
+ "builddiag-output-contract",
  "builddiag-render",
+ "builddiag-testkit",
  "builddiag-types",
  "builddiag-watch",
  "camino",
@@ -274,6 +276,7 @@ dependencies = [
  "anyhow",
  "builddiag-checks",
  "builddiag-domain",
+ "builddiag-receipt",
  "builddiag-render",
  "builddiag-repo",
  "builddiag-types",
@@ -302,18 +305,54 @@ name = "builddiag-checks"
 version = "0.3.0"
 dependencies = [
  "anyhow",
+ "builddiag-checks-catalog",
+ "builddiag-checks-checksums",
+ "builddiag-checks-deps",
+ "builddiag-domain",
+ "builddiag-paths",
+ "builddiag-repo",
+ "builddiag-types",
+ "camino",
+ "globset",
+ "hex",
+ "proptest",
+ "rayon",
+ "sha2",
+ "tempfile",
+ "toml",
+]
+
+[[package]]
+name = "builddiag-checks-catalog"
+version = "0.3.0"
+dependencies = [
+ "builddiag-types",
+]
+
+[[package]]
+name = "builddiag-checks-checksums"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "builddiag-domain",
+ "builddiag-repo",
+ "builddiag-types",
+ "camino",
+ "hex",
+ "sha2",
+]
+
+[[package]]
+name = "builddiag-checks-deps"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
  "builddiag-domain",
  "builddiag-repo",
  "builddiag-types",
  "camino",
  "depguard",
- "globset",
- "hex",
- "proptest",
- "rayon",
  "rustsec",
- "sha2",
- "tempfile",
  "toml",
 ]
 
@@ -365,6 +404,35 @@ name = "builddiag-hooks"
 version = "0.3.0"
 
 [[package]]
+name = "builddiag-output-contract"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "builddiag-types",
+ "serde_json",
+]
+
+[[package]]
+name = "builddiag-paths"
+version = "0.3.0"
+dependencies = [
+ "camino",
+ "proptest",
+ "tempfile",
+]
+
+[[package]]
+name = "builddiag-receipt"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "builddiag-domain",
+ "builddiag-types",
+ "chrono",
+ "tempfile",
+]
+
+[[package]]
 name = "builddiag-render"
 version = "0.3.0"
 dependencies = [
@@ -380,6 +448,8 @@ version = "0.3.0"
 dependencies = [
  "anyhow",
  "builddiag-domain",
+ "builddiag-paths",
+ "builddiag-testkit",
  "builddiag-types",
  "camino",
  "cargo_metadata",
@@ -391,6 +461,13 @@ dependencies = [
  "sha2",
  "tempfile",
  "toml",
+]
+
+[[package]]
+name = "builddiag-testkit"
+version = "0.3.0"
+dependencies = [
+ "assert_cmd",
 ]
 
 [[package]]

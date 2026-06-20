@@ -11,7 +11,7 @@ Implements all builddiag validation checks:
 - Workspace configuration
 - Dependency hygiene (via depguard)
 
-## Builtin Checks (15 total)
+## Builtin Checks (18 total)
 
 ### Rust Checks
 - `rust.msrv_defined` - MSRV is explicitly defined
@@ -20,10 +20,10 @@ Implements all builddiag validation checks:
 - `rust.toolchain_msrv_relation` - Toolchain ≥ MSRV (or equals, per policy)
 
 ### Tools Checks
-- `tools.checksums_present` - Checksums file exists
-- `tools.checksums_complete` - All declared tools have checksums
-- `tools.checksums_valid` - Checksum format is valid SHA256
-- `tools.checksums_verified` - Downloaded tools match checksums
+- `tools.checksums_file_exists` - Checksums file exists
+- `tools.checksums_format` - Checksum format is valid SHA256
+- `tools.checksums_coverage` - Tools manifest and checksums entries are consistent
+- `tools.checksums_verify_local` - Downloaded tools match checksums
 
 ### Workspace Checks
 - `workspace.resolver_v2` - Uses resolver v2

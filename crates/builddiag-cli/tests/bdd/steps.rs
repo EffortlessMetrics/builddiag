@@ -2,12 +2,15 @@
 //!
 //! This module implements Given/When/Then steps for BDD scenarios.
 
-use builddiag_types::{Report, SensorReport};
+use builddiag_output_contract::{
+    load_and_validate_builddiag_report, load_and_validate_sensor_report, load_sensor_report,
+};
+use builddiag_types::SensorReport;
 use cucumber::{given, then, when};
 use serde_json::Value;
 use std::path::PathBuf;
 
-use super::helpers::{materialize_workspace, run_builddiag_check};
+use super::helpers::{materialize_workspace, run_builddiag_check, run_builddiag_list_checks};
 use super::world::{BuilddiagWorld, MsrvConfig, MsrvLocation, ToolchainConfig};
 
 // =============================================================================
@@ -299,6 +302,28 @@ fn when_run_check_with_bool_flag(world: &mut BuilddiagWorld, flag: String) {
     run_builddiag_check(world);
 }
 
+#[when("I run builddiag list-checks")]
+fn when_run_list_checks(world: &mut BuilddiagWorld) {
+    materialize_workspace(world);
+    run_builddiag_list_checks(world);
+}
+
+#[when(expr = "I run builddiag list-checks with profile {string}")]
+fn when_run_list_checks_with_profile(world: &mut BuilddiagWorld, profile: String) {
+    world.extra_args.push("--profile".to_string());
+    world.extra_args.push(profile);
+    materialize_workspace(world);
+    run_builddiag_list_checks(world);
+}
+
+#[when(expr = "I run builddiag list-checks with format {string}")]
+fn when_run_list_checks_with_format(world: &mut BuilddiagWorld, format: String) {
+    world.extra_args.push("--format".to_string());
+    world.extra_args.push(format);
+    materialize_workspace(world);
+    run_builddiag_list_checks(world);
+}
+
 // =============================================================================
 // Then steps - Verify outcomes
 // =============================================================================
@@ -357,10 +382,23 @@ fn then_check_warns(world: &mut BuilddiagWorld) {
 
 #[then(expr = "stdout should contain {string}")]
 fn then_stdout_contains(world: &mut BuilddiagWorld, expected: String) {
+    let expected = expected.replace("\\\"", "\"");
     let stdout = world.stdout();
     assert!(
         stdout.contains(&expected),
         "Expected stdout to contain '{}' but got:\n{}",
+        expected,
+        stdout
+    );
+}
+
+#[then(expr = "stdout should not contain {string}")]
+fn then_stdout_not_contains(world: &mut BuilddiagWorld, expected: String) {
+    let expected = expected.replace("\\\"", "\"");
+    let stdout = world.stdout();
+    assert!(
+        !stdout.contains(&expected),
+        "Expected stdout to not contain '{}' but got:\n{}",
         expected,
         stdout
     );
@@ -402,132 +440,19 @@ fn then_file_not_exists(world: &mut BuilddiagWorld, path: String) {
 #[then("the report should exist at the canonical path")]
 fn then_report_exists_at_canonical_path(world: &mut BuilddiagWorld) {
     let report_path = canonical_report_path(world);
-    assert!(
-        report_path.exists(),
-        "Expected report to exist at canonical path {:?}",
-        report_path
-    );
-
-    let content = std::fs::read_to_string(&report_path)
-        .unwrap_or_else(|_| panic!("failed to read report at {:?}", report_path));
-    let report: Report = serde_json::from_str(&content)
-        .unwrap_or_else(|_| panic!("report does not match builddiag report contract"));
-
-    assert_eq!(report.schema, Report::SCHEMA_V1);
-    assert!(report.tool.is_some(), "report.tool should be present");
-    assert!(report.run.is_some(), "report.run should be present");
-
-    if let Some(run) = &report.run
-        && let Some(ended) = run.ended_at
-    {
-        assert!(
-            ended >= run.started_at,
-            "run.ended_at should be >= run.started_at"
-        );
-    }
-
-    for finding in &report.findings {
-        assert!(
-            !finding.check_id.trim().is_empty(),
-            "finding.check_id should be non-empty"
-        );
-        assert!(
-            !finding.code.trim().is_empty(),
-            "finding.code should be non-empty"
-        );
-        assert!(
-            !finding.message.trim().is_empty(),
-            "finding.message should be non-empty"
-        );
-        if let Some(location) = &finding.location {
-            assert!(
-                !location.path.contains('\\'),
-                "finding path should use forward slashes: {}",
-                location.path
-            );
-        }
-    }
-
-    if let Some(summary) = &report.summary {
-        assert_eq!(
-            summary.total_findings,
-            report.findings.len(),
-            "summary.total_findings should match findings length"
-        );
-    }
+    load_and_validate_builddiag_report(&report_path)
+        .unwrap_or_else(|err| panic!("failed to validate report at {:?}: {err}", report_path));
 }
 
 #[then("the sensor report should exist at the canonical path")]
 fn then_sensor_report_exists_at_canonical_path(world: &mut BuilddiagWorld) {
     let report_path = canonical_report_path(world);
-    assert!(
-        report_path.exists(),
-        "Expected sensor report to exist at canonical path {:?}",
-        report_path
-    );
-
-    let report = read_sensor_report(world);
-    assert_eq!(report.schema, SensorReport::SCHEMA_V1);
-    assert!(report.tool.is_some(), "sensor.tool should be present");
-    assert!(report.run.is_some(), "sensor.run should be present");
-
-    if let Some(run) = &report.run
-        && let Some(ended) = run.ended_at
-    {
-        assert!(
-            ended >= run.started_at,
-            "sensor.run.ended_at should be >= sensor.run.started_at"
-        );
-    }
-
-    let mut info = 0usize;
-    let mut warn = 0usize;
-    let mut error = 0usize;
-    for finding in &report.findings {
-        assert!(
-            !finding.check_id.trim().is_empty(),
-            "sensor finding.check_id should be non-empty"
-        );
-        assert!(
-            !finding.code.trim().is_empty(),
-            "sensor finding.code should be non-empty"
-        );
-        assert!(
-            !finding.message.trim().is_empty(),
-            "sensor finding.message should be non-empty"
-        );
-        assert!(
-            finding.fingerprint.len() == 64
-                && finding.fingerprint.chars().all(|c| c.is_ascii_hexdigit()),
-            "sensor finding fingerprint should be 64-char hex: {}",
-            finding.fingerprint
-        );
-        if let Some(location) = &finding.location {
-            assert!(
-                !location.path.contains('\\'),
-                "sensor finding path should use forward slashes: {}",
-                location.path
-            );
-        }
-        match finding.severity {
-            builddiag_types::Severity::Info => info += 1,
-            builddiag_types::Severity::Warn => warn += 1,
-            builddiag_types::Severity::Error => error += 1,
-        }
-    }
-
-    assert_eq!(
-        report.verdict.counts.info, info,
-        "sensor verdict info count should match findings"
-    );
-    assert_eq!(
-        report.verdict.counts.warn, warn,
-        "sensor verdict warn count should match findings"
-    );
-    assert_eq!(
-        report.verdict.counts.error, error,
-        "sensor verdict error count should match findings"
-    );
+    load_and_validate_sensor_report(&report_path).unwrap_or_else(|err| {
+        panic!(
+            "failed to validate sensor report at {:?}: {err}",
+            report_path
+        )
+    });
 }
 
 #[then(expr = "the sensor report verdict status should be {string}")]
@@ -714,6 +639,35 @@ fn then_report_includes_finding(
     );
 }
 
+#[then("the report findings should use forward slashes")]
+fn then_report_findings_use_forward_slashes(world: &mut BuilddiagWorld) {
+    let report = read_report(world);
+    let findings = report["findings"]
+        .as_array()
+        .expect("findings not found in report");
+
+    let mut saw_location = false;
+    for finding in findings {
+        if let Some(location) = finding.get("location") {
+            let path = location
+                .get("path")
+                .and_then(|v| v.as_str())
+                .expect("location.path should be a string");
+            saw_location = true;
+            assert!(
+                !path.contains('\\'),
+                "Expected location path to use forward slashes, got: {}",
+                path
+            );
+        }
+    }
+
+    assert!(
+        saw_location,
+        "Expected at least one finding with a location path"
+    );
+}
+
 #[then(expr = "the report should not include finding {string} {string}")]
 fn then_report_does_not_include_finding(
     world: &mut BuilddiagWorld,
@@ -784,8 +738,6 @@ fn read_report(world: &BuilddiagWorld) -> Value {
 
 fn read_sensor_report(world: &BuilddiagWorld) -> SensorReport {
     let report_path = canonical_report_path(world);
-    let content = std::fs::read_to_string(&report_path)
-        .unwrap_or_else(|_| panic!("failed to read sensor report at {:?}", report_path));
-    serde_json::from_str(&content)
+    load_sensor_report(&report_path)
         .unwrap_or_else(|_| panic!("failed to parse sensor report at {:?}", report_path))
 }

@@ -1,0 +1,21 @@
+[package]
+name = "builddiag-checks-checksums"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Checksum-oriented checks for builddiag"
+readme = "README.md"
+documentation = "https://docs.rs/builddiag-checks-checksums"
+keywords = ["rust", "builddiag", "checksum", "ci", "validation"]
+categories = ["development-tools"]
+
+[dependencies]
+anyhow.workspace = true
+builddiag-domain = { path = "../builddiag-domain", version = "0.3.0" }
+builddiag-repo = { path = "../builddiag-repo", version = "0.3.0" }
+builddiag-types = { path = "../builddiag-types", version = "0.3.0" }
+camino.workspace = true
+sha2.workspace = true
+hex.workspace = true

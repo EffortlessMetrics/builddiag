@@ -25,9 +25,11 @@ Crate docs include `README.md` (scope/API) and `CLAUDE.md` where available:
 |-------|---------|------|
 | `builddiag-types` | Shared schemas and config/report types | [README](../crates/builddiag-types/README.md), [CLAUDE](../crates/builddiag-types/CLAUDE.md) |
 | `builddiag-domain` | Pure logic for versions, summaries, verdicts, and fingerprints | [README](../crates/builddiag-domain/README.md), [CLAUDE](../crates/builddiag-domain/CLAUDE.md) |
+| `builddiag-paths` | Path normalization helpers for repo-relative outputs | [README](../crates/builddiag-paths/README.md), [CLAUDE](../crates/builddiag-paths/CLAUDE.md) |
 | `builddiag-repo` | Repository discovery, workspace parsing, and repo-state loading | [README](../crates/builddiag-repo/README.md), [CLAUDE](../crates/builddiag-repo/CLAUDE.md) |
 | `builddiag-checks` | Check registry and check implementations | [README](../crates/builddiag-checks/README.md), [CLAUDE](../crates/builddiag-checks/CLAUDE.md) |
 | `builddiag-render` | Markdown, annotation, and diagnostics rendering | [README](../crates/builddiag-render/README.md), [CLAUDE](../crates/builddiag-render/CLAUDE.md) |
+| `builddiag-receipt` | Receipt conversion and capability contracts (`sensor.report.v1`) | [README](../crates/builddiag-receipt/README.md), [CLAUDE](../crates/builddiag-receipt/CLAUDE.md) |
 | `builddiag-app` | Internal orchestration and output writing | [README](../crates/builddiag-app/README.md), [CLAUDE](../crates/builddiag-app/CLAUDE.md) |
 | `builddiag-watch` | Polling watch loop utilities | [README](../crates/builddiag-watch/README.md), [CLAUDE](../crates/builddiag-watch/CLAUDE.md) |
 | `builddiag-fix` | Deterministic fix planning and apply | [README](../crates/builddiag-fix/README.md), [CLAUDE](../crates/builddiag-fix/CLAUDE.md) |

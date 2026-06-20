@@ -32,8 +32,8 @@ Discovers and parses Cargo workspace information:
 - `discover_workspace(root)` - Finds all workspace members via glob expansion
 
 ### Path Handling
-- `normalize_slashes(path)` - Converts to forward slashes (cross-platform)
-- `to_repo_relative(abs, root)` - Makes path relative to repository root
+- `normalize_slashes(path)` - Converts to forward slashes (re-exported from `builddiag-paths`)
+- `to_repo_relative(abs, root)` - Makes path relative to repository root (re-exported from `builddiag-paths`)
 - `expand_workspace_patterns(patterns, exclude, root)` - Glob expansion with filtering
 
 ## Conventions
@@ -45,11 +45,11 @@ Discovers and parses Cargo workspace information:
 
 ## Dependencies
 
-- `builddiag-types`, `builddiag-domain`
+- `builddiag-types`, `builddiag-domain`, `builddiag-paths`
 - External: anyhow, serde, toml, cargo_metadata, camino, globset
 
 ## Testing
 
-- Unit tests for path normalization
+- Path normalization tests live in `builddiag-paths`
 - Integration tests with fixture workspaces
 - Property tests for glob pattern handling

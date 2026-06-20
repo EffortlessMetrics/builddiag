@@ -23,6 +23,7 @@ It is designed to be fast and offline by default: it reads manifests and policy 
 | [`builddiag-repo`](crates/builddiag-repo/README.md) | Repository discovery and workspace state loading |
 | [`builddiag-checks`](crates/builddiag-checks/README.md) | Built-in check registry and implementations |
 | [`builddiag-render`](crates/builddiag-render/README.md) | Markdown, annotation, and diagnostics renderers |
+| [`builddiag-receipt`](crates/builddiag-receipt/README.md) | Receipt conversion and sensor interoperability primitives |
 | [`builddiag-baseline`](crates/builddiag-baseline/README.md) | Baseline snapshot/filtering and inline suppressions |
 | [`builddiag-watch`](crates/builddiag-watch/README.md) | Polling watch loop utilities |
 | [`builddiag-fix`](crates/builddiag-fix/README.md) | Deterministic fix planning and apply |

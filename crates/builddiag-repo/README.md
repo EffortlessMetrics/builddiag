@@ -7,7 +7,7 @@ Repository discovery and repo-state loading for builddiag.
 - Workspace/member discovery from Cargo metadata
 - Manifest parsing for workspace/package MSRV, edition, publish metadata
 - Tooling file loading (`rust-toolchain`, tools manifest, checksums)
-- Cross-platform path normalization to repo-relative forward-slash paths
+- Cross-platform path normalization to repo-relative forward-slash paths (re-exported from `builddiag-paths`)
 - Optional repo-state caching (`cache` feature, enabled by default)
 
 ## Key APIs

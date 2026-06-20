@@ -12,14 +12,16 @@ keywords = ["rust", "builddiag", "orchestration", "report", "receipt"]
 categories = ["development-tools"]
 
 [features]
-default = ["cache"]
+default = ["cache", "with-substrate"]
 cache = ["builddiag-repo/cache"]
+with-substrate = ["builddiag-receipt/with-substrate"]
 
 [dependencies]
 anyhow.workspace = true
 serde_json.workspace = true
 chrono.workspace = true
 camino.workspace = true
+builddiag-receipt = { path = "../builddiag-receipt", version = "0.3.0", default-features = false }
 builddiag-types = { path = "../builddiag-types", version = "0.3.0" }
 builddiag-domain = { path = "../builddiag-domain", version = "0.3.0" }
 builddiag-repo = { path = "../builddiag-repo", version = "0.3.0" }

@@ -3,21 +3,10 @@
 //! These helpers are extracted from patterns used in cli_check.rs
 //! to provide reusable workspace creation and file writing utilities.
 
-use assert_cmd::cargo::cargo_bin_cmd;
-use std::fs;
-use std::path::Path;
+use builddiag_testkit::{cli::builddiag_command, fs::write_file, repo::make_workspace_toml};
 use tempfile::TempDir;
 
 use super::world::{BuilddiagWorld, MsrvConfig, MsrvLocation};
-
-/// Write a file to the given directory.
-pub fn write_file(dir: &Path, rel: &str, contents: &str) {
-    let p = dir.join(rel);
-    if let Some(parent) = p.parent() {
-        fs::create_dir_all(parent).unwrap();
-    }
-    fs::write(p, contents).unwrap();
-}
 
 /// Materialize the workspace based on the World state.
 ///
@@ -28,17 +17,15 @@ pub fn materialize_workspace(world: &mut BuilddiagWorld) {
     let dir = temp_dir.path();
 
     // Build workspace Cargo.toml
-    let mut workspace_toml = String::from(
-        r#"[workspace]
-resolver = "2"
-members = ["crates/a""#,
+    let mut members: Vec<String> = vec!["crates/a".to_string()];
+    members.extend(
+        world
+            .additional_crates
+            .iter()
+            .map(|crate_name| format!("crates/{}", crate_name)),
     );
-
-    // Add additional crates to members
-    for crate_name in &world.additional_crates {
-        workspace_toml.push_str(&format!(r#", "crates/{}""#, crate_name));
-    }
-    workspace_toml.push_str("]\n");
+    let member_refs: Vec<&str> = members.iter().map(String::as_str).collect();
+    let mut workspace_toml = make_workspace_toml(&member_refs);
 
     // Add workspace.package if we have workspace-level MSRV
     if let Some(ref msrv) = world.msrv
@@ -67,10 +54,10 @@ edition = "{}"
         let crate_toml = build_crate_toml(crate_name, &world.msrv);
         write_file(
             dir,
-            &format!("crates/{}/Cargo.toml", crate_name),
+            format!("crates/{}/Cargo.toml", crate_name),
             &crate_toml,
         );
-        write_file(dir, &format!("crates/{}/src/lib.rs", crate_name), "");
+        write_file(dir, format!("crates/{}/src/lib.rs", crate_name), "");
     }
 
     // Create rust-toolchain.toml if configured
@@ -145,7 +132,7 @@ rust-version = "{}"
 pub fn run_builddiag_check(world: &mut BuilddiagWorld) {
     let dir = world.workspace_path();
 
-    let mut cmd = cargo_bin_cmd!("builddiag");
+    let mut cmd = builddiag_command();
     cmd.arg("check").arg("--root").arg(&dir).arg("--always");
     cmd.current_dir(&dir);
 
@@ -169,10 +156,24 @@ pub fn run_builddiag_check(world: &mut BuilddiagWorld) {
     world.last_output = Some(output);
 }
 
+/// Run builddiag list-checks with any world-provided extra args.
+pub fn run_builddiag_list_checks(world: &mut BuilddiagWorld) {
+    let dir = world.workspace_path();
+
+    let mut cmd = builddiag_command();
+    cmd.arg("list-checks").current_dir(&dir);
+    for arg in &world.extra_args {
+        cmd.arg(arg);
+    }
+
+    let output = cmd.output().expect("failed to execute builddiag");
+    world.last_output = Some(output);
+}
+
 /// Run builddiag with custom arguments (unused but kept for potential future use).
 #[allow(dead_code)]
 pub fn run_builddiag_with_args(world: &mut BuilddiagWorld, args: &[&str]) {
-    let mut cmd = cargo_bin_cmd!("builddiag");
+    let mut cmd = builddiag_command();
     for arg in args {
         cmd.arg(arg);
     }

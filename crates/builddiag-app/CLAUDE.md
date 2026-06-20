@@ -27,6 +27,9 @@ Orchestrates the full check workflow:
 ### Output
 - `write_outputs(run, json_path, md_path)` - Atomically write report files
 - `write_atomic(path, content)` - Safe write via temp file + rename
+- Receipt helpers:
+  - `build_capabilities`, `build_capabilities_with_substrate`
+  - `report_to_sensor`, `create_error_receipt`
 
 ### Git Integration
 - `compute_changed_files(root, base, head)` - Uses `git diff` for diff-aware mode
@@ -57,9 +60,14 @@ write_outputs()
 - Report includes complete metadata: schema version, tool version, timestamps, duration, host info
 - Summary statistics computed and embedded in report
 
+## Feature Flags
+
+- `with-substrate`: forwards to `builddiag-receipt/with-substrate` and enables explicit
+  substrate capability tracking on substrate-driven runs.
+
 ## Dependencies
 
-- `builddiag-types`, `builddiag-domain`, `builddiag-repo`, `builddiag-checks`, `builddiag-render`
+- `builddiag-types`, `builddiag-domain`, `builddiag-repo`, `builddiag-checks`, `builddiag-render`, `builddiag-receipt`
 - External: anyhow, serde_json, chrono, camino, toml
 
 ## Testing

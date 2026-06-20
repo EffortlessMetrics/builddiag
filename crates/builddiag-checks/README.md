@@ -15,6 +15,12 @@ Checks cover Rust toolchain/MSRV, workspace policy, dependency hygiene, checksum
 
 - `parallel` (default): execute checks with Rayon
 - `security`: enable RustSec advisory checks
+- `msrv` (default): include MSRV checks (`rust.msrv_*`)
+- `toolchain` (default): include toolchain checks (`rust.toolchain_*`)
+- `checksums` (default): include checksums checks (`tools.checksums_*`)
+- `workspace` (default): include workspace checks (`workspace.*`)
+- `deps` (default): include dependency checks (`deps.*`)
+- `publish` (default): include publish readiness check (`workspace.publish_ready`)
 
 ## Design constraints
 

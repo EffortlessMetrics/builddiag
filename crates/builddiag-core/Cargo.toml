@@ -14,6 +14,7 @@ categories = ["development-tools"]
 [features]
 default = ["cache"]
 cache = ["builddiag-app/cache"]
+with-substrate = ["builddiag-app/with-substrate"]
 
 [dependencies]
 builddiag-app = { path = "../builddiag-app", version = "0.3.0" }

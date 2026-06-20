@@ -64,6 +64,7 @@ Each crate has its own `CLAUDE.md` with detailed documentation.
 |-------|----------------|
 | `builddiag-types` | Shared types, config/report schemas, profile definitions |
 | `builddiag-domain` | Pure domain logic (no I/O): version parsing, aggregation, sorting |
+| `builddiag-paths` | Cross-platform path normalization helpers |
 | `builddiag-repo` | Repository discovery: workspace members, toolchain, checksums |
 | `builddiag-checks` | Check implementations and documentation registry |
 | `builddiag-render` | Output rendering: Markdown, GitHub annotations |

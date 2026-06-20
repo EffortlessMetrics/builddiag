@@ -25,9 +25,11 @@ toml.workspace = true
 cargo_metadata.workspace = true
 camino.workspace = true
 globset.workspace = true
+builddiag-paths = { path = "../builddiag-paths", version = "0.3.0" }
 builddiag-domain = { path = "../builddiag-domain", version = "0.3.0" }
 builddiag-types = { path = "../builddiag-types", version = "0.3.0" }
 
 [dev-dependencies]
+builddiag-testkit = { path = "../builddiag-testkit", version = "0.3.0" }
 tempfile.workspace = true
 proptest.workspace = true
